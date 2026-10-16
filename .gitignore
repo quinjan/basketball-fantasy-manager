@@ -9,8 +9,8 @@ build/
 dist/
 
 # Local data, caches, raw API dumps (may contain league-private data)
-data/
-!data/.gitkeep
+/data/
+!/data/.gitkeep
 
 # Secrets — never commit. Credentials live in Windows Credential Manager (keyring).
 .env
