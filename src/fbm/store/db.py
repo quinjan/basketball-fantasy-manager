@@ -143,6 +143,32 @@ CREATE TABLE IF NOT EXISTS outbox (
     status TEXT NOT NULL,
     detail TEXT
 );
+
+CREATE TABLE IF NOT EXISTS predictions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    window_start TEXT NOT NULL,
+    window_end TEXT NOT NULL,
+    team_key TEXT NOT NULL,
+    opponent_key TEXT NOT NULL,
+    source TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    graded_at TEXT,
+    result TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_predictions_window ON predictions(window_end, graded_at);
+
+CREATE TABLE IF NOT EXISTS player_meta (
+    espn_id TEXT PRIMARY KEY,
+    season INTEGER NOT NULL,
+    name TEXT,
+    adp REAL,
+    rank_standard INTEGER,
+    rank_roto INTEGER,
+    eligible TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
