@@ -73,7 +73,36 @@ def active_league() -> LeagueState:
         if not league.waiver_priority:
             league.waiver_priority = default_waiver_priority(league)
         return refresh_players(league, _eligibility(), ctx().statuses(_conn()))
-    raise GMError('Yahoo league adapter is pending Yahoo API approval; set [league] source = "demo".')
+    if source == "yahoo":
+        from fbm.league.yahoo_league import load_or_refresh
+
+        try:
+            return load_or_refresh(float(C("yahoo.snapshot_max_age_min")))
+        except Exception as err:
+            raise GMError(f"Yahoo league unavailable and no snapshot yet: {err}") from err
+    raise GMError(f'Unknown [league] source "{source}" in config/settings.toml (use "demo" or "yahoo").')
+
+
+def _is_yahoo() -> bool:
+    return load_settings().league_source == "yahoo"
+
+
+def _live_week(league: LeagueState, ws: date) -> tuple[dict[str, dict[str, float]], dict[date, set[str]]]:
+    """Stats each team has banked this week (Yahoo scoreboard) and, per ET day, the NBA teams whose games were
+    already under way when the snapshot was read (their stats are banked, so don't simulate those games again)."""
+    from fbm.analytics.lineup import started_teams
+
+    if not league.banked or league.week_start != ws or not league.fetched_at:
+        return {}, {}
+    fetched = datetime.fromisoformat(league.fetched_at)
+    day = fetched.astimezone(ET).date()
+    games = _conn().execute("SELECT * FROM games WHERE et_date = ? AND season_type = 2", (day.isoformat(),))
+    return league.banked, {day: started_teams(games.fetchall(), fetched)}
+
+
+def _remaining_games(team: FantasyTeam, plans, skip: dict[date, set[str]]) -> list[tuple[str, date]]:
+    nba = {p.player_id: p.nba_team for p in team.players}
+    return [(pid, p.day) for p in plans for pid in p.started if nba.get(pid) not in skip.get(p.day, set())]
 
 
 def _r(x: float, nd: int = 2) -> float:
@@ -131,6 +160,10 @@ def _week_window(day: date | None = None) -> tuple[date, date, date]:
     first = date.fromisoformat(row[0]) if row and row[0] else today
     start = max(today, first) if first > today else today
     ws, we = fantasy_week(start)
+    if _is_yahoo():
+        league = active_league()
+        if league.week_start and league.week_end and league.week_start <= start <= league.week_end:
+            ws, we = league.week_start, league.week_end  # Yahoo's own week bounds (e.g. a long opening week)
     return start, ws, we
 
 
@@ -193,16 +226,26 @@ def league_overview() -> dict[str, Any]:
     yahoo = {
         "credentials": bool(credentials.get(credentials.YAHOO_REFRESH_TOKEN)),
         "league_configured": LEAGUE_CONFIG_PATH.exists(),
-        "write_enabled": executors.yahoo_write_enabled(),
-        "status": "pending Yahoo API approval" if load_settings().league_source == "demo" else "live",
+        "api_writes": "out of scope: roster changes are manual steps for the owner",
+        "status": "pending Yahoo API approval" if load_settings().league_source == "demo" else "live (read-only)",
     }
     if LEAGUE_CONFIG_PATH.exists():
         yahoo["league"] = load_league_config().league_name
+    if league.source == "yahoo":
+        from fbm.league.yahoo_league import last_refresh_error, snapshot_age
+
+        age = snapshot_age(league)
+        yahoo["snapshot_age_min"] = round(age.total_seconds() / 60, 1) if age else None
+        yahoo["last_refresh_error"] = last_refresh_error() or None
+        yahoo["unmatched_players"] = sum(1 for t in league.teams for p in t.players if p.player_id.startswith("yahoo:"))
+    record = next((r for r in league.standings if r.get("team_key") == league.my_team_key), None)
     return {
         "league": league.name,
         "source": league.source,
         "my_team": league.my_team.name,
         "my_team_key": league.my_team_key,
+        "this_week_opponent": league.team(league.opponent_key).name if league.opponent_key else None,
+        "my_standing": ({k: record[k] for k in ("rank", "wins", "losses", "ties", "games_back")} if record else None),
         "teams": [{"key": t.team_key, "name": t.name, "manager": t.manager} for t in league.teams],
         "categories": [c.label for c in league.categories],
         "slots": [f"{s.position}x{s.count}" for s in league.slots],
@@ -471,19 +514,28 @@ def optimize_lineup(day: str | None = None) -> dict[str, Any]:
 
 
 def _matchup(league: LeagueState, me: FantasyTeam, opp: FantasyTeam, start_day: date | None, n: int):
+    from fbm.analytics.simulation import TeamWeek
+
     c = ctx()
     day0, ws, we = _week_window(start_day)
     days = date_range(day0, we)
     playing = teams_playing(_conn(), ws, we)
     value = _value(c, _strategy_punts(None)).to_dict()
     models = c.models([*me.player_ids(), *opp.player_ids()], _conn())
-    mw, my_plans = plan_team_week(me, days, playing, league.starting_slots(), value)
-    ow, opp_plans = plan_team_week(opp, days, playing, league.starting_slots(), value)
+    _, my_plans = plan_team_week(me, days, playing, league.starting_slots(), value)
+    _, opp_plans = plan_team_week(opp, days, playing, league.starting_slots(), value)
+    banked, skip = _live_week(league, ws) if start_day is None else ({}, {})
+    mw = TeamWeek(me.team_key, [pid for pid, _ in _remaining_games(me, my_plans, skip)], banked.get(me.team_key, {}))
+    ow = TeamWeek(
+        opp.team_key, [pid for pid, _ in _remaining_games(opp, opp_plans, skip)], banked.get(opp.team_key, {})
+    )
     odds = simulate_matchup(mw, ow, models, league.categories, n_sims=n, seed=42)
     return odds, mw, ow, day0, we, models, my_plans, opp_plans
 
 
 def _default_opponent(league: LeagueState) -> FantasyTeam:
+    if league.opponent_key and any(t.team_key == league.opponent_key for t in league.teams):
+        return league.team(league.opponent_key)
     keys = [t.team_key for t in league.teams]
     return league.teams[(keys.index(league.my_team_key) + 1) % len(keys)]
 
@@ -526,12 +578,20 @@ def simulate_matchup_tool(
             [(pid, p.day) for p in opp_plans for pid in p.started],
         )
     adds = int(C("sim.opponent_stream_adds")) if opponent_streams is None else opponent_streams
-    streaming = _opponent_streaming(league, opp, my_plans, date_range(day0, we), adds) if adds > 0 else None
+    if league.max_weekly_adds is not None and opp.team_key in league.adds_used:
+        adds = min(adds, max(0, league.max_weekly_adds - league.adds_used[opp.team_key]))  # their adds left
+    banked, skip = _live_week(league, _week_window()[1]) if not start else ({}, {})
+    streaming = (
+        _opponent_streaming(league, opp, my_plans, date_range(day0, we), adds, banked, skip) if adds > 0 else None
+    )
     return {
         "me": league.my_team.name,
         "opponent": opp.name,
         "opponent_key": opp.team_key,
         "window_et": f"{day0}..{we}",
+        "banked_this_week": (
+            {"as_of_utc": league.fetched_at, "me": mw.banked, "opp": ow.banked} if mw.banked or ow.banked else None
+        ),
         "games_started": {"me": len(mw.player_games), "opp": len(ow.player_games)},
         "categories": [
             {
@@ -555,7 +615,13 @@ def simulate_matchup_tool(
 
 
 def _opponent_streaming(
-    league: LeagueState, opp: FantasyTeam, my_plans, days: list[date], adds: int
+    league: LeagueState,
+    opp: FantasyTeam,
+    my_plans,
+    days: list[date],
+    adds: int,
+    banked: dict[str, dict[str, float]] | None = None,
+    skip: dict[date, set[str]] | None = None,
 ) -> dict[str, Any] | None:
     """Re-score the week assuming the opponent streams `adds` times optimally (greedy, against our planned week)."""
     from fbm.analytics.bank import DrawBank
@@ -563,6 +629,7 @@ def _opponent_streaming(
 
     if not days:
         return None
+    banked, skip = banked or {}, skip or {}
     c, conn = ctx(), _conn()
     playing = teams_playing(conn, days[0], days[-1])
     neutral = c.value_map()
@@ -578,7 +645,7 @@ def _opponent_streaming(
     pool.update({pid: executors.roster_player_from_values(pid, c.values, elig) for pid in fa})
     models = c.models([*league.my_team.player_ids(), *opp.player_ids(), *fa], conn)
     bank = DrawBank(models, n_sims=2000, seed=29)
-    my_totals = bank.total((pid, p.day) for p in my_plans for pid in p.started)
+    my_totals = bank.total(_remaining_games(league.my_team, my_plans, skip), banked.get(league.my_team_key, {}))
     active = [p for p in opp.players if p.selected not in IL_SLOTS]
     droppable = [p.player_id for p in sorted(active, key=lambda p: neutral.get(p.player_id, 0.0))[:4]]
     sctx = StreamContext(
@@ -593,6 +660,8 @@ def _opponent_streaming(
         opp_totals=my_totals,
         categories=league.categories,
         weights={k.key: 1.0 for k in league.categories},
+        banked=banked.get(opp.team_key, {}),
+        skip=skip,
     )
     plan = plan_streams(sctx, fa, droppable, adds)
     n_cats = len(league.categories)
@@ -982,6 +1051,10 @@ def _eligibility() -> dict[str, tuple[str, ...]]:
 
 
 def adds_used_this_week(today: date | None = None) -> int:
+    if _is_yahoo():
+        league = active_league()
+        if league.my_team_key in league.adds_used:
+            return league.adds_used[league.my_team_key]  # Yahoo's own count
     ws, _ = fantasy_week(today or nba_today())
     start_utc = datetime.combine(ws, datetime.min.time(), ET).astimezone(UTC).isoformat(timespec="seconds")
     return sum(
@@ -1041,7 +1114,8 @@ def streaming_plan(
     models = c.models([*me.player_ids(), *opp.player_ids(), *fa], conn)
     bank = DrawBank(models, n_sims=n, seed=23)
     _, opp_plans = plan_team_week(opp, days, playing, league.starting_slots(), c.value_map())
-    opp_totals = bank.total((pid, p.day) for p in opp_plans for pid in p.started)
+    banked, skip = _live_week(league, ws)
+    opp_totals = bank.total(_remaining_games(opp, opp_plans, skip), banked.get(opp.team_key, {}))
 
     protected = {_resolve(x) for x in protect.split(",") if x.strip()}
     active = [p for p in me.players if p.selected not in IL_SLOTS and p.player_id not in protected]
@@ -1062,6 +1136,8 @@ def streaming_plan(
         opp_totals=opp_totals,
         categories=league.categories,
         weights={k.key: 0.0 if k.key in pun else 1.0 for k in league.categories},
+        banked=banked.get(me.team_key, {}),
+        skip=skip,
     )
     plan = plan_streams(sctx, fa, droppable, adds_available, min_gain=min_gain)
     name = {pid: p.name for pid, p in pool.items()}
@@ -1503,7 +1579,7 @@ def playoff_outlook(scope: str = "my_roster", top: int = 25) -> dict[str, Any]:
 # ------------------------------------------------------------------ waivers
 
 
-def waiver_decision(player: str, drop: str | None = None, on_waivers: bool = True) -> dict[str, Any]:
+def waiver_decision(player: str, drop: str | None = None, on_waivers: bool | None = None) -> dict[str, Any]:
     """Should we spend waiver priority on this player now, wait for him to clear, or pass?"""
     from fbm.analytics.trades import need_weights
     from fbm.analytics.waivers import decide, interested_teams
@@ -1513,6 +1589,8 @@ def waiver_decision(player: str, drop: str | None = None, on_waivers: bool = Tru
     owners = _owners(league)
     if pid in owners:
         raise GMError(f"{_names(c, [pid])[0]} is rostered by {owners[pid].name}.")
+    if on_waivers is None:  # Yahoo knows; the demo league assumes waivers (the cautious case)
+        on_waivers = pid in league.on_waivers if league.source == "yahoo" else True
     pun = _strategy_punts(None)
     value = _value(c, pun)
     active = [p for p in league.my_team.players if p.selected not in IL_SLOTS]
@@ -1550,6 +1628,7 @@ def waiver_decision(player: str, drop: str | None = None, on_waivers: bool = Tru
         "reason": d.reason,
         "ros_gain": _r(d.ros_gain),
         "on_waivers": on_waivers,
+        "clears_waivers_et": league.on_waivers.get(pid),
         "my_priority": f"{mine} of {len(league.teams)}",
         "threshold_for_my_priority": None if d.threshold is None else _r(d.threshold),
         "p_claimed_before_me": _r(d.p_claimed_before_me),

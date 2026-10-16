@@ -108,6 +108,13 @@ class LeagueState:
     max_weekly_adds: int | None = None
     source: str = "yahoo"
     waiver_priority: dict[str, int] = field(default_factory=dict)  # team_key -> rank (1 = first claim)
+    # Live league state (Yahoo snapshot; empty for the demo league).
+    opponent_key: str | None = None  # this week's opponent
+    banked: dict[str, dict[str, float]] = field(default_factory=dict)  # team_key -> stats accumulated this week
+    standings: list[dict] = field(default_factory=list)
+    on_waivers: dict[str, str] = field(default_factory=dict)  # player_id -> ET date he clears waivers
+    adds_used: dict[str, int] = field(default_factory=dict)  # team_key -> roster adds used this week
+    fetched_at: str = ""  # UTC ISO time the snapshot was read
 
     def team(self, team_key: str) -> FantasyTeam:
         return next(t for t in self.teams if t.team_key == team_key)

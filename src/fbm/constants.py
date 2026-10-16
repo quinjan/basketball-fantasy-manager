@@ -282,6 +282,14 @@ _ALL = [
     ),
     # punt scenarios
     Constant(
+        "yahoo.snapshot_max_age_min",
+        60,
+        "minutes",
+        "How long a Yahoo league snapshot is served before it is re-read (rosters, scoreboard, waivers).",
+        "Hourly matches the lineup-guard cadence; `fbm snapshot` forces a refresh.",
+        "heuristic",
+    ),
+    Constant(
         "punt.fa_moves",
         3,
         "moves",

@@ -71,6 +71,7 @@ class StreamContext:
     categories: Sequence[Category]
     weights: Mapping[str, float]  # category key -> objective weight (0 for punts)
     banked: Mapping[str, float] = field(default_factory=dict)
+    skip: Mapping[date, set[str]] = field(default_factory=dict)  # ET day -> NBA teams whose games are banked
     _lineups: dict = field(default_factory=dict)
 
     def game_days(self, pid: str, start: date | None = None) -> list[date]:
@@ -126,7 +127,12 @@ def _started(ctx: StreamContext, d: date, ids: tuple[str, ...]) -> tuple[str, ..
 
 def evaluate(ctx: StreamContext, moves: Sequence[Move]) -> tuple[MatchupOdds, int]:
     rosters = roster_by_day(ctx, moves)
-    games = [(pid, d) for d in ctx.days for pid in _started(ctx, d, rosters[d])]
+    games = [
+        (pid, d)
+        for d in ctx.days
+        for pid in _started(ctx, d, rosters[d])
+        if ctx.pool[pid].nba_team not in ctx.skip.get(d, set())
+    ]
     totals = ctx.bank.total(games, ctx.banked)
     return compare(totals, ctx.opp_totals, ctx.categories), len(games)
 

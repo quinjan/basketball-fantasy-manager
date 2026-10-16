@@ -181,4 +181,10 @@ def load_league(path: Path = DEMO_PATH) -> LeagueState:
         max_weekly_adds=data.get("max_weekly_adds"),
         source=data.get("source", "demo"),
         waiver_priority={k: int(v) for k, v in (data.get("waiver_priority") or {}).items()},
+        opponent_key=data.get("opponent_key"),
+        banked={k: {s: float(x) for s, x in v.items()} for k, v in (data.get("banked") or {}).items()},
+        standings=list(data.get("standings") or []),
+        on_waivers=dict(data.get("on_waivers") or {}),
+        adds_used={k: int(v) for k, v in (data.get("adds_used") or {}).items()},
+        fetched_at=data.get("fetched_at", ""),
     )
