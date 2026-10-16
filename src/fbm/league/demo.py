@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
@@ -47,6 +48,49 @@ def _pick(available: pd.DataFrame, rng: np.random.Generator, center_count: int, 
     return str(rng.choice(top.index.to_numpy(), p=weights / weights.sum()))
 
 
+def roster_player(
+    pid: str, values: pd.DataFrame, eligibility: Mapping[str, tuple[str, ...]] | None = None, status: str = ""
+) -> RosterPlayer:
+    eligible = (eligibility or {}).get(pid) or eligibility_from_espn_position(str(values.loc[pid, "position"]))
+    return RosterPlayer(pid, str(values.loc[pid, "name"]), str(values.loc[pid, "team"]), tuple(eligible), "BN", status)
+
+
+def league_from_rosters(
+    rosters: Sequence[Sequence[str]],
+    values: pd.DataFrame,
+    season: int,
+    my_index: int,
+    statuses: Mapping[str, str] | None = None,
+    eligibility: Mapping[str, tuple[str, ...]] | None = None,
+    slots: tuple[SlotSpec, ...] = DEFAULT_SLOTS,
+    name: str = "Demo League (simulated draft)",
+    key_prefix: str = "demo",
+) -> LeagueState:
+    """LeagueState from drafted rosters (list per team, 0-based my_index); lineups set to the value-optimal ones."""
+    statuses = statuses or {}
+    starting = [s.position for s in slots if s.is_starting for _ in range(s.count)]
+    teams = []
+    for t, ids in enumerate(rosters):
+        players = [roster_player(pid, values, eligibility, statuses.get(pid, "")) for pid in ids]
+        lineup = optimize_day(players, starting, {p.player_id for p in players}, values["g_total"].to_dict())
+        for p in players:
+            p.selected = lineup.assignments[p.player_id]
+        team_name = "My Team (Demo)" if t == my_index else DEMO_TEAM_NAMES[t % len(DEMO_TEAM_NAMES)]
+        if t != my_index and team_name == "My Team (Demo)":
+            team_name = f"Team {t + 1}"
+        teams.append(FantasyTeam(f"{key_prefix}.t.{t + 1}", team_name, f"Manager {t + 1}", players))
+    return LeagueState(
+        league_key=key_prefix,
+        name=name,
+        season=season,
+        my_team_key=f"{key_prefix}.t.{my_index + 1}",
+        teams=teams,
+        slots=slots,
+        max_weekly_adds=4,
+        source="demo",
+    )
+
+
 def build_demo_league(
     values: pd.DataFrame,
     season: int,
@@ -55,6 +99,7 @@ def build_demo_league(
     my_slot: int = 5,
     slots: tuple[SlotSpec, ...] = DEFAULT_SLOTS,
     seed: int = 1,
+    eligibility: Mapping[str, tuple[str, ...]] | None = None,
 ) -> LeagueState:
     rng = np.random.default_rng(seed)
     roster_size = sum(s.count for s in slots if s.position not in ("IL", "IL+"))
@@ -67,37 +112,19 @@ def build_demo_league(
             pid = _pick(available, rng, centers, max_centers=4)
             rosters[t].append(pid)
             available = available.drop(index=pid)
+    return league_from_rosters(rosters, values, season, my_slot - 1, statuses, eligibility, slots)
 
-    starting = [s.position for s in slots if s.is_starting for _ in range(s.count)]
-    teams = []
-    for t, ids in enumerate(rosters):
-        players = [
-            RosterPlayer(
-                pid,
-                str(values.loc[pid, "name"]),
-                str(values.loc[pid, "team"]),
-                eligibility_from_espn_position(str(values.loc[pid, "position"])),
-                "BN",
-                statuses.get(pid, ""),
-            )
-            for pid in ids
-        ]
-        lineup = optimize_day(players, starting, {p.player_id for p in players}, values["g_total"].to_dict())
-        for p in players:
-            p.selected = lineup.assignments[p.player_id]
-        teams.append(
-            FantasyTeam(f"demo.t.{t + 1}", DEMO_TEAM_NAMES[t % len(DEMO_TEAM_NAMES)], f"Manager {t + 1}", players)
-        )
-    return LeagueState(
-        league_key="demo",
-        name="Demo League (simulated draft)",
-        season=season,
-        my_team_key=f"demo.t.{my_slot}",
-        teams=teams,
-        slots=slots,
-        max_weekly_adds=4,
-        source="demo",
-    )
+
+def refresh_players(
+    league: LeagueState, eligibility: Mapping[str, tuple[str, ...]], statuses: Mapping[str, str]
+) -> LeagueState:
+    """Overlay current ESPN eligibility and injury statuses on a (demo) league loaded from disk."""
+    for team in league.teams:
+        for p in team.players:
+            if p.player_id in eligibility:
+                p.eligible = tuple(eligibility[p.player_id])
+            p.status = statuses.get(p.player_id, "")
+    return league
 
 
 def save_league(league: LeagueState, path: Path = DEMO_PATH) -> None:

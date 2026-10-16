@@ -134,9 +134,11 @@ def _rebalance(
     return ids, drops, adds
 
 
-def verdict_for(me_delta: float, them_delta: float) -> str:
+def verdict_for(me_delta: float, them_delta: float, them_value_delta: float = 0.0) -> str:
     if me_delta <= 0.02:
         return "not worth it for us"
+    if them_value_delta < -1.5:
+        return "lopsided by rankings (unlikely to be accepted)"
     if them_delta >= 0.02:
         return "win-win"
     if them_delta >= -0.05:
@@ -221,7 +223,7 @@ def evaluate_trade(
         notes.append(f"We must drop {len(my_drops)} player(s) to make room.")
     if my_adds:
         notes.append(f"Opens {len(my_adds)} roster spot(s) for us; filled with the best free agent(s).")
-    return TradeEval(me, them, verdict_for(me.expected_delta, them.expected_delta), notes)
+    return TradeEval(me, them, verdict_for(me.expected_delta, them.expected_delta, them.value_delta), notes)
 
 
 @dataclass(frozen=True)
@@ -242,6 +244,7 @@ def screen_trades(
     max_give: int = 2,
     max_get: int = 2,
     top_k: int = 10,
+    max_their_value_loss: float | None = None,
 ) -> list[TradeCandidate]:
     """Cheap need-weighted G-score screen of 1-1, 2-1, 1-2 (and 2-2) packages."""
     league, values = sim.league, sim.values
@@ -286,6 +289,8 @@ def screen_trades(
                             their_delta = their_delta - (ng - nr) * their_worst
                         s_me = float(my_w @ mine_delta)
                         s_them = float(their_w @ their_delta)
+                        if max_their_value_loss is not None and their_delta.sum() < -max_their_value_loss - 0.5:
+                            continue
                         if s_me > 0 and s_them > -1.0:
                             out.append(TradeCandidate(partner, give, get, s_me, s_them))
     out.sort(key=lambda c: -(c.screen_me + 0.5 * min(c.screen_them, 0.0)))
@@ -300,11 +305,20 @@ def find_trades(
     partners: Sequence[str] | None = None,
     max_give: int = 2,
     max_get: int = 2,
-    confirm: int = 25,
+    confirm: int = 40,
     limit: int = 8,
+    max_their_value_loss: float = 1.0,
 ) -> list[TradeEval]:
-    candidates = screen_trades(sim, my_key, my_punts, free_agents, partners, max_give, max_get)[:confirm]
+    """Trades that help us, don't hurt them in simulation, and don't cost them more than `max_their_value_loss`
+    in overall ranking value (real managers judge offers largely by rankings)."""
+    candidates = screen_trades(
+        sim, my_key, my_punts, free_agents, partners, max_give, max_get, max_their_value_loss=max_their_value_loss
+    )[:confirm]
     results = [evaluate_trade(sim, my_key, c.partner_key, c.give, c.get, free_agents, my_punts) for c in candidates]
-    good = [r for r in results if r.me.expected_delta > 0.02 and r.them.expected_delta >= -0.05]
+    good = [
+        r
+        for r in results
+        if r.me.expected_delta > 0.02 and r.them.expected_delta >= -0.05 and r.them.value_delta >= -max_their_value_loss
+    ]
     good.sort(key=lambda r: -(r.me.expected_delta + 0.25 * min(r.them.expected_delta, 0.0)))
     return good[:limit]

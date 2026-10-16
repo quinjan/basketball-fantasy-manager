@@ -137,7 +137,7 @@ def test_lopsided_trade_detected_and_validation():
     sim = trade_league()
     ev = evaluate_trade(sim, "t1", "t3", give=["a2"], get=["c1"], free_agents=["f1"])
     assert ev.me.expected_delta > 0 > ev.them.expected_delta
-    assert ev.verdict == "lopsided (unlikely to be accepted)"
+    assert ev.verdict.startswith("lopsided")
     with pytest.raises(ValueError):
         evaluate_trade(sim, "t1", "t2", give=["b1"], get=["b2"], free_agents=[])
 
@@ -154,3 +154,4 @@ def test_need_weights_and_verdicts():
     w = need_weights({"pts": 0.5, "reb": 0.95, "tov": 0.5}, punts=("tov",))
     assert w["pts"] == 1.0 and w["reb"] < 0.5 and w["tov"] == 0.0
     assert verdict_for(0.3, 0.1) == "win-win" and verdict_for(0.0, 0.5) == "not worth it for us"
+    assert verdict_for(0.3, 0.1, them_value_delta=-2.0) == "lopsided by rankings (unlikely to be accepted)"

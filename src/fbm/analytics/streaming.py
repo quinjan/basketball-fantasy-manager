@@ -149,7 +149,7 @@ def plan_streams(
     droppable: Sequence[str],
     adds_available: int,
     min_gain: float = 0.05,
-    ros_penalty: float = 0.1,
+    ros_penalty: float = 0.5,
 ) -> StreamPlan:
     base_odds, base_starts = evaluate(ctx, [])
     current_score = score(base_odds, ctx.weights)

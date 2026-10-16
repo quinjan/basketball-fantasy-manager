@@ -10,12 +10,12 @@ Run as the `gm` agent. Follow AGENTS.md. Be efficient: this runs every day.
 1. **Load & refresh.** `context_pack` → `refresh_data`. Note any `rostered_injury_changes`.
 2. **Lineups (auto).** `apply_lineup` for the next ET game day (`nba_game_day_et`, or the next day with games).
    Include manual steps in the report if returned.
-3. **Matchup.** `simulate_matchup` (current opponent). Identify swing categories, expected categories won,
-   P(win week), games-started gap, and remaining adds this week.
+3. **Matchup.** `simulate_matchup(record=true)` (current opponent; recording feeds the calibration loop).
+   Identify swing categories, expected categories won, P(win week), games-started gap, and remaining adds.
 4. **Roster health.** `my_roster` + `injuries(scope="my_roster")`: flag Out/GTD players, IL moves, dead spots.
-5. **Market scan.** `free_agents(sort="week")` and `free_agents(sort="value")` (strategy punts apply). For the best
-   1–3 candidates, run `evaluate_add_drop` against your weakest/droppable players. Consider the weekly add
-   limit, waiver priority cost, and strategy.
+5. **Market scan.** `streaming_plan` for this week's best add/drop sequence (it respects the add limit, strategy
+   punts, and rest-of-season cost), plus `free_agents(sort="value")` for long-term upgrades. Confirm the 1–3 best
+   moves with `evaluate_add_drop`. Consider waiver priority cost and strategy.
 6. **Proposals.** Only if a move is clearly positive (meaningful gain in expected cats this week and/or
    rest-of-season value without a bigger loss): `create_proposal` → invoke the `reviewer` agent → handle
    DISAGREE honestly. Set expiry before the relevant tip-off. Max 3 per run. Doing nothing is a valid outcome.

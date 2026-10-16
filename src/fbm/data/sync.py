@@ -128,10 +128,17 @@ def sync_news(conn: sqlite3.Connection, espn: EspnClient, limit: int = 50) -> Sy
     return SyncResult("news", n)
 
 
+def sync_fantasy_meta(conn: sqlite3.Connection, espn: EspnClient, season: int) -> SyncResult:
+    from fbm.data import espn_fantasy
+
+    n = espn_fantasy.store(conn, season, espn_fantasy.fetch(espn.fetcher, season))
+    return SyncResult(f"fantasy meta {season}", n)
+
+
 def daily_sync(
     conn: sqlite3.Connection, espn: EspnClient, today: date, progress: Progress | None = None
 ) -> list[SyncResult]:
-    """Everything an in-season run needs: schedule status, new box scores, averages, injuries, news."""
+    """Everything an in-season run needs: schedule, box scores, averages, injuries, news, ADP/eligibility."""
     season = current_season(today)
     results = [sync_schedule(conn, espn, season, ttl=1800)]
     results.append(sync_boxscores(conn, espn, season, through=today, progress=progress))
@@ -141,6 +148,11 @@ def daily_sync(
     inj, _changes = sync_injuries(conn, espn)
     results.append(inj)
     results.append(sync_news(conn, espn))
+    if getattr(espn, "fetcher", None) is not None:
+        try:
+            results.append(sync_fantasy_meta(conn, espn, season))
+        except Exception as err:  # optional enrichment; never block the daily sync
+            results.append(SyncResult(f"fantasy meta {season}", failures=1, notes=[str(err)[:80]]))
     return results
 
 

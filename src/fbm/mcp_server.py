@@ -123,10 +123,12 @@ def optimize_lineup(day: str | None = None) -> dict:
 
 
 @tool()
-def simulate_matchup(opponent: str | None = None, start: str | None = None, n: int = 10000) -> dict:
-    """Monte Carlo rest-of-week matchup vs an opponent team key: per-category win/tie/loss odds, expected
-    categories won, swing categories."""
-    return svc.simulate_matchup_tool(opponent, start, n)
+def simulate_matchup(
+    opponent: str | None = None, start: str | None = None, n: int = 10000, record: bool = False
+) -> dict:
+    """Monte Carlo rest-of-week matchup vs an opponent (team key or name): per-category win/tie/loss odds, expected
+    categories won, swing categories. record=True logs the prediction for later calibration (daily-gm does this)."""
+    return svc.simulate_matchup_tool(opponent, start, n, record)
 
 
 @tool()
@@ -141,6 +143,95 @@ def evaluate_add_drop(add: str, drop: str | None = None, opponent: str | None = 
     """Quantify adding a free agent (and dropping one of mine): rest-of-season G deltas by category and this
     week's matchup odds before/after."""
     return svc.evaluate_add_drop(add, drop, opponent)
+
+
+@tool()
+def streaming_plan(opponent: str | None = None, adds: int | None = None, drop_pool: int = 4, protect: str = "") -> dict:
+    """Best sequence of add/drop streaming moves for the rest of this week within the remaining weekly adds,
+    maximizing expected categories won vs the opponent (punts excluded). Each move has an effective ET day, the
+    gain in expected cats, games added/lost, and rest-of-season value cost. protect: comma-separated names that
+    must not be dropped. Analysis only — moves still require proposals."""
+    return svc.streaming_plan(opponent, adds, drop_pool, protect)
+
+
+@tool()
+def evaluate_trade(partner: str, give: str, get: str) -> dict:
+    """Evaluate a trade for BOTH sides (season-level): expected categories per week vs the league before/after,
+    category win-rate deltas, G deltas, forced drops / free-agent fills, verdict. give/get: comma-separated names."""
+    return svc.evaluate_trade_tool(partner, give, get)
+
+
+@tool()
+def find_trades(partner: str | None = None, max_give: int = 2, max_get: int = 2, limit: int = 6) -> dict:
+    """Search the league (or one partner) for trades that improve our expected categories and are defensible for
+    the other team. Returns evaluated candidates with payload ids ready for a trade proposal."""
+    return svc.find_trades_tool(partner, max_give, max_get, limit)
+
+
+# ---------------------------------------------------------------- learning loop
+
+
+@tool()
+def grade_decisions(lookback_days: int = 28) -> dict:
+    """Grade executed add/drop, waiver, and trade proposals by realized production since execution (acquired minus
+    given up, in team-week SD units per category): good / neutral / bad / too early."""
+    return svc.grade_decisions_tool(lookback_days)
+
+
+@tool()
+def prediction_calibration() -> dict:
+    """Grade finished matchup predictions and report simulator calibration: Brier score vs coin-flip baseline,
+    reliability buckets, per-category Brier, expected vs actual categories won."""
+    return svc.prediction_calibration()
+
+
+@tool()
+def weekly_retro_data(week_start: str | None = None) -> dict:
+    """Everything the weekly retro needs for a fantasy week (default: last completed week): graded decisions,
+    proposals and owner decisions, graded predictions, season calibration."""
+    return svc.weekly_retro_data_tool(week_start)
+
+
+# ---------------------------------------------------------------- draft assistant
+
+
+@tool()
+def draft_board(top: int = 60, punts: str | None = None, position: str | None = None) -> dict:
+    """Draft board: punt-aware G-score value, tier, positions, ESPN ADP, value vs ADP. Hides drafted players when a
+    draft is in progress."""
+    return svc.draft_board(top, punts, position)
+
+
+@tool(WRITE)
+def draft_start(teams: int = 12, my_slot: int = 1, rounds: int = 13, punts: str = "") -> dict:
+    """Start (or restart) a live draft: league size, my draft slot, rounds, optional punts. Returns first advice."""
+    return svc.draft_start(teams, my_slot, rounds, punts)
+
+
+@tool(WRITE)
+def draft_pick(player: str) -> dict:
+    """Record the pick for the team on the clock (call for every pick, in order). Returns updated advice."""
+    return svc.draft_pick(player)
+
+
+@tool(WRITE)
+def draft_undo() -> dict:
+    """Undo the last recorded draft pick."""
+    return svc.draft_undo()
+
+
+@tool()
+def draft_recommend(top: int = 8) -> dict:
+    """Live draft advice: best picks by build-aware score, availability at my next pick (ADP), position needs,
+    projected best players at my following pick, my category profile."""
+    return svc.draft_recommend(top)
+
+
+@tool()
+def draft_mock(my_slot: int = 1, teams: int = 12, rounds: int = 13, punts: str = "", runs: int = 3) -> dict:
+    """Mock drafts (others by noisy ADP, me by the recommender) scored by season-level simulation: expected
+    categories won and rank. Use to compare draft slots or punt builds."""
+    return svc.draft_mock(my_slot, teams, rounds, punts, runs)
 
 
 # ---------------------------------------------------------------- actions

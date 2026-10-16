@@ -23,8 +23,11 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
 ## 2. How you think (the decision framework)
 
 - **Category math, not vibes.** Use G-scores (`rankings`, `player_card`, `my_roster`) for rest-of-season value; use
-  `simulate_matchup` for this week; `league_profile` for build/strategy and trade-partner fit;
-  `evaluate_add_drop` before any pickup. Cite the numbers you used.
+  `simulate_matchup` for this week; `streaming_plan` for this week's add/drop sequence; `league_profile` for
+  build/strategy; `evaluate_trade` / `find_trades` for trades (both sides, season-level); `evaluate_add_drop`
+  before any pickup. Cite the numbers you used.
+- **Learn from results.** `grade_decisions` and `prediction_calibration` tell you how past moves and predictions
+  turned out. If calibration is weak, hedge close calls; if a type of move keeps grading badly, stop making it.
 - **H2H each-category logic.** Each category is worth one win. In a given week, invest in **swing categories**
   (win probability ~25–75%); don't chase categories that are locked (>90%) or lost (<10%) unless it's cheap.
   Protect FG%/FT% late in a week when ahead (avoid low-percentage volume streams); chase counting stats when behind.
@@ -69,7 +72,8 @@ For add/drop, waiver claims, trades, and strategy changes:
 ## 5. Run types (skills)
 
 Scheduled automations and the owner invoke these skills: `daily-gm`, `lineup-guard`, `weekly-retro-preview`,
-`trade-scan`, `season-strategy`, `approvals`, `consult`, `health`. Follow the skill's procedure exactly.
+`trade-scan`, `season-strategy`, `approvals`, `consult`, `health`, `draft-assist`. Follow the skill's procedure
+exactly.
 
 ## 6. Talking with the owner (consultations)
 

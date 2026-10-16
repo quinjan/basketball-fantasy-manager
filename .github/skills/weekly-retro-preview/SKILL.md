@@ -1,6 +1,6 @@
 ---
 name: weekly-retro-preview
-description: Monday run (~15:00 UTC+8, after the fantasy week ends). Grade last week's decisions against outcomes, update the playbook with evidence, scout the new opponent, plan the new week, and email the retro.
+description: Monday run (~15:30 UTC+8, after the fantasy week ends). Grade last week's decisions against outcomes, check simulator calibration, update the playbook with evidence, scout the new opponent, plan the new week, and report.
 ---
 
 # Weekly retro + preview
@@ -8,20 +8,22 @@ description: Monday run (~15:00 UTC+8, after the fantasy week ends). Grade last 
 Run as the `gm` agent.
 
 ## Retro (last week)
-1. `context_pack`, `refresh_data`. Read last week's journal entries and executed proposals
-   (`list_proposals(status="executed")`).
-2. For each executed move: compare expectation (evidence at proposal time) vs outcome — the added player's actual
-   games and category contributions since (`player_card` last games) vs the dropped player's. Grade:
-   **Good / Neutral / Bad / Too early**, with numbers.
-3. Matchup result by category (when Yahoo data is live) vs the pre-week simulation. Which categories surprised?
-4. **Playbook:** add or revise lessons in `memory/playbook.md` only when supported by evidence; each lesson records
-   "Evidence: …" and a count of supporting cases. Remove lessons contradicted by evidence. Keep it under ~60 lines.
+1. `context_pack`, `refresh_data`, then `weekly_retro_data` (defaults to the last completed fantasy week). It
+   returns: graded executed moves (realized production acquired minus given up, in team-week SD units:
+   good ≥ +0.5, bad ≤ −0.5, or too early), proposals created with reviewer verdicts and owner quotes, graded
+   matchup predictions, and season calibration.
+2. Summarize decisions: what worked, what didn't, and why (compare with the evidence recorded at proposal time).
+   Note rejected/expired proposals and the owner's stated reasons.
+3. **Calibration:** `prediction_calibration`. If Brier is not clearly better than the coin-flip baseline, or
+   reliability buckets are off (e.g. our 80% calls win 60%), say so and be more cautious with close calls.
+4. **Playbook:** add or revise lessons in `memory/playbook.md` only with evidence (cite refs and counts). Remove
+   lessons contradicted by evidence. Keep it under ~60 lines.
 
 ## Preview (new week)
-5. `schedule` (games per NBA team this week), `simulate_matchup` vs the new opponent, `league_profile` if the
-   strategy needs a check. Update `memory/managers/<opponent>.md` with what you know about them.
-6. Week plan: target swing categories, streaming plan (days with few games for my roster, add budget), lineup
-   notes, players to watch. Draft proposals only if clearly positive (reviewed via the `reviewer` agent).
+5. `schedule`, `simulate_matchup(record=true)` vs the new opponent, `streaming_plan` for the week, and
+   `league_profile` if the strategy needs a check. Update `memory/managers/<opponent>.md`.
+6. Week plan: swing categories, streaming plan (adds budget), lineup notes, watchlist. Draft proposals only if
+   clearly positive (reviewed via the `reviewer` agent).
 7. If the evidence says the season strategy is wrong, draft a `strategy` proposal (see `season-strategy`).
 
 ## Output

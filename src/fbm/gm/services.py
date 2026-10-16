@@ -8,7 +8,7 @@ from __future__ import annotations
 import difflib
 import json
 import unicodedata
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pandas as pd
@@ -24,7 +24,7 @@ from fbm.analytics.week import date_range, fantasy_week, plan_team_week, teams_p
 from fbm.config import LEAGUE_CONFIG_PATH, RAW_DIR, load_league_config
 from fbm.data import sync
 from fbm.data.espn import EspnClient
-from fbm.gm import executors, memory
+from fbm.gm import executors, memory, outcomes
 from fbm.gm import proposals as props
 from fbm.league.model import IL_SLOTS, FantasyTeam, LeagueState, eligibility_from_espn_position
 from fbm.settings import load_settings
@@ -63,12 +63,13 @@ def ctx() -> AnalyticsContext:
 def active_league() -> LeagueState:
     source = load_settings().league_source
     if source == "demo":
-        from fbm.league.demo import load_league
+        from fbm.league.demo import load_league, refresh_players
 
         try:
-            return load_league()
+            league = load_league()
         except FileNotFoundError as err:
             raise GMError("Demo league not built. Run `fbm demo build`.") from err
+        return refresh_players(league, _eligibility(), ctx().statuses(_conn()))
     raise GMError('Yahoo league adapter is pending Yahoo API approval; set [league] source = "demo".')
 
 
@@ -439,9 +440,10 @@ def _matchup(league: LeagueState, me: FantasyTeam, opp: FantasyTeam, start_day: 
     playing = teams_playing(_conn(), ws, we)
     value = _value(c, _strategy_punts(None)).to_dict()
     models = c.models([*me.player_ids(), *opp.player_ids()], _conn())
-    mw, _ = plan_team_week(me, days, playing, league.starting_slots(), value)
-    ow, _ = plan_team_week(opp, days, playing, league.starting_slots(), value)
-    return simulate_matchup(mw, ow, models, league.categories, n_sims=n, seed=42), mw, ow, day0, we, models
+    mw, my_plans = plan_team_week(me, days, playing, league.starting_slots(), value)
+    ow, opp_plans = plan_team_week(opp, days, playing, league.starting_slots(), value)
+    odds = simulate_matchup(mw, ow, models, league.categories, n_sims=n, seed=42)
+    return odds, mw, ow, day0, we, models, my_plans, opp_plans
 
 
 def _default_opponent(league: LeagueState) -> FantasyTeam:
@@ -449,10 +451,39 @@ def _default_opponent(league: LeagueState) -> FantasyTeam:
     return league.teams[(keys.index(league.my_team_key) + 1) % len(keys)]
 
 
-def simulate_matchup_tool(opponent: str | None = None, start: str | None = None, n: int = 10000) -> dict[str, Any]:
+def _team(league: LeagueState, query: str | None) -> FantasyTeam:
+    if not query:
+        return _default_opponent(league)
+    q = query.strip().lower()
+    for t in league.teams:
+        if t.team_key.lower() == q:
+            return t
+    matches = [t for t in league.teams if q in t.name.lower() or q in t.manager.lower()]
+    if len(matches) != 1:
+        raise GMError(f"Team '{query}' matched {len(matches)} teams; use a team key from league_overview.")
+    return matches[0]
+
+
+def simulate_matchup_tool(
+    opponent: str | None = None, start: str | None = None, n: int = 10000, record: bool = False
+) -> dict[str, Any]:
     league = active_league()
-    opp = league.team(opponent) if opponent else _default_opponent(league)
-    odds, mw, ow, day0, we, models = _matchup(league, league.my_team, opp, parse_date(start) if start else None, n)
+    opp = _team(league, opponent)
+    odds, mw, ow, day0, we, models, my_plans, opp_plans = _matchup(
+        league, league.my_team, opp, parse_date(start) if start else None, n
+    )
+    prediction_id = None
+    if record:
+        prediction_id = outcomes.record_prediction(
+            _conn(),
+            odds,
+            (day0, we),
+            league.my_team_key,
+            opp.team_key,
+            league.source,
+            [(pid, p.day) for p in my_plans for pid in p.started],
+            [(pid, p.day) for p in opp_plans for pid in p.started],
+        )
     return {
         "me": league.my_team.name,
         "opponent": opp.name,
@@ -474,6 +505,7 @@ def simulate_matchup_tool(opponent: str | None = None, start: str | None = None,
         "p_win_majority": _r(odds.p_majority),
         "swing_categories": [o.category.label for o in odds.swing()],
         "synthetic_models": [pid for pid, m in models.items() if m.synthetic],
+        "prediction_id": prediction_id,
         "method": f"{n} Monte Carlo weeks; daily optimal lineups; resampled real game lines x injury play-prob",
     }
 
@@ -517,14 +549,14 @@ def evaluate_add_drop(add: str, drop: str | None = None, opponent: str | None = 
         if add_id in c.values.index
     }
     value = _value(c, pun)
-    opp = league.team(opponent) if opponent else _default_opponent(league)
+    opp = _team(league, opponent)
     before, *_ = _matchup(league, league.my_team, opp, None, n)
     from copy import deepcopy
 
     swapped = deepcopy(league.my_team)
     if drop_id:
         swapped.players = [p for p in swapped.players if p.player_id != drop_id]
-    swapped.players.append(executors.roster_player_from_values(add_id, c.values))
+    swapped.players.append(executors.roster_player_from_values(add_id, c.values, _eligibility()))
     after, *_ = _matchup(league, swapped, opp, None, n)
     start, ws, we = _week_window()
     return {
@@ -641,7 +673,7 @@ def record_owner_decision(ref: str, approved: bool, owner_quote: str) -> dict[st
 def execute_proposal(ref: str) -> dict[str, Any]:
     conn = _conn()
     p = props.ready_to_execute(conn, ref)
-    result = executors.execute(p, active_league(), ctx().values)
+    result = executors.execute(p, active_league(), ctx().values, _eligibility())
     p = props.record_execution(conn, p.id, result.status, result.detail)
     memory.journal_append("execution", f"{p.ref} {result.status}", json.dumps(result.detail, indent=1))
     _CTX_CACHE.clear()
@@ -668,3 +700,424 @@ def get_proposal(ref: str) -> dict[str, Any]:
         )
     ]
     return {**p.as_dict(), "events": events}
+
+
+# ------------------------------------------------------------------ shared helpers (eligibility, adds, free agents)
+
+
+def _eligibility() -> dict[str, tuple[str, ...]]:
+    from fbm.data.espn_fantasy import eligibility_map
+
+    return eligibility_map(_conn())
+
+
+def adds_used_this_week(today: date | None = None) -> int:
+    ws, _ = fantasy_week(today or nba_today())
+    start_utc = datetime.combine(ws, datetime.min.time(), ET).astimezone(UTC).isoformat(timespec="seconds")
+    return sum(
+        1
+        for p in props.list_proposals(_conn(), "executed", 500)
+        if p.kind in ("add_drop", "waiver_claim") and (p.executed_at or "") >= start_utc
+    )
+
+
+def _available_ids(league: LeagueState, c: AnalyticsContext) -> list[str]:
+    from fbm.analytics.simulation import play_probability
+
+    owners = _owners(league)
+    statuses = c.statuses(_conn())
+    return [pid for pid in c.values.index if pid not in owners and play_probability(statuses.get(pid)) > 0]
+
+
+def _names(c: AnalyticsContext, ids) -> list[str]:
+    return [str(c.projections.at[pid, "name"]) if pid in c.projections.index else pid for pid in ids]
+
+
+# ------------------------------------------------------------------ streaming planner
+
+
+def streaming_plan(
+    opponent: str | None = None,
+    adds: int | None = None,
+    drop_pool: int = 4,
+    protect: str = "",
+    candidates: int = 25,
+    n: int = 2000,
+    min_gain: float = 0.05,
+) -> dict[str, Any]:
+    from fbm.analytics.bank import DrawBank
+    from fbm.analytics.streaming import StreamContext, plan_streams
+
+    league, c, conn = active_league(), ctx(), _conn()
+    me, opp = league.my_team, _team(league, opponent)
+    pun = _strategy_punts(None)
+    value = _value(c, pun)
+    day0, ws, we = _week_window()
+    days = date_range(day0, we)
+    playing = teams_playing(conn, ws, we)
+    elig = _eligibility()
+
+    def games(pid: str) -> int:
+        team = str(c.values.at[pid, "team"])
+        return sum(1 for d in days if team in playing.get(d, set()))
+
+    available = [pid for pid in _available_ids(league, c) if games(pid) > 0]
+    by_week = sorted(available, key=lambda pid: -(value.get(pid, -9) + 3.0) * games(pid))[:candidates]
+    by_value = sorted(available, key=lambda pid: -value.get(pid, -9))[:10]
+    fa = list(dict.fromkeys(by_week + by_value))
+
+    pool = {p.player_id: p for p in me.players}
+    pool.update({pid: executors.roster_player_from_values(pid, c.values, elig) for pid in fa})
+    models = c.models([*me.player_ids(), *opp.player_ids(), *fa], conn)
+    bank = DrawBank(models, n_sims=n, seed=23)
+    _, opp_plans = plan_team_week(opp, days, playing, league.starting_slots(), c.value_map())
+    opp_totals = bank.total((pid, p.day) for p in opp_plans for pid in p.started)
+
+    protected = {_resolve(x) for x in protect.split(",") if x.strip()}
+    active = [p for p in me.players if p.selected not in IL_SLOTS and p.player_id not in protected]
+    droppable = [p.player_id for p in sorted(active, key=lambda p: value.get(p.player_id, 0.0))[:drop_pool]]
+    limit = league.max_weekly_adds if league.max_weekly_adds is not None else 4
+    used = adds_used_this_week()
+    adds_available = adds if adds is not None else max(0, limit - used)
+
+    sctx = StreamContext(
+        base=list(me.players),
+        pool=pool,
+        days=days,
+        playing=playing,
+        starting_slots=league.starting_slots(),
+        capacity=league.roster_size(),
+        value=value.to_dict(),
+        bank=bank,
+        opp_totals=opp_totals,
+        categories=league.categories,
+        weights={k.key: 0.0 if k.key in pun else 1.0 for k in league.categories},
+    )
+    plan = plan_streams(sctx, fa, droppable, adds_available, min_gain=min_gain)
+    name = {pid: p.name for pid, p in pool.items()}
+
+    def odds_summary(o) -> dict[str, Any]:
+        return {
+            "expected_cats": _r(o.expected_score),
+            "p_win_majority": _r(o.p_majority),
+            "p_win_by_cat": {x.category.label: _r(x.p_win) for x in o.categories},
+        }
+
+    return {
+        "opponent": opp.name,
+        "window_et": f"{days[0]}..{days[-1]}",
+        "punts_applied": list(pun),
+        "weekly_add_limit": limit,
+        "adds_used_this_week": used,
+        "adds_available": adds_available,
+        "droppable_considered": [name[pid] for pid in droppable],
+        "free_agents_considered": len(fa),
+        "baseline": odds_summary(plan.baseline),
+        "after_plan": odds_summary(plan.final),
+        "games_started": {"before": plan.starts_before, "after": plan.starts_after},
+        "moves": [
+            {
+                "effective_et": m.move.day.isoformat(),
+                "add": name[m.move.add],
+                "add_id": m.move.add,
+                "drop": name.get(m.move.drop) if m.move.drop else None,
+                "drop_id": m.move.drop,
+                "gain_expected_cats": _r(m.gain, 3),
+                "add_games": m.add_games,
+                "drop_games_lost": m.drop_games_lost,
+                "ros_value_cost": _r(m.ros_cost),
+            }
+            for m in plan.moves
+        ],
+        "notes": [
+            "Greedy plan: each move is the best single add/drop given the earlier moves (common random numbers).",
+            "Effective day = first ET day the added player is on the roster; check league add-lock rules.",
+            "Opponent streaming is not modeled; recently dropped players may be on waivers, not free agents.",
+        ],
+    }
+
+
+# ------------------------------------------------------------------ trades
+
+
+def _league_sim(n: int = 1500):
+    from fbm.analytics.bank import DrawBank
+    from fbm.analytics.trades import LeagueSim
+
+    league, c = active_league(), ctx()
+    fa = sorted(_available_ids(league, c), key=lambda pid: -float(c.values.at[pid, "g_total"]))[:12]
+    ids = [pid for t in league.teams for pid in t.player_ids()] + fa
+    bank = DrawBank(c.models(ids, _conn()), n_sims=n, seed=31)
+    return LeagueSim(league, bank, c.values), fa
+
+
+def _resolve_on_team(query: str, team: FantasyTeam) -> str:
+    q = _norm(query)
+    exact = [p.player_id for p in team.players if _norm(p.name) == q or p.player_id == query.strip()]
+    if exact:
+        return exact[0]
+    partial = [p.player_id for p in team.players if q in _norm(p.name)]
+    if len(partial) == 1:
+        return partial[0]
+    raise GMError(f"'{query}' matched {len(partial)} players on {team.name}.")
+
+
+def _trade_dict(ev, c: AnalyticsContext) -> dict[str, Any]:
+    def side(s) -> dict[str, Any]:
+        return {
+            "team": s.name,
+            "team_key": s.team_key,
+            "gives": _names(c, s.gives),
+            "gets": _names(c, s.gets),
+            "forced_drops": _names(c, s.drops),
+            "free_agent_fills": _names(c, s.fa_adds),
+            "expected_cats_before": _r(s.expected_before),
+            "expected_cats_after": _r(s.expected_after),
+            "expected_cats_delta": _r(s.expected_delta, 3),
+            "ranking_value_delta": s.value_delta,
+            "cat_win_rate_delta": {k: _r(s.cats_after[k] - s.cats_before[k], 3) for k in s.cats_before},
+            "g_delta_by_cat": s.g_delta_by_cat,
+        }
+
+    return {
+        "verdict": ev.verdict,
+        "me": side(ev.me),
+        "them": side(ev.them),
+        "notes": ev.notes,
+        "payload_ids": {"partner": ev.them.team_key, "give": ev.me.gives, "get": ev.me.gets},
+    }
+
+
+def evaluate_trade_tool(partner: str, give: str, get: str, n: int = 1500) -> dict[str, Any]:
+    from fbm.analytics.trades import evaluate_trade
+
+    league, c = active_league(), ctx()
+    team = _team(league, partner)
+    if team.team_key == league.my_team_key:
+        raise GMError("Partner must be another team.")
+    give_ids = [_resolve_on_team(x, league.my_team) for x in give.split(",") if x.strip()]
+    get_ids = [_resolve_on_team(x, team) for x in get.split(",") if x.strip()]
+    sim, fa = _league_sim(n)
+    ev = evaluate_trade(sim, league.my_team_key, team.team_key, give_ids, get_ids, fa, _strategy_punts(None))
+    out = _trade_dict(ev, c)
+    out["method"] = "season-level: typical week vs every team, before/after; rosters rebalanced"
+    return out
+
+
+def find_trades_tool(
+    partner: str | None = None, max_give: int = 2, max_get: int = 2, limit: int = 6, n: int = 1200
+) -> dict[str, Any]:
+    from fbm.analytics.trades import find_trades
+
+    league, c = active_league(), ctx()
+    partners = [_team(league, partner).team_key] if partner else None
+    sim, fa = _league_sim(n)
+    results = find_trades(sim, league.my_team_key, fa, _strategy_punts(None), partners, max_give, max_get, limit=limit)
+    return {
+        "trades": [_trade_dict(r, c) for r in results],
+        "my_category_win_rates": {k: _r(v) for k, v in sim.profile(league.my_team_key)[0].items()},
+        "method": "need-weighted G-score screen of 1-1/2-1/1-2/2-2 packages, top candidates confirmed by "
+        "simulation; keeps trades that help us and are defensible for them",
+    }
+
+
+# ------------------------------------------------------------------ learning loop
+
+
+def grade_decisions_tool(lookback_days: int = 28) -> dict[str, Any]:
+    c = ctx()
+    graded = outcomes.grade_decisions(
+        _conn(),
+        c.pool,
+        c.cfg.categories,
+        nba_today(),
+        _strategy_punts(None),
+        lookback_days,
+        names=c.projections["name"].to_dict(),
+    )
+    return {"decisions": graded, "scale": "std units = team-week SDs per category (+0.5 good, -0.5 bad)"}
+
+
+def prediction_calibration() -> dict[str, Any]:
+    c, conn = ctx(), _conn()
+    newly = outcomes.grade_predictions(conn, c.cfg.categories, nba_today())
+    return {"newly_graded": len(newly), **outcomes.calibration(conn)}
+
+
+def weekly_retro_data_tool(week_start: str | None = None) -> dict[str, Any]:
+    from datetime import timedelta
+
+    c = ctx()
+    start = parse_date(week_start) if week_start else fantasy_week(nba_today() - timedelta(days=7))[0]
+    return outcomes.weekly_retro_data(
+        _conn(),
+        c.pool,
+        c.cfg.categories,
+        start,
+        nba_today(),
+        _strategy_punts(None),
+        names=c.projections["name"].to_dict(),
+    )
+
+
+# ------------------------------------------------------------------ draft assistant
+
+
+def _draft_board(punts: tuple[str, ...]):
+    from fbm.analytics.draft import build_board
+    from fbm.data.espn_fantasy import adp_map
+
+    c, conn = ctx(), _conn()
+    adp = adp_map(conn)
+    if not adp:
+        sync.sync_fantasy_meta(conn, EspnClient(), c.season)
+        adp = adp_map(conn)
+    return build_board(c.values, c.cfg.categories, punts, adp, _eligibility())
+
+
+def _board_rows(board, top: int) -> list[dict[str, Any]]:
+    import math
+
+    return [
+        {
+            "rank": int(r["rank"]),
+            "tier": int(r["tier"]),
+            "player": r["name"],
+            "id": pid,
+            "nba": r["team"],
+            "positions": [e for e in r["eligible"] if e != "UTIL"],
+            "value": _r(r["value"]),
+            "adp": None if math.isnan(r["adp"]) else _r(r["adp"], 1),
+            "value_vs_adp": None if math.isnan(r["value_vs_adp"]) else int(r["value_vs_adp"]),
+        }
+        for pid, r in board.head(top).iterrows()
+    ]
+
+
+def draft_board(
+    top: int = 60, punts: str | None = None, position: str | None = None, hide_drafted: bool = True
+) -> dict[str, Any]:
+    from fbm.analytics.draft import DraftState
+
+    pun = tuple(c.key for c in parse_category_list(punts or ""))
+    board = _draft_board(pun)
+    try:
+        state = DraftState.load()
+        if hide_drafted:
+            board = board[~board.index.isin(state.taken())]
+    except FileNotFoundError:
+        pass
+    if position:
+        board = board[board["eligible"].map(lambda el: position.upper() in el)]
+    return {
+        "punts": list(pun),
+        "players": _board_rows(board, top),
+        "notes": "value = punt-aware G-score (pre-season: last season per-game); value_vs_adp > 0 means the "
+        "market drafts him later than his value rank (potential bargain).",
+    }
+
+
+def draft_start(teams: int = 12, my_slot: int = 1, rounds: int = 13, punts: str = "") -> dict[str, Any]:
+    from fbm.analytics.draft import DraftState
+
+    if not 1 <= my_slot <= teams:
+        raise GMError("my_slot must be between 1 and teams")
+    state = DraftState(teams, my_slot, rounds, [c.key for c in parse_category_list(punts)])
+    state.save()
+    memory.journal_append(
+        "decision", "Draft started", f"{teams} teams, slot {my_slot}, {rounds} rounds, punts {state.punts or 'none'}"
+    )
+    return draft_recommend()
+
+
+def draft_pick(player: str) -> dict[str, Any]:
+    """Record the pick for the team on the clock (call in draft order)."""
+    from fbm.analytics.draft import DraftState
+
+    state = DraftState.load()
+    board = _draft_board(tuple(state.punts))
+    avail = board[~board.index.isin(state.taken())]
+    q = _norm(player)
+    ids = [pid for pid in avail.index if _norm(str(avail.at[pid, "name"])) == q] or [
+        pid for pid in avail.index if q in _norm(str(avail.at[pid, "name"]))
+    ]
+    if len(ids) != 1:
+        raise GMError(f"'{player}' matched {len(ids)} available players; be more specific.")
+    pick = state.record(ids[0], str(avail.at[ids[0], "name"]))
+    state.save()
+    return {
+        "recorded": {
+            "overall": pick.overall,
+            "team_slot": pick.team_slot,
+            "player": pick.name,
+            "mine": pick.team_slot == state.my_slot,
+        },
+        **draft_recommend(),
+    }
+
+
+def draft_undo() -> dict[str, Any]:
+    from fbm.analytics.draft import DraftState
+
+    state = DraftState.load()
+    undone = state.undo()
+    state.save()
+    return {"undone": undone.name if undone else None, **draft_recommend()}
+
+
+def draft_recommend(top: int = 8) -> dict[str, Any]:
+    from fbm.analytics.draft import DraftState, recommend
+
+    state = DraftState.load()
+    if state.done:
+        return {"done": True, "my_team": [p.name for p in state.my_picks()]}
+    return recommend(state, _draft_board(tuple(state.punts)), ctx().cfg.categories, top)
+
+
+def draft_mock(
+    my_slot: int = 1, teams: int = 12, rounds: int = 13, punts: str = "", runs: int = 3, seed: int = 0, n: int = 1000
+) -> dict[str, Any]:
+    from fbm.analytics.bank import DrawBank
+    from fbm.analytics.draft import DraftState, mock_draft, rosters_from_state
+    from fbm.analytics.trades import LeagueSim
+    from fbm.league.demo import league_from_rosters
+
+    c, conn = ctx(), _conn()
+    pun = tuple(k.key for k in parse_category_list(punts))
+    board = _draft_board(pun)
+    elig, statuses = _eligibility(), c.statuses(conn)
+    results = []
+    for r in range(runs):
+        state = mock_draft(board, DraftState(teams, my_slot, rounds, list(pun)), c.cfg.categories, seed=seed + r)
+        rosters = rosters_from_state(state)
+        league = league_from_rosters(
+            [rosters[s] for s in range(1, teams + 1)],
+            c.values,
+            c.season,
+            my_slot - 1,
+            statuses,
+            elig,
+            key_prefix="mock",
+        )
+        ids = [pid for t in league.teams for pid in t.player_ids()]
+        sim = LeagueSim(league, DrawBank(c.models(ids, conn), n_sims=n, seed=41 + r), c.values)
+        exps = {t.team_key: sim.profile(t.team_key)[1] for t in league.teams}
+        cats, mine = sim.profile(league.my_team_key)
+        rank = sorted(exps.values(), reverse=True).index(mine) + 1
+        results.append(
+            {
+                "run": r + 1,
+                "my_expected_cats": _r(mine),
+                "rank_of_teams": f"{rank}/{teams}",
+                "cat_win_rates": {k: _r(v) for k, v in cats.items()},
+                "my_picks": [f"{p.overall}. {p.name}" for p in state.my_picks()],
+            }
+        )
+    return {
+        "slot": my_slot,
+        "teams": teams,
+        "punts": list(pun),
+        "runs": results,
+        "avg_expected_cats": _r(sum(x["my_expected_cats"] for x in results) / len(results)),
+        "method": "others draft by noisy ESPN ADP; I draft by the build-aware recommender; season-level sim",
+    }

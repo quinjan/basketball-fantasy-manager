@@ -538,13 +538,13 @@ def _context():
 
 
 def _load_league(demo: bool):
-    from fbm.league.demo import load_league
+    from fbm.gm import services as svc
 
     if not demo:
         _fail("Live Yahoo league data is pending Yahoo API approval. Use --demo for now.")
     try:
-        return load_league()
-    except FileNotFoundError as err:
+        return svc.active_league()
+    except svc.GMError as err:
         _fail(str(err))
 
 
@@ -845,6 +845,306 @@ def sync_memory_cmd(
     outcome = sync_memory(message, load_settings().git_account, push=push)
     color = "green" if outcome.pushed or not outcome.committed else "yellow"
     console.print(f"[{color}]{outcome.detail}[/]")
+
+
+# ---------------------------------------------------------------- Streaming, trades, learning, draft (via services)
+
+
+def _svc(fn, *args, **kwargs):
+    from fbm.gm import services as svc
+    from fbm.gm.proposals import ProposalError
+
+    try:
+        result = fn(*args, **kwargs)
+    except (svc.GMError, ProposalError, FileNotFoundError, ValueError) as err:
+        _fail(str(err))
+    if isinstance(result, dict) and "error" in result:
+        _fail(result["error"])
+    return result
+
+
+def _pct(x: float) -> str:
+    return f"{x:.0%}"
+
+
+@app.command()
+def stream(
+    opponent: str = typer.Option(None, help="Opponent team key or name (default: current opponent)."),
+    adds: int = typer.Option(None, help="Adds available (default: weekly limit minus adds used)."),
+    protect: str = typer.Option("", help="Comma-separated players that must not be dropped."),
+) -> None:
+    """Streaming plan for the rest of this week (best add/drop sequence within the add limit)."""
+    from fbm.gm import services as svc
+
+    r = _svc(svc.streaming_plan, opponent, adds, 4, protect)
+    b, a = r["baseline"], r["after_plan"]
+    console.print(
+        f"[bold]{r['window_et']}[/] vs {r['opponent']} · adds {r['adds_available']} available "
+        f"({r['adds_used_this_week']}/{r['weekly_add_limit']} used) · punts {', '.join(r['punts_applied']) or 'none'}"
+    )
+    table = Table(title="Streaming plan")
+    for col in ("Effective (ET)", "Add", "Drop", "+Exp cats", "Add games", "Drop games lost", "ROS cost"):
+        table.add_column(col)
+    for m in r["moves"]:
+        table.add_row(
+            m["effective_et"],
+            m["add"],
+            m["drop"] or "-",
+            f"{m['gain_expected_cats']:+.2f}",
+            str(m["add_games"]),
+            str(m["drop_games_lost"]),
+            f"{m['ros_value_cost']:.2f}",
+        )
+    console.print(table if r["moves"] else "[yellow]No move clears the minimum gain — hold.[/]")
+    console.print(
+        f"Expected cats {b['expected_cats']:.2f} → [bold]{a['expected_cats']:.2f}[/] · P(win week) "
+        f"{_pct(b['p_win_majority'])} → [bold]{_pct(a['p_win_majority'])}[/] · games started "
+        f"{r['games_started']['before']} → {r['games_started']['after']}"
+    )
+
+
+trade_app = typer.Typer(no_args_is_help=True, help="Trade evaluation and search.")
+app.add_typer(trade_app, name="trade")
+
+
+def _print_trade(t: dict) -> None:
+    me, them = t["me"], t["them"]
+    console.print(
+        f"[bold]{', '.join(me['gives'])}[/] → {them['team']} for [bold]{', '.join(me['gets'])}[/]  ·  "
+        f"verdict: [cyan]{t['verdict']}[/]"
+    )
+    table = Table()
+    for col in ("Side", "Exp cats before", "after", "Δ", "Ranking value Δ", "Drops", "FA fills"):
+        table.add_column(col)
+    for s in (me, them):
+        table.add_row(
+            s["team"],
+            f"{s['expected_cats_before']:.2f}",
+            f"{s['expected_cats_after']:.2f}",
+            f"{s['expected_cats_delta']:+.3f}",
+            f"{s['ranking_value_delta']:+.2f}",
+            ", ".join(s["forced_drops"]) or "-",
+            ", ".join(s["free_agent_fills"]) or "-",
+        )
+    console.print(table)
+    deltas = ", ".join(f"{k} {v:+.0%}" for k, v in me["cat_win_rate_delta"].items() if abs(v) >= 0.02)
+    console.print(f"[dim]My category win-rate changes: {deltas or 'small'}[/]")
+    for note in t["notes"]:
+        console.print(f"[dim]- {note}[/]")
+
+
+@trade_app.command("eval")
+def trade_eval(
+    partner: str = typer.Option(..., help="Partner team key or name."),
+    give: str = typer.Option(..., help="Comma-separated players I give."),
+    get: str = typer.Option(..., help="Comma-separated players I get."),
+) -> None:
+    """Evaluate a specific trade for both sides."""
+    from fbm.gm import services as svc
+
+    _print_trade(_svc(svc.evaluate_trade_tool, partner, give, get))
+
+
+@trade_app.command("find")
+def trade_find(
+    partner: str = typer.Option(None, help="Limit to one partner team."),
+    limit: int = typer.Option(6, help="Max trades to show."),
+) -> None:
+    """Search the league for trades that help us and are defensible for them."""
+    from fbm.gm import services as svc
+
+    r = _svc(svc.find_trades_tool, partner, 2, 2, limit)
+    if not r["trades"]:
+        console.print("[yellow]No trades found that help us and are defensible for the other side.[/]")
+    for t in r["trades"]:
+        _print_trade(t)
+        console.print()
+
+
+learn_app = typer.Typer(no_args_is_help=True, help="Learning loop: decision grades and simulator calibration.")
+app.add_typer(learn_app, name="learn")
+
+
+@learn_app.command("grade")
+def learn_grade(days: int = typer.Option(28, help="Look back this many days.")) -> None:
+    """Grade executed moves by realized production."""
+    from fbm.gm import services as svc
+
+    r = _svc(svc.grade_decisions_tool, days)
+    table = Table(title="Decision grades")
+    for col in ("Ref", "Move", "Window (ET)", "Games", "Δ (team-week SD)", "Grade"):
+        table.add_column(col)
+    for d in r["decisions"]:
+        table.add_row(d["ref"], d["title"], d["window_et"], str(d["games_counted"]), f"{d['delta']:+.2f}", d["grade"])
+    console.print(table if r["decisions"] else "No executed moves to grade yet.")
+
+
+@learn_app.command("calibration")
+def learn_calibration() -> None:
+    """Simulator calibration (Brier score vs coin flip, reliability)."""
+    from fbm.gm import services as svc
+
+    console.print_json(json.dumps(_svc(svc.prediction_calibration), default=str))
+
+
+@learn_app.command("retro")
+def learn_retro(week_start: str = typer.Option(None, help="Monday (ET) of the week; default last week.")) -> None:
+    """Retro data for a fantasy week (JSON)."""
+    from fbm.gm import services as svc
+
+    console.print_json(json.dumps(_svc(svc.weekly_retro_data_tool, week_start), default=str))
+
+
+draft_app = typer.Typer(no_args_is_help=True, help="Draft assistant (board, live draft, mock drafts).")
+app.add_typer(draft_app, name="draft")
+
+
+@draft_app.command("board")
+def draft_board_cmd(
+    top: int = typer.Option(40),
+    punt: str = typer.Option(None, help="e.g. 'FT%,TO'"),
+    position: str = typer.Option(None, help="PG/SG/G/SF/PF/F/C"),
+) -> None:
+    """Draft board with tiers and ADP."""
+    from fbm.gm import services as svc
+
+    r = _svc(svc.draft_board, top, punt, position)
+    table = Table(title=f"Draft board · punts {', '.join(r['punts']) or 'none'}")
+    for col in ("#", "Tier", "Player", "NBA", "Pos", "Value", "ADP", "Value vs ADP"):
+        table.add_column(col)
+    for p in r["players"]:
+        vva = p["value_vs_adp"]
+        vva_s = "" if vva is None else (f"[green]+{vva}[/]" if vva > 5 else f"[red]{vva}[/]" if vva < -5 else str(vva))
+        table.add_row(
+            str(p["rank"]),
+            str(p["tier"]),
+            p["player"],
+            p["nba"],
+            "/".join(p["positions"]),
+            f"{p['value']:+.2f}",
+            "" if p["adp"] is None else f"{p['adp']:.1f}",
+            vva_s,
+        )
+    console.print(table)
+
+
+def _print_recommend(r: dict) -> None:
+    if r.get("done"):
+        console.print(f"[green]Draft complete.[/] My team: {', '.join(r['my_team'])}")
+        return
+    who = "[bold green]YOUR PICK[/]" if r["is_my_pick"] else f"team {r['on_clock']} on the clock"
+    console.print(f"Pick {r['overall']} (round {r['round']}) — {who} · my next picks {r['my_next_picks']}")
+    table = Table()
+    for col in ("Player", "Pos", "Value", "Build score", "Tier", "ADP", "P(avail next)"):
+        table.add_column(col)
+    for x in r["recommendations"]:
+        p = x["p_available_next_pick"]
+        table.add_row(
+            x["player"],
+            "/".join(x["positions"]),
+            f"{x['value']:+.2f}",
+            f"{x['build_score']:+.2f}",
+            str(x["tier"]),
+            "" if x["adp"] is None else f"{x['adp']:.1f}",
+            "" if p is None else _pct(p),
+        )
+    console.print(table)
+    if r["position_needs"]:
+        console.print(f"[yellow]Position needs: {', '.join(r['position_needs'])}[/]")
+    if r["projected_best_at_my_following_pick"]:
+        console.print(
+            f"[dim]Likely still there at my following pick: {', '.join(r['projected_best_at_my_following_pick'])}[/]"
+        )
+
+
+@draft_app.command("start")
+def draft_start_cmd(
+    teams: int = typer.Option(12),
+    slot: int = typer.Option(..., help="My draft slot (1-based)."),
+    rounds: int = typer.Option(13),
+    punt: str = typer.Option("", help="e.g. 'FT%'"),
+) -> None:
+    """Start a live draft."""
+    from fbm.gm import services as svc
+
+    _print_recommend(_svc(svc.draft_start, teams, slot, rounds, punt))
+
+
+@draft_app.command("pick")
+def draft_pick_cmd(player: str = typer.Argument(..., help="Player drafted by the team on the clock.")) -> None:
+    """Record the next pick (in draft order)."""
+    from fbm.gm import services as svc
+
+    r = _svc(svc.draft_pick, player)
+    rec = r["recorded"]
+    console.print(
+        f"Recorded #{rec['overall']}: {rec['player']} (team {rec['team_slot']}{', mine' if rec['mine'] else ''})"
+    )
+    _print_recommend(r)
+
+
+@draft_app.command("undo")
+def draft_undo_cmd() -> None:
+    """Undo the last pick."""
+    from fbm.gm import services as svc
+
+    r = _svc(svc.draft_undo)
+    console.print(f"Undid: {r['undone']}")
+    _print_recommend(r)
+
+
+@draft_app.command("recommend")
+def draft_recommend_cmd() -> None:
+    """Advice for the current pick."""
+    from fbm.gm import services as svc
+
+    _print_recommend(_svc(svc.draft_recommend))
+
+
+@draft_app.command("mock")
+def draft_mock_cmd(
+    slot: int = typer.Option(1),
+    teams: int = typer.Option(12),
+    rounds: int = typer.Option(13),
+    punt: str = typer.Option(""),
+    runs: int = typer.Option(3),
+) -> None:
+    """Mock drafts scored by season-level simulation."""
+    from fbm.gm import services as svc
+
+    r = _svc(svc.draft_mock, slot, teams, rounds, punt, runs)
+    for run in r["runs"]:
+        console.print(
+            f"[bold]Run {run['run']}[/]: expected cats {run['my_expected_cats']:.2f} · rank {run['rank_of_teams']}"
+        )
+        console.print("  " + " · ".join(run["my_picks"]))
+    console.print(
+        f"Average expected categories: [bold]{r['avg_expected_cats']:.2f}[/] "
+        f"(slot {slot}, punts {', '.join(r['punts']) or 'none'})"
+    )
+
+
+@app.command()
+def dashboard(port: int = typer.Option(8501, help="Local port."), open_browser: bool = typer.Option(True)) -> None:
+    """Launch the local Streamlit dashboard."""
+    from importlib.resources import files
+
+    app_path = str(files("fbm.dashboard").joinpath("app.py"))
+    cmd = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        app_path,
+        "--server.port",
+        str(port),
+        "--server.headless",
+        "true" if not open_browser else "false",
+        "--browser.gatherUsageStats",
+        "false",
+    ]
+    console.print(f"Dashboard → http://localhost:{port}  (Ctrl+C to stop)")
+    subprocess.run(cmd, check=False)
 
 
 if __name__ == "__main__":

@@ -12,8 +12,8 @@ from typing import Any
 from fbm.config import RAW_DIR
 from fbm.gm import memory
 from fbm.gm.proposals import Proposal
-from fbm.league.demo import save_league
-from fbm.league.model import LeagueState, RosterPlayer, eligibility_from_espn_position
+from fbm.league.demo import roster_player, save_league
+from fbm.league.model import LeagueState, RosterPlayer
 
 
 @dataclass
@@ -80,14 +80,11 @@ def _manual_trade(pay: Mapping[str, Any]) -> list[str]:
     ]
 
 
-def roster_player_from_values(pid: str, values) -> RosterPlayer:
-    row = values.loc[pid]
-    return RosterPlayer(
-        pid, str(row["name"]), str(row["team"]), eligibility_from_espn_position(str(row["position"])), "BN"
-    )
+def roster_player_from_values(pid: str, values, eligibility=None) -> RosterPlayer:
+    return roster_player(pid, values, eligibility)
 
 
-def execute(p: Proposal, league: LeagueState, values=None) -> ExecutionResult:
+def execute(p: Proposal, league: LeagueState, values=None, eligibility=None) -> ExecutionResult:
     problems = revalidate(p, league)
     if problems:
         return ExecutionResult("failed", {"revalidation": problems})
@@ -103,7 +100,7 @@ def execute(p: Proposal, league: LeagueState, values=None) -> ExecutionResult:
             team = league.my_team
             if pay.get("drop"):
                 team.players = [x for x in team.players if x.player_id != pay["drop"]]
-            team.players.append(roster_player_from_values(pay["add"], values))
+            team.players.append(roster_player_from_values(pay["add"], values, eligibility))
         elif p.kind == "trade":
             mine, partner = league.my_team, league.team(pay["partner"])
             give, get = set(pay.get("give", [])), set(pay.get("get", []))
