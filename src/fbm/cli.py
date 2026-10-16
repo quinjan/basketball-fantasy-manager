@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 import webbrowser
-from datetime import date
+from datetime import date, datetime
 
 import typer
 from rich.console import Console
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
 from rich.table import Table
 
 from fbm import credentials
@@ -22,7 +24,11 @@ from fbm.config import (
     load_league_config,
     save_league_config,
 )
-from fbm.timeutil import nba_today, nba_tomorrow, parse_date
+from fbm.data import queries, sync
+from fbm.data.espn import EspnClient
+from fbm.data.espn import current_season as espn_current_season
+from fbm.store import db as store
+from fbm.timeutil import ET, nba_today, nba_tomorrow, parse_date
 from fbm.yahoo import discovery
 from fbm.yahoo import settings as yahoo_settings
 from fbm.yahoo.auth import (
@@ -37,11 +43,13 @@ from fbm.yahoo.client import YahooAPIError, YahooClient
 from fbm.yahoo.roster import get_roster
 from fbm.yahoo.writes import verify_write_scope
 
-app = typer.Typer(
-    no_args_is_help=True, help="FBM — AI front office for Yahoo Fantasy Basketball (9-cat H2H)."
-)
+app = typer.Typer(no_args_is_help=True, help="FBM — AI front office for Yahoo Fantasy Basketball (9-cat H2H).")
 league_app = typer.Typer(no_args_is_help=True, help="League discovery and selection.")
 app.add_typer(league_app, name="league")
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure") and (_stream.encoding or "").lower() not in ("utf-8", "utf8"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 console = Console()
 
 
@@ -126,8 +134,7 @@ def auth(
         url = authorize_url(client_id, scope=scope)
         console.print("\n[bold]1.[/] A browser window will open. Sign in and click [bold]Agree/Allow[/].")
         console.print(
-            f"[bold]2.[/] You'll land on a page that fails to load ({REDIRECT_URI}/?code=...). "
-            "That's expected."
+            f"[bold]2.[/] You'll land on a page that fails to load ({REDIRECT_URI}/?code=...). That's expected."
         )
         console.print("[bold]3.[/] Copy the [bold]full URL[/] from the address bar and paste it below.\n")
         console.print(f"If no browser opens, visit:\n{url}\n")
@@ -135,9 +142,7 @@ def auth(
         pasted = typer.prompt("Paste the redirected URL (or just the code)")
 
     def _exchange() -> None:
-        payload = exchange_code(
-            client_id, credentials.require(credentials.YAHOO_CLIENT_SECRET), extract_code(pasted)
-        )
+        payload = exchange_code(client_id, credentials.require(credentials.YAHOO_CLIENT_SECRET), extract_code(pasted))
         store_token_response(payload)
 
     _run(_exchange)
@@ -232,8 +237,7 @@ def status() -> None:
     try:
         cfg = load_league_config()
         console.print(
-            f"League: [bold]{cfg.league_name}[/] ({cfg.league_key}) · Team: [bold]{cfg.team_name}[/] "
-            f"({cfg.team_key})"
+            f"League: [bold]{cfg.league_name}[/] ({cfg.league_key}) · Team: [bold]{cfg.team_name}[/] ({cfg.team_key})"
         )
     except NotConfiguredError:
         console.print("League: [yellow]not selected[/]")
@@ -255,13 +259,9 @@ def settings(
         if save:
             RAW_DIR.mkdir(parents=True, exist_ok=True)
             (RAW_DIR / "league_settings.json").write_text(json.dumps(raw, indent=2), encoding="utf-8")
-            (RAW_DIR / "league_settings_summary.json").write_text(
-                json.dumps(summary, indent=2), encoding="utf-8"
-            )
+            (RAW_DIR / "league_settings_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
             MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-            (MEMORY_DIR / "league-settings.md").write_text(
-                yahoo_settings.to_markdown(summary), encoding="utf-8"
-            )
+            (MEMORY_DIR / "league-settings.md").write_text(yahoo_settings.to_markdown(summary), encoding="utf-8")
             console.print("[green]Saved[/] data/raw/league_settings*.json and memory/league-settings.md")
 
     _run(_settings)
@@ -317,6 +317,120 @@ def verify_write(
             raise typer.Exit(code=2)
 
     _run(_verify)
+
+
+# ---------------------------------------------------------------- NBA data (ESPN)
+
+data_app = typer.Typer(no_args_is_help=True, help="NBA data (ESPN) sync and inspection.")
+app.add_typer(data_app, name="data")
+
+
+def _progress_bar(label: str):
+    progress = Progress(
+        TextColumn(label),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
+        console=console,
+        transient=True,
+    )
+    task = progress.add_task(label, total=None)
+
+    def update(done: int, total: int) -> None:
+        progress.update(task, completed=done, total=total)
+
+    return progress, update
+
+
+@data_app.command("sync")
+def data_sync() -> None:
+    """Daily sync: schedule status, new box scores, season averages, injuries, news."""
+    conn = store.connect()
+    progress, update = _progress_bar("box scores")
+    with progress:
+        results = sync.daily_sync(conn, EspnClient(), date.today(), progress=update)
+    for r in results:
+        console.print(f"[green]✓[/] {r}")
+
+
+@data_app.command("backfill")
+def data_backfill(
+    season: int = typer.Option(None, help="ESPN season end-year (2026 = 2025-26). Default: last season."),
+    workers: int = typer.Option(4, min=1, max=8, help="Parallel box-score downloads."),
+) -> None:
+    """One-time load of a completed season's games + box scores (for priors and variance)."""
+    target = season or espn_current_season(date.today()) - 1
+    conn = store.connect()
+    progress, update = _progress_bar(f"{target} box scores")
+    with progress:
+        results = sync.backfill_season(conn, EspnClient(), target, date.today(), workers=workers, progress=update)
+    for r in results:
+        console.print(f"[green]✓[/] {r}")
+
+
+@data_app.command("status")
+def data_status() -> None:
+    """What's in the local NBA store."""
+    s = queries.store_status(store.connect())
+    console.print(
+        f"Teams {s['teams']} · Players {s['players']} · Box lines {s['box_lines']} · "
+        f"Injuries {s['injuries']} · News {s['news']}"
+    )
+    table = Table(title="Seasons (regular season)")
+    for col in ("Season", "Games", "Completed", "Box synced", "First", "Last"):
+        table.add_column(col)
+    for row in s["seasons"]:
+        table.add_row(
+            str(row["season"]),
+            str(row["games"]),
+            str(row["completed"]),
+            str(row["boxed"]),
+            row["first"],
+            row["last"],
+        )
+    console.print(table)
+    for row in s["season_averages"]:
+        console.print(f"Season averages {row['season']}: {row['players']} players")
+    for row in s["sync_log"]:
+        console.print(f"[dim]{row['job']}: {row['last_run']} — {row['detail']}[/]")
+
+
+@data_app.command("games")
+def data_games(
+    day: str = typer.Option(None, "--date", help="ET date YYYY-MM-DD (default: today ET)"),
+) -> None:
+    """NBA games on an ET date."""
+    target = _resolve_day(day, nba_today())
+    rows = queries.games_on(store.connect(), target)
+    table = Table(title=f"NBA games — {target} (ET)")
+    for col in ("Away", "Home", "Tip (ET)", "Tip (local)", "State"):
+        table.add_column(col)
+    for g in rows:
+        start = datetime.fromisoformat(g["start_utc"])
+        table.add_row(
+            g["away"],
+            g["home"],
+            start.astimezone(ET).strftime("%H:%M"),
+            start.astimezone().strftime("%a %H:%M"),
+            g["state"],
+        )
+    console.print(table if rows else f"No games stored for {target}. Run `fbm data sync`.")
+
+
+@data_app.command("injuries")
+def data_injuries(team: str = typer.Option(None, help="NBA team abbreviation, e.g. BOS")) -> None:
+    """Current ESPN injury report."""
+    conn = store.connect()
+    sql, args = "SELECT * FROM injuries_current", []
+    if team:
+        sql, args = sql + " WHERE team = ?", [team.upper()]
+    rows = conn.execute(sql + " ORDER BY team, name", args).fetchall()
+    table = Table(title="Injuries (ESPN)")
+    for col in ("Team", "Player", "Status", "Return", "Note"):
+        table.add_column(col)
+    for r in rows:
+        table.add_row(r["team"], r["name"], r["status"], r["return_date"] or "", (r["short_comment"] or "")[:70])
+    console.print(table)
 
 
 if __name__ == "__main__":

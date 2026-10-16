@@ -42,9 +42,7 @@ def verify_write_scope(client: YahooClient, team_key: str, day: date) -> WriteCh
     """Re-submit one player's *current* position (a no-op) to prove the app has write scope."""
     before = get_roster(client, team_key, day)
     if not before.is_editable:
-        return WriteCheck(
-            None, f"Roster for {day} is not editable (locked or out of season); try a later date."
-        )
+        return WriteCheck(None, f"Roster for {day} is not editable (locked or out of season); try a later date.")
     candidates = [p for p in before.players if p.is_editable and p.selected_position]
     if not candidates:
         return WriteCheck(None, f"No editable players on {day}.")
@@ -59,6 +57,4 @@ def verify_write_scope(client: YahooClient, team_key: str, day: date) -> WriteCh
     after = get_roster(client, team_key, day)
     if after.assignments() != before.assignments():
         return WriteCheck(False, "Write succeeded but the lineup changed unexpectedly — inspect immediately.")
-    return WriteCheck(
-        True, f"Write scope confirmed (no-op re-save of {target.name} at {target.selected_position})."
-    )
+    return WriteCheck(True, f"Write scope confirmed (no-op re-save of {target.name} at {target.selected_position}).")

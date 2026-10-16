@@ -124,9 +124,7 @@ def to_markdown(summary: dict[str, Any]) -> str:
         "|---|---|---|",
     ]
     for c in summary.get("scoring_categories", []):
-        lines.append(
-            f"| {c['display_name']} | {c['stat_id']} | {'higher' if c['higher_is_better'] else 'lower'} |"
-        )
+        lines.append(f"| {c['display_name']} | {c['stat_id']} | {'higher' if c['higher_is_better'] else 'lower'} |")
     lines += ["", "## Roster slots", "", "| Slot | Count | Starting |", "|---|---|---|"]
     for r in summary.get("roster_slots", []):
         lines.append(f"| {r['position']} | {r['count']} | {'yes' if r['is_starting'] else 'no'} |")
