@@ -12,6 +12,7 @@ import plotly.express as px
 import streamlit as st
 
 from fbm.config import MEMORY_DIR
+from fbm.constants import C
 from fbm.gm import memory
 from fbm.gm import services as svc
 
@@ -410,6 +411,83 @@ def page_league() -> None:
     st.caption(r["method"])
 
 
+def page_strategy() -> None:
+    c1, c2 = st.columns([3, 1])
+    wanted = c1.text_input("Builds to test (blank = auto)", placeholder="FT%;3PM,FT%")
+    moves = c2.slider("Free-agent swaps per build", 0, 4, int(C("punt.fa_moves")))
+    r = call(cached, "punt_scenarios", wanted.strip() or None, moves, 12)
+    rec, now = r["recommendation"], r["now_without_moves"]
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Approved strategy", r["approved_strategy"])
+    m2.metric("Best build tested", rec["build"])
+    m3.metric("Roster now: expected cats", f"{now['expected_cats']:.2f}")
+    m4.metric("Roster now: P(win week)", f"{now['p_win_week']:.0%}")
+    (st.warning if rec["action"] == "propose_switch" else st.success)(f"**{rec['action'].upper()}** — {rec['reason']}")
+    rows = r["scenarios"]
+    names = [("★ " if s["approved_strategy"] else "") + s["build"] for s in rows]
+    fig = px.bar(
+        x=[s["expected_cats"] for s in rows],
+        y=names,
+        orientation="h",
+        color=[s["approved_strategy"] for s in rows],
+        color_discrete_map={True: "#d4a72c", False: "#2ea043"},
+        text=[f"{s['expected_cats']:.2f}" for s in rows],
+        title="Expected categories won per week after each build's confirmed swaps",
+    )
+    fig.update_layout(
+        height=60 + 34 * len(rows),
+        showlegend=False,
+        yaxis={"autorange": "reversed", "title": None},
+        xaxis={"title": "Expected categories won per week"},
+    )
+    fig.update_xaxes(range=[min(s["expected_cats"] for s in rows) - 0.3, max(s["expected_cats"] for s in rows) + 0.1])
+    st.plotly_chart(fig, use_container_width=True)
+    table = pd.DataFrame(
+        [
+            {
+                "Build": n,
+                "Exp cats": s["expected_cats"],
+                "vs strategy": s["delta_vs_strategy"],
+                "P(win wk)": s["p_win_week"],
+                "Reliable cats": s["reliable_cats"],
+                "Swaps kept": "; ".join(f"+{x['add']} / -{x['drop']}" for x in s["fa_swaps"]),
+                "Lens conflicts": "; ".join(
+                    f"{x['lens_wanted']} ({x['sim_change']:+.2f})" for x in s["lens_conflicts"]
+                ),
+            }
+            for n, s in zip(names, rows, strict=True)
+        ]
+    )
+    st.dataframe(
+        table.style.map(color_value, subset=["vs strategy"]).format(
+            {"Exp cats": "{:.2f}", "vs strategy": "{:+.2f}", "P(win wk)": "{:.0%}"}
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+    heat = pd.DataFrame([s["cat_win_rates"] for s in rows], index=names)
+    fig2 = px.imshow(
+        heat,
+        text_auto=".0%",
+        color_continuous_scale=["#da3633", "#f6f8fa", "#2ea043"],
+        zmin=0,
+        zmax=1,
+        aspect="auto",
+        title="Category win rate vs the league under each build",
+    )
+    fig2.update_layout(height=80 + 34 * len(rows), coloraxis_showscale=False)
+    st.plotly_chart(fig2, use_container_width=True)
+    best = next((s for s in rows if s["build"] == rec["build"]), None)
+    if best and (best["buy_targets"] or best["sell_candidates"]):
+        with st.expander(f"Trade-market edges under {best['build']} (market rank → build rank)"):
+            b1, b2 = st.columns(2)
+            b1.markdown("**Buy targets**")
+            b1.dataframe(pd.DataFrame(best["buy_targets"]), hide_index=True, use_container_width=True)
+            b2.markdown("**Sell candidates**")
+            b2.dataframe(pd.DataFrame(best["sell_candidates"]), hide_index=True, use_container_width=True)
+    st.caption(r["method"])
+
+
 def page_proposals() -> None:
     status = st.radio("Show", ["open", "all"], horizontal=True)
     r = call(svc.list_proposals, None if status == "all" else "open", 50)
@@ -617,6 +695,7 @@ PAGES = {
     "Streaming": page_streaming,
     "Trades": page_trades,
     "League": page_league,
+    "Strategy": page_strategy,
     "Proposals": page_proposals,
     "Learning": page_learning,
     "Draft": page_draft,

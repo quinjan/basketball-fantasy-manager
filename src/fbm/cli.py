@@ -657,6 +657,57 @@ def playoffs(
 
 
 @app.command()
+def punts(
+    scenarios: str = typer.Option(None, help="Specific builds to test, e.g. 'FT%;3PM,FT%' (default: auto)."),
+    moves: int = typer.Option(None, help="Free-agent swaps each build may make (default: punt.fa_moves)."),
+    top: int = typer.Option(8),
+) -> None:
+    """Punt-scenario evaluator: which categories should the build give up?"""
+    from fbm.gm import services as svc
+
+    r = _svc(svc.punt_scenarios, scenarios, moves, top)
+    now = r["now_without_moves"]
+    console.print(
+        f"Approved strategy: [bold]{r['approved_strategy']}[/] · roster now {now['expected_cats']:.2f} expected cats, "
+        f"P(win week) {now['p_win_week']:.0%} · ranked by {r['metric']} · {r['scenarios_tested']} builds tested"
+    )
+    table = Table(title="Punt builds (after simulation-confirmed free-agent swaps)")
+    for col in ("Build", "Exp cats", "vs strategy", "P(win wk)", "Reliable", "Swaps kept", "Lens conflicts"):
+        table.add_column(col)
+    for s in r["scenarios"]:
+        table.add_row(
+            ("★ " if s["approved_strategy"] else "") + s["build"],
+            f"{s['expected_cats']:.2f}",
+            f"{s['delta_vs_strategy']:+.2f}",
+            f"{s['p_win_week']:.0%}",
+            str(s["reliable_cats"]),
+            "; ".join(f"+{x['add']} / -{x['drop']}" for x in s["fa_swaps"]) or "-",
+            "; ".join(f"{x['lens_wanted']} ({x['sim_change']:+.2f})" for x in s["lens_conflicts"]) or "-",
+        )
+    console.print(table)
+    rec = r["recommendation"]
+    color = "yellow" if rec["action"] == "propose_switch" else "green"
+    console.print(f"[bold {color}]{rec['action'].upper()}[/]: {rec['reason']}")
+    best = next((s for s in r["scenarios"] if s["build"] == rec["build"]), None)
+    if best and best["buy_targets"]:
+        console.print(
+            "[dim]Buy targets under "
+            + best["build"]
+            + ": "
+            + ", ".join(
+                f"{b['player']} ({b['team']}, #{b['market_rank']}→#{b['lens_rank']})" for b in best["buy_targets"]
+            )
+            + "[/]"
+        )
+    if best and best["sell_candidates"]:
+        console.print(
+            "[dim]Sell candidates: "
+            + ", ".join(f"{b['player']} (#{b['market_rank']}→#{b['lens_rank']})" for b in best["sell_candidates"])
+            + "[/]"
+        )
+
+
+@app.command()
 def waiver(
     player: str = typer.Argument(..., help="Player to claim."),
     drop: str = typer.Option(None, help="Player to drop (default: my lowest-value active player)."),

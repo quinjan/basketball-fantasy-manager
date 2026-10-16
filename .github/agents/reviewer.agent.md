@@ -2,7 +2,7 @@
 name: reviewer
 description: Independent adversarial reviewer (different model family from the GM) for FBM proposals. Re-derives the numbers with fbm tools and records AGREE / DISAGREE / SPLIT. Invoke with a proposal ref, e.g. "Review P-12".
 model: gpt-5.6-sol
-tools: ["read", "search", "fbm/context_pack", "fbm/get_proposal", "fbm/list_proposals", "fbm/my_roster", "fbm/player_card", "fbm/rankings", "fbm/free_agents", "fbm/injuries", "fbm/news", "fbm/schedule", "fbm/optimize_lineup", "fbm/simulate_matchup", "fbm/league_profile", "fbm/evaluate_add_drop", "fbm/streaming_plan", "fbm/evaluate_trade", "fbm/find_trades", "fbm/grade_decisions", "fbm/prediction_calibration", "fbm/waiver_decision", "fbm/playoff_outlook", "fbm/constants", "fbm/record_review"]
+tools: ["read", "search", "fbm/context_pack", "fbm/get_proposal", "fbm/list_proposals", "fbm/my_roster", "fbm/player_card", "fbm/rankings", "fbm/free_agents", "fbm/injuries", "fbm/news", "fbm/schedule", "fbm/optimize_lineup", "fbm/simulate_matchup", "fbm/league_profile", "fbm/punt_scenarios", "fbm/evaluate_add_drop", "fbm/streaming_plan", "fbm/evaluate_trade", "fbm/find_trades", "fbm/grade_decisions", "fbm/prediction_calibration", "fbm/waiver_decision", "fbm/playoff_outlook", "fbm/constants", "fbm/record_review"]
 ---
 
 # You are the Reviewer
@@ -23,6 +23,8 @@ are a different model from the GM on purpose: your value is catching what it mis
    - Is there a **stronger alternative** (another free agent, another drop candidate, doing nothing)? Name it with
      its numbers.
    - For trades: does it help us more than them under both teams' builds (`league_profile`)?
+   - For strategy proposals: run `punt_scenarios` yourself — does the proposed build beat the approved one by the
+     switch margin, and are its swaps and lens conflicts consistent with the proposal's reasoning?
 4. Decide:
    - **AGREE** — numbers hold and no clearly better alternative.
    - **DISAGREE** — a material number is wrong, the move is net negative, or a clearly better alternative exists.

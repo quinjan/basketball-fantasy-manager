@@ -280,6 +280,57 @@ _ALL = [
         "Yahoo IL rules approximated; verify when connected.",
         "rule",
     ),
+    # punt scenarios
+    Constant(
+        "punt.fa_moves",
+        3,
+        "moves",
+        "Free-agent swaps each punt scenario may make before it is scored (same budget for no punt).",
+        "About one week of adds: what a build changes quickly, without assuming trades.",
+        "heuristic",
+    ),
+    Constant(
+        "punt.min_swap_gain",
+        0.25,
+        "G points",
+        "Lens-value gain a scenario's free-agent swap must clear to be considered.",
+        "Filters noise swaps between near-equal players.",
+        "heuristic",
+    ),
+    Constant(
+        "punt.min_sim_gain",
+        0.02,
+        "categories/week",
+        "Simulated improvement a proposed swap must deliver to be kept (divided by the number of categories when "
+        "ranking by P(win the week)).",
+        "Noise floor under common random numbers; the lens proposes, the simulation confirms.",
+        "heuristic",
+    ),
+    Constant(
+        "punt.pair_pool",
+        4,
+        "categories",
+        "Two-category punts are tried among this many of my weakest categories.",
+        "Keeps the search small; pairs of strong categories are not realistic punts.",
+        "heuristic",
+    ),
+    Constant(
+        "punt.reliable_win_rate",
+        0.6,
+        "probability",
+        "A category won at least this often vs the league counts as reliable.",
+        "Five reliable categories is the 9-cat H2H target.",
+        "heuristic",
+    ),
+    Constant(
+        "punt.switch_margin",
+        0.15,
+        "categories/week",
+        "Expected-category edge a build needs over the approved strategy before recommending a switch "
+        "(divided by the number of categories when ranking by P(win the week)).",
+        "Avoids churning strategy over simulation noise; switching costs moves.",
+        "heuristic",
+    ),
 ]
 
 REGISTRY: dict[str, Constant] = {c.key: c for c in _ALL}

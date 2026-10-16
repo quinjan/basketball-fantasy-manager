@@ -23,9 +23,9 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
 ## 2. How you think (the decision framework)
 
 - **Category math, not vibes.** Use G-scores (`rankings`, `player_card`, `my_roster`) for rest-of-season value; use
-  `simulate_matchup` for this week; `streaming_plan` for this week's add/drop sequence; `league_profile` for
-  build/strategy; `evaluate_trade` / `find_trades` for trades (both sides, season-level); `evaluate_add_drop`
-  before any pickup. Cite the numbers you used.
+  `simulate_matchup` for this week; `streaming_plan` for this week's add/drop sequence; `league_profile` and
+  `punt_scenarios` for build/strategy; `evaluate_trade` / `find_trades` for trades (both sides, season-level);
+  `evaluate_add_drop` before any pickup. Cite the numbers you used.
 - **Learn from results.** `grade_decisions` and `prediction_calibration` tell you how past moves and predictions
   turned out. If calibration is weak, hedge close calls; if a type of move keeps grading badly, stop making it.
 - **Waivers are rolling.** Before any waiver claim, run `waiver_decision`: claim only when the rest-of-season gain
@@ -48,7 +48,10 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
 - **Rest of season vs now.** Weigh this week's matchup against season value; never sacrifice a core player for a
   one-week stream. Late season, weight fantasy-playoff schedule density.
 - **Respect the approved strategy** (punts/targets in `strategy.json`). If evidence says the strategy is wrong,
-  propose a `strategy` change — don't drift silently.
+  propose a `strategy` change — don't drift silently. `punt_scenarios` is the evidence: switch only when it says
+  `propose_switch` (a build beats the approved one by the switch margin). Its `lens_conflicts` list moves the
+  strategy's rankings would get wrong (e.g. dropping a guard we still need for AST/PTS) — check those before
+  following punt-aware rankings for a drop.
 - **Know your uncertainty.** Projections early in the season lean on last season. Synthetic player models
   (listed by `simulate_matchup`) are less reliable. Say when a call is close.
 

@@ -35,6 +35,7 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 | `fbm playoffs [--top N]` | Fantasy-playoff schedule: games per team, playoff value above replacement |
 | `fbm waiver PLAYER [--drop X] [--free-agent]` | Rolling-waiver decision: claim / wait / add / pass |
 | `fbm constants` | Every tunable constant: value, default, unit, source (override in `config/constants.toml`) |
+| `fbm punts [--scenarios "FT%;3PM,FT%"] [--moves 3]` | Punt-scenario evaluator: compare builds, keep/switch recommendation |
 | `fbm sim --demo [--opponent KEY]` | Monte Carlo rest-of-week category odds |
 | `fbm profile --demo` | League-wide category strength (strategy/punt basis) |
 | `fbm stream [--opponent] [--adds] [--protect]` | Streaming plan: best add/drop sequence for the week |
@@ -42,7 +43,7 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 | `fbm trade find [--partner X]` | Find trades that help us and are defensible for them |
 | `fbm learn grade` / `calibration` / `retro` | Learning loop: grade executed moves, simulator calibration |
 | `fbm draft board/start/pick/undo/recommend/mock` | Draft assistant (ESPN ADP, tiers, live picks, mock drafts) |
-| `fbm dashboard [--port 8501]` | Local Streamlit dashboard (13 pages) |
+| `fbm dashboard [--port 8501]` | Local Streamlit dashboard (14 pages) |
 | `fbm proposals list/show/approve/reject` | Owner-side proposal decisions |
 | `fbm sync-memory -m "..."` | Commit + push memory/reports/config |
 
@@ -54,7 +55,7 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
   proposal and records AGREE/DISAGREE/SPLIT), `scout` (news/injury digging).
 - **Skills** (`.github/skills/`): `daily-gm`, `lineup-guard`, `weekly-retro-preview`, `trade-scan`,
   `season-strategy`, `approvals`, `consult`, `health`, `draft-assist`.
-- **MCP server** (`.github/mcp.json` → `fbm-mcp`): 39 tools over the engine. The folder must be trusted by Copilot.
+- **MCP server** (`.github/mcp.json` → `fbm-mcp`): 40 tools over the engine. The folder must be trusted by Copilot.
 - **Approvals:** in chat with the GM, or `uv run fbm proposals list|show|approve|reject P-12`.
 - **Automations** (Copilot app → Automations, all disabled until Yahoo approval): Daily GM 15:00, Lineup Guard hourly
   23:00–12:00, Weekly Retro Mon 15:30, Trade Scan Wed/Sat 16:00, Health Sun 10:00 (UTC+8).
@@ -83,6 +84,10 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
   offers that cost the partner > 1.0 ranking value. Output adds playoff-schedule value, weighted up as playoffs near.
 - **Playoffs:** fantasy weeks from the NBA schedule (default: last 3 weeks); games per team per playoff week and
   playoff value above replacement.
+- **Punt scenarios:** each build (no punt, every category, pairs of the weakest) re-values players, proposes
+  free-agent swaps in that order and keeps only those the simulation confirms; the resulting roster is scored in all
+  categories vs every team. Recommends a switch only past a margin; reports lens conflicts (moves a build's
+  rankings would get wrong) and buy/sell edges (build rank vs market rank).
 - **Rolling waivers:** claim if the ROS gain clears a bar that rises with the priority spent (priority rotates to
   last after a claim). Below the bar, wait for free agency only if no other team (ahead or behind) is likely to
   claim him; otherwise pass.

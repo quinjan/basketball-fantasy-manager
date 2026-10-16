@@ -168,6 +168,16 @@ def league_profile(n: int = 4000) -> dict:
 
 
 @tool()
+def punt_scenarios(scenarios: str | None = None, fa_moves: int | None = None, top: int = 8) -> dict:
+    """Compare punt builds (no punt, each category, pairs of my weakest) for MY roster: each build proposes
+    free-agent swaps in its valuation order, the simulation keeps only those that help, then all categories are
+    scored vs every team. Returns expected cats / P(win week) per build vs the approved strategy, a keep/switch
+    recommendation, lens_conflicts (moves the build's rankings would get wrong), and buy/sell market edges.
+    scenarios: optional 'FT%;3PM,FT%' to test specific builds. Run before any strategy proposal."""
+    return svc.punt_scenarios(scenarios, fa_moves, top)
+
+
+@tool()
 def evaluate_add_drop(add: str, drop: str | None = None, opponent: str | None = None) -> dict:
     """Quantify adding a free agent (and dropping one of mine): rest-of-season G deltas by category and this
     week's matchup odds before/after."""

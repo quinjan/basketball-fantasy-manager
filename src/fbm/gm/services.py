@@ -635,6 +635,164 @@ def league_profile_tool(n: int = 4000) -> dict[str, Any]:
     }
 
 
+def _scoring_metric() -> str:
+    """Ranking metric for builds: P(win the week) in one-win-per-week leagues, else expected categories won."""
+    summary = _league_summary() or {}
+    return "p_win_week" if (summary.get("settings") or {}).get("scoring_type") == "headone" else "expected_cats"
+
+
+def punt_scenarios(scenarios: str | None = None, fa_moves: int | None = None, top: int = 8, n: int = 3000):
+    """Compare punt builds for my roster: each lens makes its best free-agent swaps, then all categories are scored
+    against every team. `scenarios`: optional 'FT%;3PM,FT%' list (no punt and the approved strategy always run)."""
+    from fbm.analytics.bank import DrawBank
+    from fbm.analytics.punts import candidate_punts, evaluate_scenarios, lens_values, odds_vs_league
+    from fbm.analytics.trades import LeagueSim
+
+    league, c = active_league(), ctx()
+    keys = [k.key for k in league.categories]
+    label = {k.key: k.label for k in league.categories}
+    moves = int(C("punt.fa_moves")) if fa_moves is None else max(0, int(fa_moves))
+    current = tuple(sorted(_strategy_punts(None)))
+
+    available = _available_ids(league, c)
+    wanted = [tuple(sorted(cat.key for cat in parse_category_list(s))) for s in (scenarios or "").split(";") if s]
+    fa_pool: set[str] = set()
+    for lens_punts in [*candidate_punts(dict.fromkeys(keys, 0.5), 2, len(keys)), *wanted]:
+        fa_pool.update(lens_values(c.values.loc[available], keys, lens_punts).nlargest(moves + 2).index)
+    rostered = [pid for t in league.teams for pid in t.player_ids()]
+    bank = DrawBank(c.models([*rostered, *fa_pool], _conn()), n_sims=n, seed=37)
+    sim = LeagueSim(league, bank, c.values)
+    mine = league.my_team_key
+    others = {k: v for k, v in sim.totals.items() if k != mine}
+    now_rates, now_expected, now_p_win = odds_vs_league(sim.totals[mine], others, league.categories)
+
+    if wanted:
+        todo = list(dict.fromkeys([(), current, *wanted]))
+    else:
+        todo = list(dict.fromkeys([(), current, *candidate_punts(now_rates, 2, int(C("punt.pair_pool")))]))
+    active = {
+        t.team_key: [p.player_id for p in t.players if p.selected not in IL_SLOTS and p.player_id in c.values.index]
+        for t in league.teams
+    }
+    metric = _scoring_metric()
+    per = len(keys) if metric == "p_win_week" else 1
+    results = evaluate_scenarios(
+        todo,
+        values=c.values,
+        category_keys=keys,
+        categories=league.categories,
+        my_team_key=mine,
+        active=active,
+        free_agents=sorted(fa_pool),
+        team_totals=sim.team_totals,
+        others_totals=others,
+        fa_moves=moves,
+        min_gain=float(C("punt.min_swap_gain")),
+        reliable=float(C("punt.reliable_win_rate")),
+        metric=metric,
+        min_improvement=float(C("punt.min_sim_gain")) / per,
+    )
+    margin = float(C("punt.switch_margin")) / per
+    score = {r.punts: (r.p_win_week if metric == "p_win_week" else r.expected_cats) for r in results}
+    ranked = sorted(results, key=lambda r: -score[r.punts])
+    cur = next(r for r in results if r.punts == current)
+    best = ranked[0]
+    team_name = {t.team_key: t.name for t in league.teams}
+
+    def labels(punts: tuple[str, ...]) -> list[str]:
+        return [label[k] for k in punts]
+
+    def name(punts: tuple[str, ...]) -> str:
+        return "punt " + "+".join(labels(punts)) if punts else "no punt"
+
+    def row(r) -> dict[str, Any]:
+        return {
+            "build": name(r.punts),
+            "punts": labels(r.punts),
+            "approved_strategy": r.punts == current,
+            "expected_cats": _r(r.expected_cats),
+            "delta_vs_strategy": _r(r.expected_cats - cur.expected_cats),
+            "p_win_week": _r(r.p_win_week),
+            "reliable_cats": r.reliable_cats,
+            "cat_win_rates": {label[k]: _r(v) for k, v in r.cat_rates.items()},
+            "my_value_rank_under_lens": f"{r.value_rank} of {len(league.teams)}",
+            "fa_swaps": [
+                {
+                    "add": _names(c, [s.add])[0],
+                    "drop": _names(c, [s.drop])[0],
+                    "lens_gain": _r(s.gain),
+                    "sim_gain": _r(s.sim_delta, 3),
+                }
+                for s in r.swaps
+            ],
+            "lens_conflicts": [
+                {
+                    "lens_wanted": f"+{_names(c, [s.add])[0]} / -{_names(c, [s.drop])[0]}",
+                    "lens_gain": _r(s.gain),
+                    "sim_change": _r(s.sim_delta, 3),
+                }
+                for s in r.conflicts
+            ],
+            "sell_candidates": [
+                {"player": _names(c, [e.player_id])[0], "market_rank": e.market_rank, "lens_rank": e.lens_rank}
+                for e in r.sell
+            ],
+            "buy_targets": [
+                {
+                    "player": _names(c, [e.player_id])[0],
+                    "team": team_name.get(e.team_key, e.team_key),
+                    "market_rank": e.market_rank,
+                    "lens_rank": e.lens_rank,
+                }
+                for e in r.buy
+            ],
+        }
+
+    edge = score[best.punts] - score[cur.punts]
+    if best.punts == cur.punts:
+        action, text = "keep", f"The approved strategy ({name(current)}) is the best build tested."
+    elif edge >= margin:
+        action = "propose_switch"
+        text = (
+            f"{name(best.punts)} beats the approved strategy ({name(current)}) by {edge:.2f} "
+            f"{'P(win week)' if metric == 'p_win_week' else 'expected categories/week'} (margin {margin:.2f})."
+        )
+    else:
+        action = "keep"
+        text = (
+            f"{name(best.punts)} edges the approved strategy by {edge:.2f}, below the {margin:.2f} switch margin: "
+            "keep the current build."
+        )
+    shown = [r for r in ranked[: max(1, top)]]
+    shown += [r for r in results if r.punts in ((), current) and r not in shown]
+    return {
+        "metric": metric,
+        "now_without_moves": {
+            "expected_cats": _r(now_expected),
+            "p_win_week": _r(now_p_win),
+            "cat_win_rates": {label[k]: _r(v) for k, v in now_rates.items()},
+        },
+        "recommendation": {
+            "action": action,
+            "build": name(best.punts),
+            "punts": labels(best.punts),
+            "reason": text,
+            "next_step": "create_proposal kind strategy with these punts" if action == "propose_switch" else "none",
+        },
+        "approved_strategy": name(current),
+        "scenarios_tested": len(results),
+        "scenarios": [row(r) for r in shown],
+        "method": (
+            f"Each build re-values players with its punts and proposes free-agent swaps in that order; a swap is kept "
+            f"only if the simulation confirms it helps (up to {moves}, same budget for no punt). The resulting "
+            f"roster is scored in all categories vs every team in a schedule-neutral typical week ({n} "
+            "common-random-number draws). lens_conflicts = the build's top swap that the simulation rejected (its "
+            "valuations would mislead there). Positions are not enforced in swaps. Buy/sell edges compare a "
+            "player's rank under the build with his all-category (market) rank; trades are not simulated here."
+        ),
+    }
+
+
 def evaluate_add_drop(add: str, drop: str | None = None, opponent: str | None = None, n: int = 6000) -> dict[str, Any]:
     league, c = active_league(), ctx()
     add_id = _resolve(add)
