@@ -30,9 +30,9 @@ class AnalyticsContext:
     def value_map(self, column: str = "g_total") -> dict[str, float]:
         return self.values[column].to_dict()
 
-    def statuses(self) -> dict[str, str]:
+    def statuses(self, conn: sqlite3.Connection | None = None) -> dict[str, str]:
         out = {}
-        for r in self.conn.execute("SELECT espn_id, status, fantasy_status FROM injuries_current"):
+        for r in (conn or self.conn).execute("SELECT espn_id, status, fantasy_status FROM injuries_current"):
             fantasy = (r["fantasy_status"] or "").upper()
             out[r["espn_id"]] = (
                 "O"
@@ -41,8 +41,10 @@ class AnalyticsContext:
             )
         return out
 
-    def models(self, player_ids: Iterable[str]) -> dict[str, PlayerModel]:
-        return build_player_models(self.conn, player_ids, [self.season, self.prior], self.projections, self.statuses())
+    def models(self, player_ids: Iterable[str], conn: sqlite3.Connection | None = None) -> dict[str, PlayerModel]:
+        """Pass `conn` when calling from a different thread than the one that built this context."""
+        c = conn or self.conn
+        return build_player_models(c, player_ids, [self.season, self.prior], self.projections, self.statuses(c))
 
 
 def build_context(conn: sqlite3.Connection, today: date, cfg: ValuationConfig | None = None) -> AnalyticsContext:

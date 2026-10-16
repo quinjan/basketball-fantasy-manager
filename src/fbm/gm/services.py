@@ -438,7 +438,7 @@ def _matchup(league: LeagueState, me: FantasyTeam, opp: FantasyTeam, start_day: 
     days = date_range(day0, we)
     playing = teams_playing(_conn(), ws, we)
     value = _value(c, _strategy_punts(None)).to_dict()
-    models = c.models([*me.player_ids(), *opp.player_ids()])
+    models = c.models([*me.player_ids(), *opp.player_ids()], _conn())
     mw, _ = plan_team_week(me, days, playing, league.starting_slots(), value)
     ow, _ = plan_team_week(opp, days, playing, league.starting_slots(), value)
     return simulate_matchup(mw, ow, models, league.categories, n_sims=n, seed=42), mw, ow, day0, we, models
@@ -480,7 +480,7 @@ def simulate_matchup_tool(opponent: str | None = None, start: str | None = None,
 
 def league_profile_tool(n: int = 4000) -> dict[str, Any]:
     league, c = active_league(), ctx()
-    models = c.models([pid for t in league.teams for pid in t.player_ids()])
+    models = c.models([pid for t in league.teams for pid in t.player_ids()], _conn())
     profiles = compute_profile(league, models, n_sims=n)
     return {
         "teams": [
