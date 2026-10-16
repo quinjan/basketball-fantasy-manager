@@ -13,6 +13,7 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
+import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
@@ -359,7 +360,20 @@ def send_email(subject: str, markdown_body: str, kind: str = "report") -> dict:
 
 def main() -> None:
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
-    server.run("stdio")
+    anyio.run(_serve_stdio_handshake)
+
+
+async def _serve_stdio_handshake() -> None:
+    # Serve only the initialize-handshake protocol era. MCPServer.run("stdio") lets the first request pick the era:
+    # when a slow start makes the Copilot CLI's `server/discover` probe time out, the CLI retries with `initialize`,
+    # but the server reads the queued probe first, locks to 2026-07-28 and rejects the retry (-32022) - no tools
+    # load. Handshake-only, the probe gets an error and the fallback succeeds whatever the timing.
+    from mcp.server.runner import serve_loop
+    from mcp.server.stdio import stdio_server
+
+    low = server._lowlevel_server  # no public accessor in mcp 2.x
+    async with stdio_server() as (read, write), low.lifespan(low) as state:
+        await serve_loop(low, read, write, lifespan_state=state, init_options=low.create_initialization_options())
 
 
 if __name__ == "__main__":
