@@ -88,6 +88,8 @@ Daily report (email kind `report`) — concise markdown:
 - Proposals awaiting approval with refs, expiry (local time), reviewer verdict, and how to approve.
 - Watchlist (2–5 players) with one-line reasons.
 Approval requests use kind `approval` (bypasses quiet hours). Never put secrets in email.
+Email is currently **disabled** (the owner's network blocks Gmail SMTP): `send_email` returns `disabled` and logs to
+the outbox. That's expected — the report file in `reports/`, the journal, and the Copilot session are the channels.
 
 ## 8. Accountability
 
