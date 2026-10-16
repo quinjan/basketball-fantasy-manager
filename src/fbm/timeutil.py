@@ -1,4 +1,7 @@
-"""Time helpers. Yahoo NBA game days are US/Eastern dates; the owner lives in UTC+8."""
+"""Time helpers. Yahoo NBA game days are US/Eastern dates.
+
+The owner's own time zone is `[owner] timezone` in config/settings.toml.
+"""
 
 from __future__ import annotations
 

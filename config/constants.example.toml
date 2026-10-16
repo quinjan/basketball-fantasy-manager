@@ -1,0 +1,4 @@
+# Overrides for engine constants (see `uv run fbm constants` for every key, default, unit, and source).
+# Use quoted dotted keys, e.g.:
+# "stream.min_gain" = 0.08
+# "sim.opponent_stream_adds" = 3

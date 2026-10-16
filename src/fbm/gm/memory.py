@@ -1,4 +1,4 @@
-"""File-based AI memory (committed to git): strategy, playbook, journal, manager notes.
+"""File-based AI memory (local-only, gitignored; seeded from templates/memory).
 
 memory/
   strategy.md        GM-maintained narrative of the current build (owner-approved strategy is authoritative)
@@ -12,17 +12,37 @@ memory/
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fbm.config import MEMORY_DIR
+from fbm.config import MEMORY_DIR, PROJECT_ROOT
 from fbm.timeutil import ET
 
 JOURNAL_DIR = MEMORY_DIR / "journal"
 MANAGERS_DIR = MEMORY_DIR / "managers"
 STRATEGY_JSON = MEMORY_DIR / "strategy.json"
 JOURNAL_KINDS = ("decision", "observation", "proposal", "execution", "review", "retro", "owner", "system")
+
+
+TEMPLATE_DIR = PROJECT_ROOT / "templates" / "memory"
+
+
+def ensure_memory(memory_dir: Path = MEMORY_DIR, template_dir: Path = TEMPLATE_DIR) -> list[str]:
+    """Copy any missing memory files from templates/memory (never overwrites). Returns the created paths."""
+    created: list[str] = []
+    if not template_dir.exists():
+        return created
+    for src in sorted(template_dir.rglob("*")):
+        dest = memory_dir / src.relative_to(template_dir)
+        if src.is_dir():
+            dest.mkdir(parents=True, exist_ok=True)
+        elif not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            created.append(dest.relative_to(memory_dir).as_posix())
+    return created
 
 
 def _read(path: Path, limit: int) -> str:

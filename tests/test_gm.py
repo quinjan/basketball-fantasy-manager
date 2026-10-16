@@ -139,15 +139,19 @@ class FakeSMTP:
 
 
 def test_send_email_and_quiet_hours(conn, monkeypatch):
-    creds = {"gmail_address": "me@gmail.com", "gmail_app_password": "abcdabcdabcdabcd"}
+    creds = {"gmail_address": "me@example.com", "gmail_app_password": "abcdabcdabcdabcd"}
     monkeypatch.setattr("fbm.credentials.get", lambda k: creds.get(k))
     res = notify.send_email(
-        "Daily", "## Hi\n\n| a | b |\n|---|---|\n| 1 | 2 |", conn=conn, settings=Settings(), smtp_factory=FakeSMTP
+        "Daily",
+        "## Hi\n\n| a | b |\n|---|---|\n| 1 | 2 |",
+        conn=conn,
+        settings=Settings(email_enabled=True),
+        smtp_factory=FakeSMTP,
     )
     assert res["status"] == "sent" and FakeSMTP.sent[-1]["Subject"] == "[FBM] Daily"
     html = FakeSMTP.sent[-1].get_body(("html",)).get_content()
     assert "<table>" in html and "Yahoo Fantasy" in html
-    quiet = Settings(quiet_hours="00:00-23:59")
+    quiet = Settings(email_enabled=True, quiet_hours="00:00-23:59")
     assert notify.send_email("x", "y", "report", conn, quiet, FakeSMTP)["status"] == "held"
     assert notify.send_email("x", "y", "approval", conn, quiet, FakeSMTP)["status"] == "sent"
     statuses = [r[0] for r in conn.execute("SELECT status FROM outbox ORDER BY id")]

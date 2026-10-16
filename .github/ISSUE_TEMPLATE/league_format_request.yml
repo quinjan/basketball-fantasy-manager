@@ -1,0 +1,26 @@
+name: League format request
+description: Ask for support of a league format FBM doesn't handle yet
+labels: [enhancement, league-format]
+body:
+  - type: dropdown
+    id: scoring
+    attributes:
+      label: Scoring type
+      options: [H2H Categories, H2H Points, Rotisserie, Other]
+    validations:
+      required: true
+  - type: input
+    id: cats
+    attributes:
+      label: Categories / scoring settings
+      description: e.g. 8-cat without TO, 11-cat with 3P% and A/TO
+  - type: input
+    id: draft
+    attributes:
+      label: League type
+      description: Redraft, keeper, dynasty; waiver/FAAB rules
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Output of `fbm settings` is helpful (remove team/manager names).

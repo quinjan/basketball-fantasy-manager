@@ -1,0 +1,6 @@
+# Yahoo player id -> ESPN athlete id, only for players the automatic matcher misses or gets wrong.
+# The Yahoo id is the number after ".p." in a player key (e.g. 466.p.6014 -> "6014"); it is stable across seasons.
+# Find ESPN ids in the URL of the player's ESPN page (espn.com/nba/player/_/id/<ESPN id>/...).
+# `fbm ids` lists unmatched players.
+[players]
+# "6014" = "4278073"

@@ -93,7 +93,7 @@ def check_yahoo(
             "Yahoo credentials",
             cred_status,
             "all present" if not missing else f"missing: {', '.join(missing)}",
-            "" if not missing else "Run `fbm auth yahoo` (stores in Windows Credential Manager).",
+            "" if not missing else "Run `fbm auth` (stores them in your OS credential store).",
         )
     )
     out.append(
@@ -222,7 +222,7 @@ def check_notifications(email_enabled: bool, outbox: list[dict[str, Any]], now: 
         result(
             "Email",
             OK,
-            "enabled" if email_enabled else "disabled (reports live in reports/ + the Copilot app)",
+            "enabled" if email_enabled else "disabled (reports live in reports/ + your agent session)",
         ),
         result(
             "Outbox failures",

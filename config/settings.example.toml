@@ -1,0 +1,52 @@
+# FBM settings. `fbm setup` copies this file to config/settings.toml (gitignored, per install) and fills it in.
+# Secrets never go here: they live in the OS credential store (Windows Credential Manager / macOS Keychain /
+# Linux Secret Service) via `fbm auth` and `fbm notify setup`.
+
+[owner]
+# Your IANA time zone (e.g. "America/New_York", "Europe/London", "Asia/Manila"). Used for quiet hours and
+# automation times. Yahoo NBA game days are always US/Eastern dates regardless of this.
+timezone = "UTC"
+
+[league]
+# "demo" (simulated league over real players) until your Yahoo Fantasy API access is approved, then "yahoo".
+source = "demo"
+
+[agent]
+# The AI coding agent you use: copilot | claude-code | codex | cursor | gemini | generic
+name = "generic"
+# Model per role (names as your agent spells them). Leave empty to use the agent's default.
+gm_model = ""        # decisions: a frontier model
+reviewer_model = ""  # independent review: ideally a different model family than the GM
+routine_model = ""   # cheap routine runs (lineup guard, health)
+
+[automation]
+# none | agent-app (e.g. Copilot app Automations) | scheduler (OS scheduler runs your agent headless)
+# | engine-only (OS scheduler runs deterministic fbm jobs, no AI)
+mode = "none"
+# Any of: data-sync, lineup-guard, daily-gm, weekly-retro, trade-scan, health
+jobs = []
+
+[autonomy]
+# Lineup and IL plans are produced automatically (journaled). In a Yahoo league they are exact manual steps.
+auto_lineups = true
+auto_il_moves = true
+# Everything else is a proposal: GM drafts -> independent review -> you approve -> re-validate -> execute.
+approval_required = ["add_drop", "waiver_claim", "trade", "strategy"]
+# Unapproved proposals expire; nothing executes after expiry.
+default_expiry_hours = 18
+
+[notify]
+# Optional Gmail notifications (`fbm notify setup`). Reports also live in reports/ and your agent session.
+email_enabled = false
+# Empty = send to the Gmail sender address.
+recipients = []
+# Local-time window with no non-urgent email, e.g. "23:00-07:00". Empty = none.
+quiet_hours = ""
+
+[git]
+# Optional: GitHub account used when pushing changes to FBM's code (empty = your normal git credentials).
+account = ""
+
+[yahoo]
+# Yahoo roster writes are out of scope: roster changes are delivered as exact manual steps for you.
+api_writes = false

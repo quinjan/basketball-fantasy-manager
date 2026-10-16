@@ -65,7 +65,11 @@ def _run(fn, *args, **kwargs):
     except (credentials.MissingCredentialError, NotConfiguredError, YahooAuthError) as err:
         _fail(str(err))
     except YahooAPIError as err:
-        hint = " (the Yahoo app may lack Fantasy Sports Read/Write scope)" if err.is_scope_error else ""
+        hint = (
+            " (the Yahoo app may lack Fantasy Sports Read permission or API access approval)"
+            if err.is_scope_error
+            else ""
+        )
         _fail(f"{err}{hint}")
 
 
@@ -74,10 +78,19 @@ def _printable(value: str) -> str:
 
 
 def _clipboard(action: str) -> str:
-    command = "Get-Clipboard -Raw" if action == "read" else "Set-Clipboard -Value ' '"
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=15
-    )
+    if sys.platform == "win32":
+        command = "Get-Clipboard -Raw" if action == "read" else "Set-Clipboard -Value ' '"
+        argv = ["powershell", "-NoProfile", "-Command", command]
+    elif sys.platform == "darwin":
+        argv = ["pbpaste"] if action == "read" else ["pbcopy"]
+    else:
+        argv = ["xclip", "-selection", "clipboard"] + (["-o"] if action == "read" else [])
+    try:
+        result = subprocess.run(
+            argv, input="" if action != "read" else None, capture_output=True, text=True, timeout=15
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
     return result.stdout or ""
 
 
@@ -147,7 +160,7 @@ def auth(
         store_token_response(payload)
 
     _run(_exchange)
-    console.print("[green]Yahoo authorized.[/] Refresh token stored in Windows Credential Manager.\n")
+    console.print("[green]Yahoo authorized.[/] Refresh token stored in your OS credential store.\n")
     _run(_select_league, league_key)
 
 
@@ -876,7 +889,7 @@ app.add_typer(notify_app, name="notify")
 
 @notify_app.command("setup")
 def notify_setup() -> None:
-    """Store your Gmail address + App Password in Windows Credential Manager."""
+    """Store your Gmail address + App Password in your OS credential store."""
     console.print(
         "Create an App Password at https://myaccount.google.com/apppasswords (requires 2-Step "
         "Verification). It's 16 letters; spaces are ignored."
@@ -984,20 +997,6 @@ def notify_outbox(limit: int = typer.Option(15, help="Rows to show.")) -> None:
     for r in rows:
         table.add_row(r["created_at"][:16], r["status"], r["subject"], (r["detail"] or "")[:60])
     console.print(table)
-
-
-@app.command("sync-memory")
-def sync_memory_cmd(
-    message: str = typer.Option("memory sync", "-m", "--message", help="Commit message."),
-    push: bool = typer.Option(True, help="Push after committing."),
-) -> None:
-    """Commit memory/, reports/, config/ and push to the private repo (personal account)."""
-    from fbm.gitsync import sync_memory
-    from fbm.settings import load_settings
-
-    outcome = sync_memory(message, load_settings().git_account, push=push)
-    color = "green" if outcome.pushed or not outcome.committed else "yellow"
-    console.print(f"[{color}]{outcome.detail}[/]")
 
 
 # ---------------------------------------------------------------- Streaming, trades, learning, draft (via services)
@@ -1355,7 +1354,12 @@ def dashboard(port: int = typer.Option(8501, help="Local port."), open_browser: 
     subprocess.run(cmd, check=False)
 
 
-from fbm import cli_yahoo  # noqa: E402,F401  (registers the Yahoo league commands on `app`)
+from fbm import (  # noqa: E402,F401  (each module registers its commands on `app`)
+    cli_agent,  # `fbm agent`
+    cli_automation,  # `fbm automation`
+    cli_setup,  # setup, backup, sync-memory
+    cli_yahoo,  # Yahoo league commands
+)
 
 if __name__ == "__main__":
     app()

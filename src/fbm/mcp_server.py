@@ -1,6 +1,6 @@
-"""FBM MCP server (stdio). Exposes the deterministic engine to Copilot agents as tools.
+"""FBM MCP server (stdio). Exposes the deterministic engine to any MCP-capable AI agent as tools.
 
-Run: `uv run fbm-mcp` (configured in .github/mcp.json).
+Run: `uv run fbm-mcp` (wired into your agent's MCP config by `fbm agent install`).
 Read/analysis tools are side-effect free. Write tools are gated in code (proposal lifecycle, expiry, re-validation).
 """
 
@@ -446,7 +446,7 @@ def main() -> None:
 
 async def _serve_stdio_handshake() -> None:
     # Serve only the initialize-handshake protocol era. MCPServer.run("stdio") lets the first request pick the era:
-    # when a slow start makes the Copilot CLI's `server/discover` probe time out, the CLI retries with `initialize`,
+    # when a slow start makes an MCP client's `server/discover` probe time out, the CLI retries with `initialize`,
     # but the server reads the queued probe first, locks to 2026-07-28 and rejects the retry (-32022) - no tools
     # load. Handshake-only, the probe gets an error and the fallback succeeds whatever the timing.
     from mcp.server.runner import serve_loop

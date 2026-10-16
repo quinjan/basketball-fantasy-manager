@@ -1,0 +1,30 @@
+name: Bug report
+description: Something in FBM is broken
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do NOT paste credentials, tokens, or private league data."
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands run (e.g. `fbm ...`) and output (redacted).
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python version, FBM commit
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options: [CLI, MCP server, Dashboard, Engine/other]

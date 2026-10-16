@@ -1,4 +1,4 @@
-"""Secret storage backed by the OS keyring (Windows Credential Manager on Windows).
+"""Secret storage backed by the OS keyring (Windows Credential Manager / macOS Keychain / Linux Secret Service).
 
 Secrets never touch the repo, logs, or reports.
 """
