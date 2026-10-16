@@ -105,6 +105,44 @@ CREATE TABLE IF NOT EXISTS sync_log (
     last_run TEXT NOT NULL,
     detail TEXT
 );
+
+CREATE TABLE IF NOT EXISTS proposals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    evidence TEXT,
+    status TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    review_verdict TEXT,
+    review_confidence REAL,
+    review_notes TEXT,
+    review_model TEXT,
+    decided_at TEXT,
+    owner_quote TEXT,
+    executed_at TEXT,
+    execution TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_proposals_status ON proposals(status);
+CREATE TABLE IF NOT EXISTS proposal_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposal_id INTEGER NOT NULL REFERENCES proposals(id),
+    at TEXT NOT NULL,
+    event TEXT NOT NULL,
+    detail TEXT
+);
+CREATE TABLE IF NOT EXISTS outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    status TEXT NOT NULL,
+    detail TEXT
+);
 """
 
 

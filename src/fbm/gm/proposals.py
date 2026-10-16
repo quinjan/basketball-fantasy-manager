@@ -1,0 +1,234 @@
+"""Proposal lifecycle — the code-level guardrail for every approval-gated move.
+
+pending_review --record_review--> pending_approval --owner decision--> approved | rejected
+approved --execute (re-validated)--> executed | awaiting_manual (manual executor) | failed
+any open state past expires_at --> expired   (nothing executes after expiry)
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+KINDS = ("add_drop", "waiver_claim", "trade", "strategy", "other")
+VERDICTS = ("AGREE", "DISAGREE", "SPLIT")
+OPEN = ("pending_review", "pending_approval", "approved")
+
+
+class ProposalError(RuntimeError):
+    pass
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _iso(dt: datetime) -> str:
+    return dt.astimezone(UTC).isoformat(timespec="seconds")
+
+
+@dataclass(frozen=True)
+class Proposal:
+    id: int
+    created_at: str
+    kind: str
+    title: str
+    summary: str
+    payload: dict[str, Any]
+    rationale: str
+    evidence: dict[str, Any] | None
+    status: str
+    expires_at: str
+    review_verdict: str | None
+    review_confidence: float | None
+    review_notes: str | None
+    review_model: str | None
+    decided_at: str | None
+    owner_quote: str | None
+    executed_at: str | None
+    execution: dict[str, Any] | None
+
+    @property
+    def ref(self) -> str:
+        return f"P-{self.id}"
+
+    @property
+    def is_expired(self) -> bool:
+        return datetime.fromisoformat(self.expires_at) <= _now()
+
+    def as_dict(self) -> dict[str, Any]:
+        d = dict(self.__dict__)
+        d["ref"] = self.ref
+        return d
+
+
+def _row(row: sqlite3.Row) -> Proposal:
+    d = dict(row)
+    for key in ("payload", "evidence", "execution"):
+        d[key] = json.loads(d[key]) if d.get(key) else (None if key != "payload" else {})
+    return Proposal(**d)
+
+
+def _event(conn: sqlite3.Connection, pid: int, event: str, detail: str = "") -> None:
+    conn.execute(
+        "INSERT INTO proposal_events(proposal_id, at, event, detail) VALUES (?,?,?,?)",
+        (pid, _iso(_now()), event, detail),
+    )
+
+
+def parse_ref(ref: str | int) -> int:
+    text = str(ref).strip().upper()
+    return int(text[2:] if text.startswith("P-") else text)
+
+
+def get(conn: sqlite3.Connection, ref: str | int) -> Proposal:
+    row = conn.execute("SELECT * FROM proposals WHERE id = ?", (parse_ref(ref),)).fetchone()
+    if row is None:
+        raise ProposalError(f"Proposal {ref} not found.")
+    return _row(row)
+
+
+def expire_stale(conn: sqlite3.Connection) -> list[int]:
+    now = _iso(_now())
+    ids = [
+        r[0]
+        for r in conn.execute(
+            f"SELECT id FROM proposals WHERE status IN ({','.join('?' * len(OPEN))}) AND expires_at <= ?", (*OPEN, now)
+        )
+    ]
+    for pid in ids:
+        conn.execute("UPDATE proposals SET status = 'expired' WHERE id = ?", (pid,))
+        _event(conn, pid, "expired")
+    conn.commit()
+    return ids
+
+
+def create(
+    conn: sqlite3.Connection,
+    kind: str,
+    title: str,
+    summary: str,
+    payload: dict[str, Any],
+    rationale: str,
+    evidence: dict[str, Any] | None = None,
+    expires_in_hours: float = 18.0,
+) -> Proposal:
+    if kind not in KINDS:
+        raise ProposalError(f"Unknown kind '{kind}'. Use one of {KINDS}.")
+    if not rationale.strip():
+        raise ProposalError("A proposal needs a rationale grounded in tool outputs.")
+    if not 0 < expires_in_hours <= 24 * 7:
+        raise ProposalError("expires_in_hours must be between 0 and 168.")
+    created = _now()
+    cur = conn.execute(
+        "INSERT INTO proposals(created_at, kind, title, summary, payload, rationale, evidence, status, expires_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            _iso(created),
+            kind,
+            title,
+            summary,
+            json.dumps(payload),
+            rationale,
+            json.dumps(evidence or {}),
+            "pending_review",
+            _iso(created + timedelta(hours=expires_in_hours)),
+        ),
+    )
+    _event(conn, cur.lastrowid, "created", title)
+    conn.commit()
+    return get(conn, cur.lastrowid)
+
+
+def record_review(
+    conn: sqlite3.Connection,
+    ref: str | int,
+    verdict: str,
+    notes: str,
+    model: str,
+    confidence: float | None = None,
+    gm_model: str | None = None,
+) -> Proposal:
+    p = get(conn, ref)
+    verdict = verdict.upper()
+    if verdict not in VERDICTS:
+        raise ProposalError(f"verdict must be one of {VERDICTS}")
+    if p.status != "pending_review":
+        raise ProposalError(f"{p.ref} is {p.status}; reviews are recorded only while pending_review.")
+    if gm_model and model and model.split("-")[0] == gm_model.split("-")[0]:
+        raise ProposalError(f"Reviewer model '{model}' is the same family as the GM ('{gm_model}').")
+    conn.execute(
+        "UPDATE proposals SET status='pending_approval', review_verdict=?, review_confidence=?, review_notes=?, "
+        "review_model=? WHERE id=?",
+        (verdict, confidence, notes, model, p.id),
+    )
+    _event(conn, p.id, "reviewed", f"{verdict} by {model}")
+    conn.commit()
+    return get(conn, p.id)
+
+
+def record_owner_decision(conn: sqlite3.Connection, ref: str | int, approved: bool, owner_quote: str) -> Proposal:
+    """Record the OWNER's decision. `owner_quote` must be the owner's own words (audit trail)."""
+    expire_stale(conn)
+    p = get(conn, ref)
+    if p.status != "pending_approval":
+        raise ProposalError(f"{p.ref} is {p.status}; only reviewed proposals (pending_approval) can be decided.")
+    if not owner_quote.strip():
+        raise ProposalError("owner_quote is required: the owner's exact reply.")
+    status = "approved" if approved else "rejected"
+    conn.execute(
+        "UPDATE proposals SET status=?, decided_at=?, owner_quote=? WHERE id=?",
+        (status, _iso(_now()), owner_quote.strip(), p.id),
+    )
+    _event(conn, p.id, status, owner_quote.strip()[:200])
+    conn.commit()
+    return get(conn, p.id)
+
+
+def ready_to_execute(conn: sqlite3.Connection, ref: str | int) -> Proposal:
+    expire_stale(conn)
+    p = get(conn, ref)
+    if p.status != "approved":
+        raise ProposalError(f"{p.ref} is {p.status}; only approved, unexpired proposals can execute.")
+    if not p.owner_quote:
+        raise ProposalError(f"{p.ref} has no recorded owner approval.")
+    return p
+
+
+def record_execution(conn: sqlite3.Connection, ref: str | int, status: str, result: dict[str, Any]) -> Proposal:
+    if status not in ("executed", "awaiting_manual", "failed"):
+        raise ProposalError("invalid execution status")
+    p = get(conn, ref)
+    conn.execute(
+        "UPDATE proposals SET status=?, executed_at=?, execution=? WHERE id=?",
+        (status, _iso(_now()), json.dumps(result), p.id),
+    )
+    _event(conn, p.id, status, json.dumps(result)[:300])
+    conn.commit()
+    return get(conn, p.id)
+
+
+def mark_manual_done(conn: sqlite3.Connection, ref: str | int, note: str) -> Proposal:
+    p = get(conn, ref)
+    if p.status != "awaiting_manual":
+        raise ProposalError(f"{p.ref} is {p.status}, not awaiting_manual.")
+    result = {**(p.execution or {}), "manual_confirmation": note}
+    return record_execution(conn, p.id, "executed", result)
+
+
+def list_proposals(conn: sqlite3.Connection, status: str | None = None, limit: int = 20) -> list[Proposal]:
+    expire_stale(conn)
+    if status == "open":
+        rows = conn.execute(
+            f"SELECT * FROM proposals WHERE status IN ({','.join('?' * len(OPEN))}, 'awaiting_manual') "
+            "ORDER BY id DESC LIMIT ?",
+            (*OPEN, limit),
+        )
+    elif status:
+        rows = conn.execute("SELECT * FROM proposals WHERE status = ? ORDER BY id DESC LIMIT ?", (status, limit))
+    else:
+        rows = conn.execute("SELECT * FROM proposals ORDER BY id DESC LIMIT ?", (limit,))
+    return [_row(r) for r in rows]

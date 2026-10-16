@@ -715,5 +715,137 @@ def profile(
     )
 
 
+# ---------------------------------------------------------------- Notifications
+
+notify_app = typer.Typer(no_args_is_help=True, help="Email notifications (Gmail).")
+app.add_typer(notify_app, name="notify")
+
+
+@notify_app.command("setup")
+def notify_setup() -> None:
+    """Store your Gmail address + App Password in Windows Credential Manager."""
+    console.print(
+        "Create an App Password at https://myaccount.google.com/apppasswords (requires 2-Step "
+        "Verification). It's 16 letters; spaces are ignored."
+    )
+    address = _printable(typer.prompt("Gmail address"))
+    console.print("Copy the App Password, then press Enter to read it from the clipboard (or type it).")
+    typed = _printable(typer.prompt("App Password", hide_input=True, default="", show_default=False))
+    password = (typed or _printable(_clipboard("read"))).replace(" ", "")
+    if not typed and password:
+        _clipboard("clear")
+    if not re.fullmatch(r"[a-zA-Z]{16}", password):
+        console.print(f"[yellow]Warning:[/] got {len(password)} characters; Gmail App Passwords are 16 letters.")
+        if not typer.confirm("Save anyway?", default=False):
+            raise typer.Exit(code=1)
+    credentials.put(credentials.GMAIL_ADDRESS, address)
+    credentials.put(credentials.GMAIL_APP_PASSWORD, password)
+    console.print("[green]Saved.[/] Run `fbm notify test`.")
+
+
+@notify_app.command("test")
+def notify_test() -> None:
+    """Send a test email."""
+    from fbm.notify.email import NotifyError, send_email
+
+    try:
+        result = send_email(
+            "Test — FBM notifications are working",
+            "## It works\n\nThis is a test from **FBM**.\n\n| Check | Status |\n|---|---|\n| Gmail SMTP | ✅ |",
+            kind="alert",
+        )
+    except NotifyError as err:
+        _fail(str(err))
+    console.print(f"[green]{result['status']}[/] → {result.get('to', '')}")
+
+
+# ---------------------------------------------------------------- Proposals (owner-side)
+
+proposals_app = typer.Typer(no_args_is_help=True, help="Review and decide GM proposals.")
+app.add_typer(proposals_app, name="proposals")
+
+
+@proposals_app.command("list")
+def proposals_list(status: str = typer.Option("open", help="open | pending_approval | executed | all")) -> None:
+    """List proposals."""
+    from fbm.gm import proposals as props
+
+    rows = props.list_proposals(store.connect(), None if status == "all" else status, 50)
+    table = Table(title=f"Proposals ({status})")
+    for col in ("Ref", "Status", "Kind", "Title", "Review", "Expires (UTC)"):
+        table.add_column(col)
+    for p in rows:
+        review = f"{p.review_verdict or ''} {p.review_model or ''}".strip()
+        table.add_row(p.ref, p.status, p.kind, p.title, review, p.expires_at[:16])
+    console.print(table)
+
+
+@proposals_app.command("show")
+def proposals_show(ref: str) -> None:
+    """Show one proposal in full."""
+    from fbm.gm import services as svc
+
+    console.print_json(json.dumps(svc.get_proposal(ref), default=str))
+
+
+def _decide(ref: str, approved: bool, note: str) -> None:
+    from fbm.gm import services as svc
+    from fbm.gm.proposals import ProposalError
+
+    try:
+        p = svc.record_owner_decision(ref, approved, note or ("approve" if approved else "reject") + " (CLI)")
+        console.print(f"{p['ref']} → [bold]{p['status']}[/]")
+        if approved:
+            p = svc.execute_proposal(ref)
+            console.print(f"Execution: [bold]{p['status']}[/]")
+            steps = (p.get("execution") or {}).get("manual_steps")
+            if steps:
+                console.print("\n".join(steps))
+    except ProposalError as err:
+        _fail(str(err))
+
+
+@proposals_app.command("approve")
+def proposals_approve(ref: str, note: str = typer.Option("", help="Your words, recorded in the audit trail.")) -> None:
+    """Approve (then immediately re-validate and execute) a reviewed proposal."""
+    _decide(ref, True, note)
+
+
+@proposals_app.command("reject")
+def proposals_reject(ref: str, note: str = typer.Option("", help="Why (recorded).")) -> None:
+    """Reject a reviewed proposal."""
+    _decide(ref, False, note)
+
+
+@notify_app.command("outbox")
+def notify_outbox(limit: int = typer.Option(15, help="Rows to show.")) -> None:
+    """Recent notifications and their delivery status."""
+    rows = (
+        store.connect()
+        .execute("SELECT created_at, status, subject, detail FROM outbox ORDER BY id DESC LIMIT ?", (limit,))
+        .fetchall()
+    )
+    table = Table(title="Outbox")
+    for col in ("When (UTC)", "Status", "Subject", "Detail"):
+        table.add_column(col)
+    for r in rows:
+        table.add_row(r["created_at"][:16], r["status"], r["subject"], (r["detail"] or "")[:60])
+    console.print(table)
+
+
+@app.command("sync-memory")
+def sync_memory_cmd(
+    message: str = typer.Option("memory sync", "-m", "--message", help="Commit message."),
+    push: bool = typer.Option(True, help="Push after committing."),
+) -> None:
+    """Commit memory/, reports/, config/ and push to the private repo (personal account)."""
+    from fbm.gitsync import sync_memory
+    from fbm.settings import load_settings
+
+    outcome = sync_memory(message, load_settings().git_account, push=push)
+    color = "green" if outcome.pushed or not outcome.committed else "yellow"
+    console.print(f"[{color}]{outcome.detail}[/]")
+
+
 if __name__ == "__main__":
     app()

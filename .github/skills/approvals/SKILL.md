@@ -1,0 +1,20 @@
+---
+name: approvals
+description: Walk the owner through pending GM proposals and capture their decisions. Use when the owner says "what's pending", "approve P-12", "reject P-12", or opens the GM Office after an approval email.
+---
+
+# Approvals
+
+1. `list_proposals(status="open")`. Expired proposals are already closed — mention them briefly if relevant.
+2. For each `pending_approval` proposal (oldest first): show a compact card — title, the 2–4 key numbers, the
+   reviewer's verdict and its first line, risks, expiry in owner-local time.
+   - If the reviewer said DISAGREE/SPLIT, show the strongest alternative too.
+3. Ask the owner with the ask-user tool, choices: `Approve P-<id>`, `Reject P-<id>`, `Discuss P-<id>`.
+   If the owner already wrote "approve P-12" in chat, that text is the decision — don't ask again.
+4. `record_owner_decision(ref, approved, owner_quote=<the owner's exact words>)`. Never paraphrase or infer.
+5. If approved: `execute_proposal(ref)`. Report the result:
+   - `executed` → confirm what changed.
+   - `awaiting_manual` → show the manual steps exactly; when the owner says done, `mark_manual_done`.
+   - `failed` → explain the re-validation problem and whether a revised proposal makes sense.
+6. If rejected: ask (briefly, optional) why, and journal the reason (kind `owner`) — it trains future proposals.
+7. `uv run fbm sync-memory -m "approvals <date>"` if anything changed.
