@@ -209,6 +209,16 @@ def test_parse_boxscore_handles_dnp():
     assert espn.summary_is_final(SUMMARY)
 
 
+def test_parse_boxscore_athlete_without_id():
+    import copy
+
+    summary = copy.deepcopy(SUMMARY)
+    athletes = summary["boxscore"]["players"][0]["statistics"][0]["athletes"]
+    athletes[0]["athlete"] = {"displayName": "Linked", "links": [{"href": "https://espn.com/nba/player/_/id/777/x"}]}
+    athletes[1]["athlete"] = {"displayName": "No Id"}
+    assert [ln.espn_id for ln in espn.parse_boxscore(summary, "401")] == ["777"]
+
+
 def test_parse_injuries_extracts_id_from_link():
     (inj,) = espn.parse_injuries(INJURIES)
     assert inj.espn_id == "4585618"

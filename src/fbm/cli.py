@@ -16,6 +16,7 @@ from rich.table import Table
 
 from fbm import credentials
 from fbm.config import (
+    DATA_DIR,
     LEAGUE_CONFIG_PATH,
     MEMORY_DIR,
     RAW_DIR,
@@ -50,7 +51,7 @@ app.add_typer(league_app, name="league")
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure") and (_stream.encoding or "").lower() not in ("utf-8", "utf8"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
-console = Console()
+console = Console(width=None if sys.stdout.isatty() else 180)
 
 
 def _fail(message: str) -> None:
@@ -431,6 +432,93 @@ def data_injuries(team: str = typer.Option(None, help="NBA team abbreviation, e.
     for r in rows:
         table.add_row(r["team"], r["name"], r["status"], r["return_date"] or "", (r["short_comment"] or "")[:70])
     console.print(table)
+
+
+# ---------------------------------------------------------------- Analytics
+
+
+def _league_summary() -> dict | None:
+    path = RAW_DIR / "league_settings_summary.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+@app.command()
+def rank(
+    season: int = typer.Option(None, help="Value one ESPN season (end-year). Default: ROS projection blend."),
+    top: int = typer.Option(40, min=1, help="Rows to show."),
+    punt: str = typer.Option(None, help="Comma-separated punted categories, e.g. 'FT%,TO'."),
+    metric: str = typer.Option("g", help="'g' (G-score, H2H-aware) or 'z'."),
+    team: str = typer.Option(None, help="Filter to one NBA team (ESPN abbr)."),
+    min_gp: int = typer.Option(15, help="Minimum games played to qualify (season mode)."),
+    csv: bool = typer.Option(False, help="Also write data/rankings.csv"),
+) -> None:
+    """Rank players by 9-cat value (G-score or Z-score)."""
+    from fbm.analytics import players as player_tables
+    from fbm.analytics.categories import parse_category_list
+    from fbm.analytics.valuation import config_from_settings, value_players
+
+    if metric not in ("g", "z"):
+        _fail("metric must be 'g' or 'z'")
+    try:
+        punts = tuple(c.key for c in parse_category_list(punt))
+    except ValueError as err:
+        _fail(str(err))
+    conn = store.connect()
+    current = espn_current_season(date.today())
+    if season:
+        table, variance_season, label = (
+            player_tables.season_table(conn, season),
+            season,
+            f"{season - 1}-{season % 100:02d}",
+        )
+    else:
+        table = player_tables.projection_table(conn, current, current - 1)
+        has_current = bool(table["gp_current"].sum())
+        variance_season = current if has_current else current - 1
+        label = "ROS projection" + (
+            "" if has_current else f" (pre-season: {current - 2}-{(current - 1) % 100:02d} stats)"
+        )
+    if table.empty:
+        _fail("No player stats stored. Run `fbm data sync` and `fbm data backfill`.")
+    cfg = config_from_settings(_league_summary(), punts=punts, min_gp=min_gp if season else 5)
+    weekly = player_tables.weekly_table(conn, variance_season)
+    result, stats = value_players(table, cfg, weekly=weekly if not weekly.empty else None)
+    if team:
+        result = result[result["team"].str.upper() == team.upper()]
+
+    total_col = f"{metric}_total"
+    result = result.sort_values(total_col, ascending=False)
+    title = f"{metric.upper()}-score rankings — {label} · pool {cfg.pool_size} · κ={cfg.kappa:.3f}" + (
+        f" · punt {', '.join(punts)}" if punts else ""
+    )
+    table_out = Table(title=title)
+    for col in ("#", "Player", "Team", "GP", "MIN", *[c.label for c in cfg.categories], "Total"):
+        table_out.add_column(col, justify="right" if col not in ("Player", "Team") else "left")
+    for i, (_, row) in enumerate(result.head(top).iterrows(), 1):
+        cells = []
+        for c in cfg.categories:
+            v = row[f"{metric}_{c.key}"]
+            style = "dim" if c.key in punts else ("green" if v >= 1 else "red" if v <= -1 else "")
+            cells.append(f"[{style}]{v:+.2f}[/]" if style else f"{v:+.2f}")
+        table_out.add_row(
+            str(i),
+            str(row["name"]),
+            str(row["team"]),
+            str(int(row["gp"])),
+            f"{row['minutes']:.1f}",
+            *cells,
+            f"[bold]{row[total_col]:+.2f}[/]",
+        )
+    console.print(table_out)
+    if weekly.empty:
+        console.print("[yellow]No box scores for that season yet — G-scores equal Z-scores (τ=0).[/]")
+    else:
+        taus = ", ".join(f"{c.label} {stats.tau2[c.key] ** 0.5 / stats.sd[c.key]:.2f}" for c in cfg.categories)
+        console.print(f"[dim]Week-to-week noise relative to player spread (τ/σ): {taus}[/]")
+    if csv:
+        out = DATA_DIR / "rankings.csv"
+        result.to_csv(out)
+        console.print(f"Wrote {out}")
 
 
 if __name__ == "__main__":

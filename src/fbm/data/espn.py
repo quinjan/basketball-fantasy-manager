@@ -186,11 +186,15 @@ def parse_boxscore(summary: dict[str, Any], event_id: str) -> list[BoxLine]:
             keys = stat_block.get("keys") or []
             idx = {k: i for i, k in enumerate(keys)}
             for ath in stat_block.get("athletes", []):
+                athlete = ath.get("athlete") or {}
+                athlete_id = str(athlete.get("id") or athlete_id_from_links(athlete.get("links")))
+                if not athlete_id:
+                    continue
                 stats = ath.get("stats") or []
                 played = bool(stats) and not ath.get("didNotPlay", False)
 
-                def get(key: str, _stats: list[str] = stats) -> str:
-                    i = idx.get(key)
+                def get(key: str, _stats: list[str] = stats, _idx: dict[str, int] = idx) -> str:
+                    i = _idx.get(key)
                     return _stats[i] if i is not None and i < len(_stats) else "0"
 
                 fgm, fga = _made_att(get("fieldGoalsMade-fieldGoalsAttempted"))
@@ -199,8 +203,8 @@ def parse_boxscore(summary: dict[str, Any], event_id: str) -> list[BoxLine]:
                 lines.append(
                     BoxLine(
                         event_id=str(event_id),
-                        espn_id=str(ath["athlete"]["id"]),
-                        name=ath["athlete"].get("displayName", ""),
+                        espn_id=athlete_id,
+                        name=athlete.get("displayName", ""),
                         team=team,
                         starter=bool(ath.get("starter", False)),
                         played=played,
@@ -245,8 +249,11 @@ def parse_injuries(payload: dict[str, Any]) -> list[Injury]:
                     long_comment=inj.get("longComment", ""),
                     reported_at=inj.get("date", ""),
                     return_date=details.get("returnDate"),
-                    injury_type=" ".join(x for x in (details.get("side"), details.get("type"), details.get("detail"))
-                                         if x and x != "Not Specified"),
+                    injury_type=" ".join(
+                        x
+                        for x in (details.get("side"), details.get("type"), details.get("detail"))
+                        if x and x != "Not Specified"
+                    ),
                 )
             )
     return out
@@ -336,8 +343,9 @@ class EspnClient:
     def teams(self) -> list[Team]:
         return parse_teams(self.fetcher.get_json(f"{SITE}/teams", ttl=7 * 86400))
 
-    def team_schedule(self, team_id: str, season: int, season_type: int = REGULAR_SEASON,
-                      ttl: float = 3 * 3600) -> list[Game]:
+    def team_schedule(
+        self, team_id: str, season: int, season_type: int = REGULAR_SEASON, ttl: float = 3 * 3600
+    ) -> list[Game]:
         payload = self.fetcher.get_json(
             f"{SITE}/teams/{team_id}/schedule", params={"season": season, "seasontype": season_type}, ttl=ttl
         )
@@ -352,17 +360,24 @@ class EspnClient:
     def news(self, limit: int = 50) -> list[NewsItem]:
         return parse_news(self.fetcher.get_json(f"{SITE}/news", params={"limit": limit}, ttl=0, cache=False))
 
-    def season_averages(self, season: int, season_type: int = REGULAR_SEASON, page_size: int = 100,
-                        ttl: float = 6 * 3600) -> list[SeasonAverage]:
+    def season_averages(
+        self, season: int, season_type: int = REGULAR_SEASON, page_size: int = 100, ttl: float = 6 * 3600
+    ) -> list[SeasonAverage]:
         out: list[SeasonAverage] = []
         page, pages = 1, 1
         while page <= pages:
             payload = self.fetcher.get_json(
                 f"{WEB}/statistics/byathlete",
                 params={
-                    "region": "us", "lang": "en", "contentorigin": "espn", "isqualified": "false",
-                    "page": page, "limit": page_size, "sort": "general.gamesPlayed:desc",
-                    "season": season, "seasontype": season_type,
+                    "region": "us",
+                    "lang": "en",
+                    "contentorigin": "espn",
+                    "isqualified": "false",
+                    "page": page,
+                    "limit": page_size,
+                    "sort": "general.gamesPlayed:desc",
+                    "season": season,
+                    "seasontype": season_type,
                 },
                 ttl=ttl,
             )

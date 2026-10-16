@@ -57,8 +57,9 @@ def store_status(conn: sqlite3.Connection) -> dict[str, object]:
         "teams": scalar("SELECT COUNT(*) FROM nba_teams"),
         "players": scalar("SELECT COUNT(*) FROM players"),
         "box_lines": scalar("SELECT COUNT(*) FROM box_lines"),
-        "season_averages": [dict(r) for r in conn.execute(
-            "SELECT season, COUNT(*) AS players FROM season_averages GROUP BY season")],
+        "season_averages": [
+            dict(r) for r in conn.execute("SELECT season, COUNT(*) AS players FROM season_averages GROUP BY season")
+        ],
         "injuries": scalar("SELECT COUNT(*) FROM injuries_current"),
         "news": scalar("SELECT COUNT(*) FROM news"),
         "seasons": seasons,

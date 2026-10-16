@@ -63,8 +63,7 @@ def sync_schedule(
 
 def pending_box_games(conn: sqlite3.Connection, season: int, through: date) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT * FROM games WHERE season = ? AND completed = 1 AND box_synced = 0 AND et_date <= ? "
-        "ORDER BY et_date",
+        "SELECT * FROM games WHERE season = ? AND completed = 1 AND box_synced = 0 AND et_date <= ? ORDER BY et_date",
         (season, through.isoformat()),
     ).fetchall()
 
@@ -89,12 +88,13 @@ def sync_boxscores(
             row = futures[fut]
             try:
                 summary = fut.result()
-            except FetchError:
+                if summary_is_final(summary):
+                    db.store_boxscore(conn, row, parse_boxscore(summary, row["event_id"]))
+                    result.count += 1
+            except Exception as err:  # one bad game must not abort a long backfill
                 result.failures += 1
-                continue
-            if summary_is_final(summary):
-                db.store_boxscore(conn, row, parse_boxscore(summary, row["event_id"]))
-                result.count += 1
+                if len(result.notes) < 3:
+                    result.notes.append(f"{row['event_id']}: {type(err).__name__}: {str(err)[:60]}")
             if done % 25 == 0:
                 conn.commit()
             if progress:
@@ -128,8 +128,9 @@ def sync_news(conn: sqlite3.Connection, espn: EspnClient, limit: int = 50) -> Sy
     return SyncResult("news", n)
 
 
-def daily_sync(conn: sqlite3.Connection, espn: EspnClient, today: date, progress: Progress | None = None
-               ) -> list[SyncResult]:
+def daily_sync(
+    conn: sqlite3.Connection, espn: EspnClient, today: date, progress: Progress | None = None
+) -> list[SyncResult]:
     """Everything an in-season run needs: schedule status, new box scores, averages, injuries, news."""
     season = current_season(today)
     results = [sync_schedule(conn, espn, season, ttl=1800)]
@@ -143,8 +144,14 @@ def daily_sync(conn: sqlite3.Connection, espn: EspnClient, today: date, progress
     return results
 
 
-def backfill_season(conn: sqlite3.Connection, espn: EspnClient, season: int, today: date, workers: int = 4,
-                    progress: Progress | None = None) -> list[SyncResult]:
+def backfill_season(
+    conn: sqlite3.Connection,
+    espn: EspnClient,
+    season: int,
+    today: date,
+    workers: int = 4,
+    progress: Progress | None = None,
+) -> list[SyncResult]:
     """One-time history load for a completed season (priors + per-game variance for G-scores)."""
     results = [sync_schedule(conn, espn, season, ttl=30 * 86400)]
     results.append(sync_boxscores(conn, espn, season, through=today, workers=workers, progress=progress))

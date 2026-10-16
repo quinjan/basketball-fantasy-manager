@@ -59,9 +59,7 @@ class Fetcher:
                 time.sleep(wait)
             self._last_request = time.monotonic()
 
-    def get_json(
-        self, url: str, params: dict[str, Any] | None = None, ttl: float = 3600.0, cache: bool = True
-    ) -> Any:
+    def get_json(self, url: str, params: dict[str, Any] | None = None, ttl: float = 3600.0, cache: bool = True) -> Any:
         """Fetch JSON. `ttl` seconds of cache freshness (0 = always refetch); `cache=False` skips disk."""
         path = self._cache_path(url, params)
         if cache and ttl > 0 and path.exists() and (time.time() - path.stat().st_mtime) < ttl:
