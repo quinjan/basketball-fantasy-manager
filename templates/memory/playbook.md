@@ -4,7 +4,8 @@
 > Keep this file under ~60 lines; it's read at the start of every session.
 
 ## Owner rules (set by the owner; always apply)
-- Approval required for add/drop, waiver claims, trades, and strategy changes. Lineups and IL moves are automatic.
+- Approval required for add/drop, waiver claims, trades, and strategy changes. FBM never changes the league: lineups and IL
+  moves are recommendations the owner sets in Yahoo.
 - Unapproved proposals expire; nothing executes after expiry.
 
 ## Lessons
