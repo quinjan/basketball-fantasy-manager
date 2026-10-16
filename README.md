@@ -20,12 +20,34 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 
 | Command | Purpose |
 |---|---|
-| `fbm auth [--reset]` | Yahoo OAuth + league selection |
+| `fbm auth [--reset] [--code URL]` | Yahoo OAuth + league selection |
 | `fbm status` | What's configured (never prints secrets) |
 | `fbm league list` / `fbm league select` | Discover / choose the managed league |
 | `fbm settings` | Fetch + summarize league settings |
 | `fbm roster [--date YYYY-MM-DD]` | Roster for an ET game day |
 | `fbm verify-write [--date]` | Confirm write scope (no-op) |
+| `fbm data sync` | Daily ESPN sync: schedule, box scores, season averages, injuries, news |
+| `fbm data backfill [--season 2026]` | One-time load of a past season (priors + week-to-week variance) |
+| `fbm data status` / `games` / `injuries` | Inspect the local NBA store |
+| `fbm rank [--season] [--punt FT%,TO] [--metric g\|z]` | 9-cat G-score / Z-score rankings |
+| `fbm demo build` | Simulated 12-team draft (demo league until Yahoo access is approved) |
+| `fbm lineup --demo [--date]` | Optimal daily lineup + IL moves |
+| `fbm sim --demo [--opponent KEY]` | Monte Carlo rest-of-week category odds |
+| `fbm profile --demo` | League-wide category strength (strategy/punt basis) |
+
+## Data sources
+
+- **Yahoo Fantasy API** (league data) — gated since mid-2026; access application pending. Read-only by default.
+- **ESPN public JSON** (NBA schedule, box scores, season averages, injuries, news). NBA.com CDN and
+  stats.nba.com are blocked on the owner's network.
+
+## Analytics
+
+- **G-scores** (Rosenof, arXiv:2307.02188): `(μ_player − μ_pool) / √(σ² + κτ²)`, τ = RMS week-to-week SD,
+  κ = 2N/(2N−1). FG%/FT% use volume-weighted impact. Z-scores shown alongside.
+- **Projections:** current-season per-game shrunk toward last season by games played.
+- **Lineups:** max games started, then value; prefers leaving players in place (fewer manual changes).
+- **Simulation:** resamples real game lines (keeps stat correlations) × injury play-probability.
 
 ## Layout
 

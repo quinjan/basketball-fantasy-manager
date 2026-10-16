@@ -521,5 +521,199 @@ def rank(
         console.print(f"Wrote {out}")
 
 
+# ---------------------------------------------------------------- League tools (demo until Yahoo approval)
+
+demo_app = typer.Typer(no_args_is_help=True, help="Demo league (simulated draft) for use before Yahoo access.")
+app.add_typer(demo_app, name="demo")
+
+
+def _context():
+    from fbm.analytics.context import build_context
+    from fbm.analytics.valuation import config_from_settings
+
+    try:
+        return build_context(store.connect(), date.today(), config_from_settings(_league_summary()))
+    except RuntimeError as err:
+        _fail(str(err))
+
+
+def _load_league(demo: bool):
+    from fbm.league.demo import load_league
+
+    if not demo:
+        _fail("Live Yahoo league data is pending Yahoo API approval. Use --demo for now.")
+    try:
+        return load_league()
+    except FileNotFoundError as err:
+        _fail(str(err))
+
+
+def _first_game_day(conn, day: date) -> date:
+    row = conn.execute(
+        "SELECT MIN(et_date) FROM games WHERE season_type = 2 AND et_date >= ?", (day.isoformat(),)
+    ).fetchone()
+    return date.fromisoformat(row[0]) if row and row[0] else day
+
+
+def _fmt(cat, value: float) -> str:
+    return f"{value:.3f}" if cat.kind == "pct" else f"{value:.1f}"
+
+
+@demo_app.command("build")
+def demo_build(
+    seed: int = typer.Option(1, help="Draft randomness seed."),
+    my_pick: int = typer.Option(5, min=1, max=12, help="Your draft slot."),
+) -> None:
+    """Simulate a 12-team snake draft from current projections and save it as the demo league."""
+    from fbm.league.demo import build_demo_league, save_league
+
+    ctx = _context()
+    league = build_demo_league(ctx.values, ctx.season, ctx.statuses(), my_slot=my_pick, seed=seed)
+    save_league(league)
+    table = Table(title=f"{league.my_team.name} — demo roster (pick {my_pick})")
+    for col in ("Slot", "Player", "NBA", "Pos", "G-score", "Status"):
+        table.add_column(col)
+    for p in league.my_team.players:
+        table.add_row(
+            p.selected,
+            p.name,
+            p.nba_team,
+            "/".join(e for e in p.eligible if e != "UTIL"),
+            f"{ctx.values.loc[p.player_id, 'g_total']:+.2f}",
+            p.status,
+        )
+    console.print(table)
+    console.print("[green]Saved[/] data/demo_league.json")
+
+
+@app.command()
+def lineup(
+    day: str = typer.Option(None, "--date", help="ET game day (default: today ET)"),
+    demo: bool = typer.Option(False, "--demo", help="Use the demo league."),
+) -> None:
+    """Optimal lineup for one ET game day (max games started, then value) plus IL moves."""
+    from fbm.analytics.lineup import il_moves, optimize_day
+    from fbm.analytics.week import teams_playing
+
+    league = _load_league(demo)
+    ctx = _context()
+    target = _resolve_day(day, nba_today())
+    nba = teams_playing(ctx.conn, target, target)[target]
+    team = league.my_team
+    playing = {p.player_id for p in team.players if p.nba_team in nba}
+    value = ctx.value_map()
+    res = optimize_day(team.players, league.starting_slots(), playing, value)
+    order = {s: i for i, s in enumerate([*dict.fromkeys(league.starting_slots()), "BN", "IL", "IL+"])}
+    table = Table(title=f"{team.name} — {target} (ET) · {res.starters_with_games} starters with games")
+    for col in ("Slot", "Player", "NBA", "Game", "Status", "G-score", "Change"):
+        table.add_column(col)
+    for p in sorted(team.players, key=lambda x: order.get(res.assignments[x.player_id], 99)):
+        new = res.assignments[p.player_id]
+        table.add_row(
+            new,
+            p.name,
+            p.nba_team,
+            "yes" if p.player_id in playing else "",
+            p.status,
+            f"{value.get(p.player_id, 0):+.2f}",
+            f"{p.selected} → {new}" if p.selected != new else "",
+        )
+    console.print(table)
+    if res.benched_with_games:
+        names = {p.player_id: p.name for p in team.players}
+        console.print(f"[yellow]Benched with a game:[/] {', '.join(names[pid] for pid in res.benched_with_games)}")
+    il_counts = {s.position: s.count for s in league.slots if s.position in ("IL", "IL+")}
+    for m in il_moves(team.players, il_counts):
+        console.print(f"[cyan]IL move:[/] {m.name}: {m.from_slot} → {m.to_slot} ({m.reason})")
+
+
+@app.command()
+def sim(
+    start: str = typer.Option(None, help="First ET day to simulate (default: today or first game day)."),
+    opponent: str = typer.Option(None, help="Opponent team key (default: next team in the demo rotation)."),
+    n: int = typer.Option(10000, help="Simulations."),
+    demo: bool = typer.Option(False, "--demo", help="Use the demo league."),
+) -> None:
+    """Monte Carlo the rest of this fantasy week against an opponent: per-category win odds."""
+    from fbm.analytics.simulation import simulate_matchup
+    from fbm.analytics.week import date_range, fantasy_week, plan_team_week, teams_playing
+
+    league = _load_league(demo)
+    ctx = _context()
+    day0 = _first_game_day(ctx.conn, _resolve_day(start, nba_today()))
+    ws, we = fantasy_week(day0)
+    days = date_range(day0, we)
+    playing = teams_playing(ctx.conn, ws, we)
+    me = league.my_team
+    if opponent:
+        opp = league.team(opponent)
+    else:
+        idx = [t.team_key for t in league.teams].index(me.team_key)
+        opp = league.teams[(idx + 1) % len(league.teams)]
+    value = ctx.value_map()
+    models = ctx.models([*me.player_ids(), *opp.player_ids()])
+    my_week, _ = plan_team_week(me, days, playing, league.starting_slots(), value)
+    opp_week, _ = plan_team_week(opp, days, playing, league.starting_slots(), value)
+    odds = simulate_matchup(my_week, opp_week, models, league.categories, n_sims=n, seed=42)
+
+    table = Table(
+        title=f"{me.name} vs {opp.name} — {day0} → {we} · games started {len(my_week.player_games)} vs "
+        f"{len(opp_week.player_games)}"
+    )
+    for col in ("Cat", "Me (mean)", "Opp (mean)", "Win", "Tie", "Loss"):
+        table.add_column(col, justify="right")
+    for o in odds.categories:
+        style = "green" if o.p_win >= 0.65 else "red" if o.p_loss >= 0.65 else "yellow"
+        table.add_row(
+            o.category.label,
+            _fmt(o.category, o.mean_a),
+            _fmt(o.category, o.mean_b),
+            f"[{style}]{o.p_win:.0%}[/]",
+            f"{o.p_tie:.0%}",
+            f"{o.p_loss:.0%}",
+        )
+    console.print(table)
+    swing = ", ".join(c.category.label for c in odds.swing()) or "none"
+    console.print(
+        f"Expected categories won: [bold]{odds.expected_score:.2f}[/] / {len(league.categories)} · "
+        f"P(win majority) {odds.p_majority:.0%} · Swing categories: {swing}"
+    )
+    synthetic = [p.name for p in [*me.players, *opp.players] if models[p.player_id].synthetic]
+    if synthetic:
+        console.print(f"[dim]Synthetic (thin history) models: {', '.join(synthetic)}[/]")
+
+
+@app.command()
+def profile(
+    demo: bool = typer.Option(False, "--demo", help="Use the demo league."),
+    n: int = typer.Option(4000, help="Simulations per team."),
+) -> None:
+    """League-wide category strength: each team's typical-week win rate per category."""
+    from fbm.analytics.team_profile import league_profile
+
+    league = _load_league(demo)
+    ctx = _context()
+    models = ctx.models([pid for t in league.teams for pid in t.player_ids()])
+    profiles = sorted(league_profile(league, models, n_sims=n), key=lambda p: p.expected_score, reverse=True)
+    table = Table(title=f"{league.name} — category win rate vs the league (typical week)")
+    for col in ("Team", *[c.label for c in league.categories], "Exp cats", "P(win wk)"):
+        table.add_column(col, justify="left" if col == "Team" else "right")
+    for p in profiles:
+        cells = []
+        for c in league.categories:
+            v = p.cat_score[c.key]
+            style = "green" if v >= 0.6 else "red" if v <= 0.4 else ""
+            cells.append(f"[{style}]{v:.0%}[/]" if style else f"{v:.0%}")
+        name = f"[bold]{p.name}[/]" if p.team_key == league.my_team_key else p.name
+        table.add_row(name, *cells, f"{p.expected_score:.2f}", f"{p.p_majority:.0%}")
+    console.print(table)
+    mine = next(p for p in profiles if p.team_key == league.my_team_key)
+    ordered = sorted(league.categories, key=lambda c: mine.cat_score[c.key])
+    console.print(
+        "My weakest → strongest: "
+        + ", ".join(f"{c.label} ({mine.cat_score[c.key]:.0%}, #{mine.cat_rank[c.key]})" for c in ordered)
+    )
+
+
 if __name__ == "__main__":
     app()
