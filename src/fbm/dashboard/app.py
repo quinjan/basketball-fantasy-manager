@@ -673,6 +673,14 @@ def page_memory() -> None:
     with tabs[2]:
         st.markdown(memory.recent_journal(days=7, limit=40000) or "_no entries_")
     with tabs[3]:
+        if st.toggle("Show engine manager profiles (league intel)", value=False):
+            intel = call(cached, "league_intel")
+            if intel["note"]:
+                st.caption(intel["note"])
+            st.markdown("**Activity ranking**")
+            st.dataframe(pd.DataFrame(intel["activity_ranking"]), hide_index=True, use_container_width=True)
+            st.markdown(f"**Best trade partners** — {intel['partner_order']}")
+            st.dataframe(pd.DataFrame(intel["best_trade_partners"]), hide_index=True, use_container_width=True)
         for name, text in memory.manager_notes(4000).items():
             with st.expander(name):
                 st.markdown(text)

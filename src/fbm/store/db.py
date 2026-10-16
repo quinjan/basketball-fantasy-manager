@@ -180,6 +180,31 @@ CREATE TABLE IF NOT EXISTS yahoo_adp (
     percent_drafted REAL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS league_transactions (
+    tx_key TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    status TEXT,
+    ts_utc TEXT,
+    trader_team_key TEXT,
+    tradee_team_key TEXT,
+    fetched_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS league_transaction_players (
+    tx_key TEXT NOT NULL REFERENCES league_transactions(tx_key) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    player_key TEXT,
+    player_id TEXT,
+    name TEXT,
+    nba_team TEXT,
+    action TEXT,
+    source_type TEXT,
+    source_team_key TEXT,
+    destination_type TEXT,
+    destination_team_key TEXT,
+    PRIMARY KEY (tx_key, seq)
+);
 """
 
 

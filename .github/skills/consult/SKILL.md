@@ -6,7 +6,9 @@ description: Ad-hoc consultation with the owner — discuss an idea, a player, a
 # Consult
 
 1. `context_pack` (once per session).
-2. Restate the owner's question/idea in one line. Pull the relevant numbers with tools before forming a view.
+2. If a named skill fits, follow it: `lineup`, `matchup`, `waivers`, `stream-plan`, `trade-lab`, `player`,
+   `scout`, `league-intel`, `playoffs`, `approvals`, `memory`, `settings`, `health`, `draft-assist`,
+   `season-strategy`. Otherwise restate the owner's question/idea in one line. Pull the relevant numbers with tools before forming a view.
 3. Give a clear verdict first, then the justification (2–4 numbers), then risks and the best alternative.
 4. Steelman the owner's idea before disagreeing. If they still want it, it's their team: create a proposal and
    run it through review (roster moves), or make the change (rules/config/code).

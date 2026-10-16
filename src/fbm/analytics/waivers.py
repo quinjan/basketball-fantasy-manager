@@ -47,11 +47,15 @@ def claim_threshold(priority: int, n_teams: int) -> float:
     return top + (bottom - top) * frac
 
 
-def p_claimed(competitors: Sequence[Competitor], activity: float | None = None) -> float:
+def p_claimed(
+    competitors: Sequence[Competitor], activity: float | None = None, per_team: Mapping[str, float] | None = None
+) -> float:
+    """`per_team` (team_key -> claim probability from manager profiles) overrides the flat activity per team."""
     a = float(C("waiver.manager_activity")) if activity is None else activity
+    per_team = per_team or {}
     p_none = 1.0
-    for _ in competitors:
-        p_none *= 1 - a
+    for c in competitors:
+        p_none *= 1 - per_team.get(c.team_key, a)
     return 1 - p_none
 
 
@@ -61,11 +65,12 @@ def decide(
     my_priority: int | None,
     n_teams: int,
     competitors: Sequence[Competitor],
+    activity: Mapping[str, float] | None = None,
 ) -> WaiverDecision:
     priority = my_priority or n_teams
     comps = sorted(competitors, key=lambda c: c.priority)
-    p_before = p_claimed([c for c in comps if c.priority < priority])
-    p_other = p_claimed(comps)
+    p_before = p_claimed([c for c in comps if c.priority < priority], per_team=activity)
+    p_other = p_claimed(comps, per_team=activity)
 
     def out(action: str, threshold: float | None, reason: str) -> WaiverDecision:
         return WaiverDecision(

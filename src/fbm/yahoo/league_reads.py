@@ -359,8 +359,12 @@ def parse_transactions(fc: dict[str, Any]) -> list[Transaction]:
     return out
 
 
-def fetch_transactions(client: YahooClient, league_key: str, count: int = 50) -> list[Transaction]:
-    return parse_transactions(client.get(f"league/{league_key}/transactions;types=add,drop,trade;count={count}"))
+def fetch_transactions(client: YahooClient, league_key: str, count: int = 50, start: int = 0) -> list[Transaction]:
+    """Newest first; `start` pages backwards through history."""
+    paging = f";start={start}" if start else ""
+    return parse_transactions(
+        client.get(f"league/{league_key}/transactions;types=add,drop,trade{paging};count={count}")
+    )
 
 
 def fetch_pending(client: YahooClient, league_key: str, team_key: str) -> list[Transaction]:

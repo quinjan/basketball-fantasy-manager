@@ -149,3 +149,56 @@ def offers() -> None:
     if not any(r[k] for k in ("incoming_trades", "outgoing_trades", "waiver_claims")):
         console.print("No pending trades or waiver claims.")
     console.print(f"[dim]{r['note']}[/]")
+
+
+@app.command()
+def intel(
+    team: str = typer.Option(None, "--team", "-t", help="Profile one manager (default: league-wide intel)."),
+    sync: bool = typer.Option(False, "--sync", help="Sync Yahoo transaction history + manager notes first."),
+) -> None:
+    """Opponent intel: manager activity, streaming, trades, builds, best trade partners."""
+    from fbm.gm import services as svc
+
+    if sync:
+        s = _svc(svc.sync_transactions_tool)
+        if not _demo(s):
+            console.print(f"Synced {s['new']} new transactions ({s['total_stored']} stored, {s['pages']} pages).")
+    if team:
+        p = _svc(svc.manager_profile, team)
+        console.print(f"[bold]{p['name']}[/] · {p['tier']} (confidence {p['confidence']}, {p['moves']} moves)")
+        console.print(
+            f"adds/week {p['adds_per_week']} (recent {p['recent_adds_per_week']}) · waiver claims {p['waiver_claims']}"
+            f" · FA adds {p['fa_adds']} · streaming {p['streaming_propensity']} · trades {p['trades_completed']} done"
+            f" / {p['trades_proposed']} proposed · last activity {p['last_activity'] or '-'}"
+        )
+        console.print(
+            f"strong {', '.join(p['strong_cats']) or '-'} · weak {', '.join(p['weak_cats']) or '-'} · likely punts "
+            f"{', '.join(p['likely_punts']) or '-'} · fit with me {p['complementary_fit_with_me']}"
+        )
+        for m in p["recent_moves"]:
+            console.print(f"  {m['utc']}: {'; '.join(m['moves'])}")
+        if p["note"]:
+            console.print(f"[dim]{p['note']}[/]")
+        return
+    r = _svc(svc.league_intel)
+    table = Table("Team", "Tier", "Conf", "Adds/wk", "Recent", "Claims", "Stream%", "Trades")
+    for row in r["activity_ranking"]:
+        table.add_row(
+            row["team"],
+            row["tier"],
+            row["confidence"],
+            str(row["adds_per_week"]),
+            str(row["recent_adds_per_week"]),
+            str(row["waiver_claims"]),
+            "-" if row["streaming_propensity"] is None else f"{row['streaming_propensity']:.0%}",
+            f"{row['trades_completed']}/{row['trades_proposed']}",
+        )
+    console.print(table)
+    console.print("[bold]Best trade partners[/] (" + r["partner_order"] + ")")
+    for row in r["best_trade_partners"]:
+        console.print(
+            f"  {row['team']} · fit {row['complementary_fit']} · {row['tier']} · strong "
+            f"{', '.join(row['their_strong_cats']) or '-'} · weak {', '.join(row['their_weak_cats']) or '-'}"
+        )
+    if r["note"]:
+        console.print(f"[dim]{r['note']}[/]")

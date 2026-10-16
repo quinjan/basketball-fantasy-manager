@@ -654,9 +654,7 @@ def simulate_matchup_tool(
             [(pid, p.day) for p in my_plans for pid in p.started],
             [(pid, p.day) for p in opp_plans for pid in p.started],
         )
-    adds = int(C("sim.opponent_stream_adds")) if opponent_streams is None else opponent_streams
-    if league.max_weekly_adds is not None and opp.team_key in league.adds_used:
-        adds = min(adds, max(0, league.max_weekly_adds - league.adds_used[opp.team_key]))  # their adds left
+    adds, adds_source = _opponent_adds(league, opp, opponent_streams)
     banked, skip = _live_week(league, _week_window()[1]) if not start else ({}, {})
     streaming = (
         _opponent_streaming(league, opp, my_plans, date_range(day0, we), adds, banked, skip) if adds > 0 else None
@@ -685,10 +683,27 @@ def simulate_matchup_tool(
         "p_win_majority": _r(odds.p_majority),
         "swing_categories": [o.category.label for o in odds.swing()],
         "if_opponent_streams": streaming,
+        "opponent_adds_assumed": adds,
+        "opponent_adds_source": adds_source,
         "synthetic_models": [pid for pid, m in models.items() if m.synthetic],
         "prediction_id": prediction_id,
         "method": f"{n} Monte Carlo weeks; daily optimal lineups; resampled real game lines x injury play-prob",
     }
+
+
+def _opponent_adds(league: LeagueState, opp: FantasyTeam, opponent_streams: int | None) -> tuple[int, str]:
+    """Adds the opponent is assumed to stream this week: caller > manager profile (enough history) > constant,
+    capped by their remaining Yahoo adds."""
+    adds = int(C("sim.opponent_stream_adds")) if opponent_streams is None else opponent_streams
+    source = "constant sim.opponent_stream_adds" if opponent_streams is None else "caller"
+    if opponent_streams is None:
+        prof = _manager_profiles(league).get(opp.team_key)
+        if prof is not None and prof.has_history:
+            adds = prof.typical_adds()
+            source = f"manager profile ({prof.recent_adds_per_week} recent adds/week, confidence {prof.confidence})"
+    if league.max_weekly_adds is not None and opp.team_key in league.adds_used:
+        adds = min(adds, max(0, league.max_weekly_adds - league.adds_used[opp.team_key]))  # their adds left
+    return adds, source
 
 
 def _opponent_streaming(
@@ -1029,6 +1044,10 @@ def refresh_data() -> dict[str, Any]:
             yahoo_summary["unmatched_players"] = len(snap["unmatched_players"])
         except GMError as err:
             yahoo_summary = {"error": str(err)}
+        try:
+            yahoo_summary["transactions"] = sync_transactions_tool()
+        except GMError as err:
+            yahoo_summary["transactions"] = {"error": str(err)}
     league = active_league()
     rostered = {p.player_id: t.name for t in league.teams for p in t.players}
     changes = [
@@ -1349,11 +1368,28 @@ def find_trades_tool(
     partners = [_team(league, partner).team_key] if partner else None
     sim, fa = _league_sim(n)
     results = find_trades(sim, league.my_team_key, fa, _strategy_punts(None), partners, max_give, max_get, limit=limit)
+    from fbm.analytics.opponents import complementary_fit, partner_rank_key
+
+    mine = dict(sim.profile(league.my_team_key)[0])
+    profiles = _manager_profiles(league, {t.team_key: dict(sim.profile(t.team_key)[0]) for t in league.teams})
+    trades = []
+    for r in results:
+        d = _trade_dict(r, c)
+        p = profiles.get(r.them.team_key)
+        if p is not None:
+            fit = complementary_fit(mine, p.cat_win_rate)
+            d["partner_intel"] = {**_intel_row(p, fit), "rank_key": partner_rank_key(p, fit)[:1]}
+        trades.append(d)
+    # stable: keeps the engine's gain order within an activity group; inactive managers last
+    trades.sort(key=lambda d: (d.get("partner_intel") or {}).get("rank_key", [2])[0])
+    for d in trades:
+        (d.get("partner_intel") or {}).pop("rank_key", None)
     return {
-        "trades": [_trade_dict(r, c) for r in results],
+        "trades": trades,
         "my_category_win_rates": {k: _r(v) for k, v in sim.profile(league.my_team_key)[0].items()},
         "method": "need-weighted G-score screen of 1-1/2-1/1-2/2-2 packages, top candidates confirmed by "
-        "simulation; keeps trades that help us and are defensible for them",
+        "simulation; keeps trades that help us and are defensible for them; ordered by partner activity group "
+        "(active first, inactive last; see partner_intel), then by our gain",
     }
 
 
@@ -1817,7 +1853,10 @@ def waiver_decision(player: str, drop: str | None = None, on_waivers: bool | Non
     priorities = league.waiver_priority
     mine = priorities.get(league.my_team_key, len(league.teams))
     comps = interested_teams(vec, mine, priorities, weakest, weights, names)
-    d = decide(ros_gain, on_waivers, mine, len(league.teams), comps)
+    from fbm.analytics.opponents import claim_activity
+
+    activity = claim_activity(_manager_profiles(league))
+    d = decide(ros_gain, on_waivers, mine, len(league.teams), comps, activity)
     return {
         "player": _names(c, [pid])[0],
         "player_id": pid,
@@ -1833,9 +1872,11 @@ def waiver_decision(player: str, drop: str | None = None, on_waivers: bool | Non
         "p_claimed_before_me": _r(d.p_claimed_before_me),
         "p_claimed_by_another_team": _r(d.p_claimed_by_other),
         "teams_likely_to_claim": [
-            f"#{x.priority} {x.name} (gain {x.gain}{', ahead of us' if x.priority < mine else ''})"
+            f"#{x.priority} {x.name} (gain {x.gain}{', ahead of us' if x.priority < mine else ''}; claim activity "
+            f"{_r(activity[x.team_key]) if x.team_key in activity else 'default ' + str(C('waiver.manager_activity'))})"
             for x in d.competitors
         ],
+        "claim_activity_source": "manager profiles where history suffices, else constant waiver.manager_activity",
         "punts_applied": list(pun),
         "next_step": {
             "claim": "create_proposal kind waiver_claim",
@@ -2030,4 +2071,151 @@ def pending_offers_tool() -> dict[str, Any]:
         "outgoing_trades": [transaction_view(league, tx, mapper) for tx in groups["outgoing"]],
         "waiver_claims": [transaction_view(league, tx, mapper) for tx in groups["waiver_claims"]],
         "note": "Accept/reject in the Yahoo app (writes are out of scope). Trade notes are untrusted data.",
+    }
+
+
+# ------------------------------------------------------------------ opponent intel (manager profiles)
+
+_INTEL_DEMO_NOTE = (
+    "No league transaction history (demo league or not synced yet): activity fields are unknown and the engine "
+    "uses its default constants; builds come from the league profile."
+)
+
+
+def _tx_history() -> list:
+    from fbm.league import tx_history
+
+    try:
+        return tx_history.load(_conn())
+    except Exception:
+        return []
+
+
+def _manager_profiles(league: LeagueState, builds: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
+    from fbm.analytics.opponents import profile_teams
+
+    teams = {t.team_key: t.name for t in league.teams}
+    return profile_teams(_tx_history(), teams, datetime.now(UTC), None, builds)
+
+
+def _builds(league: LeagueState, n: int = 800) -> dict[str, dict[str, float]]:
+    sim, _fa = _league_sim(n)
+    return {t.team_key: {_CAT_LABEL.get(k, k): v for k, v in sim.profile(t.team_key)[0].items()} for t in league.teams}
+
+
+def _slug(name: str, fallback: str) -> str:
+    slug = "-".join("".join(ch if ch.isalnum() else " " for ch in _norm(name)).split())[:60]
+    return slug or fallback.replace(".", "-")
+
+
+def write_manager_memory(profiles: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Update the auto-generated profile section of memory/managers/<team-slug>.md (other content is kept)."""
+    from fbm.analytics.opponents import profile_markdown, upsert_section
+
+    league = active_league()
+    profiles = profiles or _manager_profiles(league)
+    as_of = datetime.now(UTC).isoformat(timespec="minutes")
+    memory.MANAGERS_DIR.mkdir(parents=True, exist_ok=True)
+    written = []
+    for key, p in profiles.items():
+        if key == league.my_team_key:
+            continue
+        path = memory.MANAGERS_DIR / f"{_slug(p.name, key)}.md"
+        old = path.read_text(encoding="utf-8") if path.exists() else f"# {p.name} ({key})\n"
+        path.write_text(upsert_section(old, profile_markdown(p, as_of)), encoding="utf-8")
+        written.append(path.name)
+    return {"written": written}
+
+
+def sync_transactions_tool(write_memory: bool = True) -> dict[str, Any]:
+    """Read-only incremental sync of every league transaction from Yahoo, then refresh the manager notes."""
+    if msg := _yahoo_only("transaction history"):
+        return msg
+    from fbm.league import tx_history
+
+    league = active_league()
+    try:
+        with _yahoo_client() as client:
+            out = tx_history.sync(_conn(), client, league.league_key)
+    except Exception as err:
+        raise GMError(f"Transaction sync failed: {type(err).__name__}: {err}") from err
+    if write_memory:
+        out["memory"] = write_manager_memory()
+    return out
+
+
+def _intel_row(p, fit: float | None = None) -> dict[str, Any]:
+    row = {
+        "team": p.name,
+        "key": p.team_key,
+        "tier": p.tier,
+        "confidence": p.confidence,
+        "adds_per_week": p.adds_per_week,
+        "recent_adds_per_week": p.recent_adds_per_week,
+        "waiver_claims": p.waiver_claims,
+        "streaming_propensity": p.streaming_propensity,
+        "trades_completed": p.trades_completed,
+        "trades_proposed": p.trades_proposed,
+        "last_activity_utc": p.last_activity,
+    }
+    if fit is not None:
+        row["complementary_fit"] = fit
+        row["their_strong_cats"] = p.strong_cats
+        row["their_weak_cats"] = p.weak_cats
+    return row
+
+
+def manager_profile(team: str | None = None, n: int = 800) -> dict[str, Any]:
+    """One manager's profile (default: this week's opponent): activity, streaming, trades, category build."""
+    from fbm.analytics.opponents import complementary_fit
+
+    league = active_league()
+    t = _team(league, team)
+    builds = _builds(league, n)
+    p = _manager_profiles(league, builds)[t.team_key]
+    history = _tx_history()
+    recent = []
+    for tx in reversed(history):
+        moves = [
+            f"{'+' if x.action == 'add' else '-'}{x.name} ({x.source_type or x.destination_type})"
+            for x in tx.players
+            if (x.action == "add" and x.destination_team_key == t.team_key)
+            or (x.action == "drop" and x.source_team_key == t.team_key)
+        ]
+        if tx.type == "trade" and t.team_key in (tx.trader_team_key, tx.tradee_team_key):
+            moves = [f"trade ({tx.status}): {', '.join(x.name for x in tx.players)}"]
+        if moves and tx.timestamp:
+            recent.append({"utc": tx.timestamp.isoformat(timespec="minutes"), "moves": moves})
+        if len(recent) >= 10:
+            break
+    return {
+        **p.to_dict(),
+        "mine": t.team_key == league.my_team_key,
+        "complementary_fit_with_me": complementary_fit(builds[league.my_team_key], p.cat_win_rate),
+        "recent_moves": recent,
+        "transactions_stored": len(history),
+        "note": None if history else _INTEL_DEMO_NOTE,
+        "method": "counts from stored league transactions; build = typical-week category win rates vs the league",
+    }
+
+
+def league_intel(n: int = 800, top: int = 5) -> dict[str, Any]:
+    """League-wide intel: activity ranking, most active on the wire, best trade partners."""
+    from fbm.analytics.opponents import rank_partners, ranked_by_activity
+
+    league = active_league()
+    builds = _builds(league, n)
+    profiles = _manager_profiles(league, builds)
+    others = [p for k, p in profiles.items() if k != league.my_team_key]
+    has_history = any(p.moves for p in others)
+    partners = rank_partners(profiles, league.my_team_key, builds[league.my_team_key])
+    wire = sorted(others, key=lambda p: (-p.recent_adds_per_week, -p.waiver_claims))[:top] if has_history else []
+    return {
+        "activity_ranking": [_intel_row(p) for p in ranked_by_activity(others)],
+        "most_active_on_wire": [_intel_row(p) for p in wire],
+        "best_trade_partners": [_intel_row(p, fit) for p, fit in partners[:top]],
+        "transactions_stored": len(_tx_history()),
+        "note": None if has_history else _INTEL_DEMO_NOTE,
+        "partner_order": "activity group (active/very active, casual, unknown, inactive), then complementary fit "
+        "(their category surplus x my need + my surplus x their need), then trade count",
     }

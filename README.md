@@ -10,11 +10,14 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 ## Setup
 
 1. Install [uv](https://docs.astral.sh/uv/) and run `uv sync`.
-2. Create a Yahoo Developer app (Fantasy Sports **Read/Write**, redirect URI `https://localhost:8080`).
+2. Create a Yahoo Developer app (Fantasy Sports **Read** — writes are out of scope; redirect URI
+   `https://localhost:8080`). Create it only after Yahoo's "access enabled" email (see "Connecting the real Yahoo
+   league" below).
 3. `uv run fbm auth` — paste Client ID/Secret (stored in Windows Credential Manager), approve in browser,
    paste the redirected URL, pick your league.
 4. `uv run fbm settings` — pull league settings into `memory/league-settings.md`.
-5. `uv run fbm verify-write` — prove write access with a harmless no-op lineup re-save.
+5. Yahoo writes are out of scope (owner decision; `[yahoo] api_writes = false`): roster changes come back as
+   exact manual steps. See "Connecting the real Yahoo league" below.
 
 ## Commands
 
@@ -25,7 +28,14 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 | `fbm league list` / `fbm league select` | Discover / choose the managed league |
 | `fbm settings` | Fetch + summarize league settings |
 | `fbm roster [--date YYYY-MM-DD]` | Roster for an ET game day |
-| `fbm verify-write [--date]` | Confirm write scope (no-op) |
+| `fbm verify-write [--date] [--yes]` | **Out of scope** (writes disabled); no-op write check, only matters if `api_writes = true` |
+| `fbm snapshot` | Re-read the Yahoo league now (rosters, live scoreboard, standings, waivers, ownership) |
+| `fbm standings` / `fbm scoreboard` | Yahoo standings / this week's live category totals (mine first) |
+| `fbm transactions [--count N] [--team X]` | Recent Yahoo league transactions |
+| `fbm offers` | My pending trades (incoming offers evaluated) and waiver claims; accept/reject manually in Yahoo |
+| `fbm intel [--team X] [--sync]` | Opponent intel: manager activity, streaming, trades, builds, best trade partners (MCP: `manager_profile`, `league_intel`; history syncs on `refresh_data`) |
+| `fbm ids` | Yahoo players not mapped to ESPN ids (fix in `config/yahoo_id_overrides.toml`) |
+| `fbm health` | Health checks (data freshness, Yahoo access/snapshot, stale proposals, missed runs, storage) |
 | `fbm data sync` | Daily ESPN sync: schedule, box scores, season averages, injuries, news |
 | `fbm data backfill [--season 2026]` | One-time load of a past season (priors + week-to-week variance) |
 | `fbm data status` / `games` / `injuries` | Inspect the local NBA store |
@@ -42,7 +52,9 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 | `fbm trade eval --partner X --give A,B --get C` | Evaluate a trade for both sides (season-level) |
 | `fbm trade find [--partner X]` | Find trades that help us and are defensible for them |
 | `fbm learn grade` / `calibration` / `retro` | Learning loop: grade executed moves, simulator calibration |
-| `fbm draft board/start/pick/undo/recommend/mock` | Draft assistant (ESPN ADP, tiers, live picks, mock drafts) |
+| `fbm draft board/start/pick/undo/recommend/mock` | Draft assistant (ESPN or Yahoo ADP, tiers, live picks, mock drafts) |
+| `fbm draft adp [--refresh]` | Yahoo ADP (`--refresh` fetches Yahoo draft analysis) |
+| `fbm draft live [--interval S]` | Poll the live Yahoo draft; advice when I'm on the clock |
 | `fbm dashboard [--port 8501]` | Local Streamlit dashboard (14 pages) |
 | `fbm proposals list/show/approve/reject` | Owner-side proposal decisions |
 | `fbm sync-memory -m "..."` | Commit + push memory/reports/config |
@@ -53,9 +65,10 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
   matchup?", "Should I drop X for Y?", "What's pending?", "Approve P-12". Prompt catalog: see the plan's Appendix A.
 - **Agents** (`.github/agents/`): `gm` (decides), `reviewer` (different model family; independently re-checks every
   proposal and records AGREE/DISAGREE/SPLIT), `scout` (news/injury digging).
-- **Skills** (`.github/skills/`): `daily-gm`, `lineup-guard`, `weekly-retro-preview`, `trade-scan`,
-  `season-strategy`, `approvals`, `consult`, `health`, `draft-assist`.
-- **MCP server** (`.github/mcp.json` → `fbm-mcp`): 40 tools over the engine. The folder must be trusted by Copilot.
+- **Skills** (`.github/skills/`): scheduled runs `daily-gm`, `lineup-guard`, `weekly-retro-preview`, `trade-scan`,
+  `health`; on demand `consult`, `lineup`, `matchup`, `waivers`, `stream-plan`, `trade-lab`, `player`, `scout`,
+  `playoffs`, `approvals`, `memory`, `settings`, `season-strategy`, `draft-assist`.
+- **MCP server** (`.github/mcp.json` → `fbm-mcp`): 50 tools over the engine. The folder must be trusted by Copilot.
 - **Approvals:** in chat with the GM, or `uv run fbm proposals list|show|approve|reject P-12`.
 - **Automations** (Copilot app → Automations, all disabled until Yahoo approval): Daily GM 15:00, Lineup Guard hourly
   23:00–12:00, Weekly Retro Mon 15:30, Trade Scan Wed/Sat 16:00, Health Sun 10:00 (UTC+8).
@@ -63,7 +76,8 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 
 ## Data sources
 
-- **Yahoo Fantasy API** (league data) — gated since mid-2026; access application pending. Read-only by default.
+- **Yahoo Fantasy API** (league data) — gated since mid-2026; access application pending. Read-only (writes out of
+  scope).
 - **ESPN public JSON** (NBA schedule, box scores, season averages, injuries, news) and **ESPN Fantasy** (ADP,
   rankings, positional eligibility). NBA.com CDN and stats.nba.com are blocked on the owner's network.
 
@@ -71,12 +85,17 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 
 - **G-scores** (Rosenof, arXiv:2307.02188): `(μ_player − μ_pool) / √(σ² + κτ²)`, τ = RMS week-to-week SD,
   κ = 2N/(2N−1). FG%/FT% use volume-weighted impact. Z-scores shown alongside.
-- **Projections:** current-season per-game shrunk toward last season by games played; counting stats scaled by
-  the recent-minutes trend (last 5 games vs season, damped and capped) so role changes show up early.
-- **Lineups:** max games started, then value; prefers leaving players in place (fewer manual changes). Players
+- **Projections:** current-season per-game shrunk toward last season by games played; recent per-minute form blended
+  in, and counting stats scaled by the recent-minutes trend (last 5 games vs season, damped and capped) so role
+  changes show up early.
+- **Availability:** ESPN injury status/return dates scale rest-of-season value (rankings, free agents, waivers,
+  trades, punt scenarios) and season-level simulations.
+- **Lineups:** max games started, then value, ties broken by this week's swing categories; prefers leaving players
+  in place (fewer manual changes). Players
   whose game has tipped off are locked; IL moves respect roster capacity (blocked activations become proposals).
 - **Simulation:** resamples real game lines (keeps stat correlations) × injury play-probability. Matchup odds
-  include an "if the opponent streams" upper bound (the streaming planner run from their side).
+  include an "if the opponent streams" upper bound (the streaming planner run from their side). In the Yahoo league
+  the stats already banked this week (live scoreboard) are added to the rest-of-week simulation.
 - **Streaming planner:** greedy add/drop search over effective ET days within the weekly add limit; each candidate
   re-plans daily lineups and re-simulates with common random numbers; rest-of-season cost penalized.
 - **Trades:** season-level (typical week vs every team) expected categories for both sides, rosters rebalanced
@@ -95,7 +114,20 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
   heuristic); `config/constants.toml` overrides are validated.
 - **Learning loop:** executed moves graded by realized production (team-week SD units); matchup predictions
   graded by Brier score with reliability buckets.
-- **Draft:** punt-aware G-score board with tiers vs ESPN ADP; build-aware live recommendations; mock drafts.
+- **Draft:** punt-aware G-score board with tiers vs ESPN or Yahoo ADP; build-aware live recommendations (live Yahoo
+  draft sync); mock drafts.
+
+## Connecting the real Yahoo league
+
+1. Wait for Yahoo's "access enabled" email, then create a **new** Yahoo app (apps created before approval can't be
+   fixed) and submit its Client ID at <https://sports.yahoo.com/developer/application-confirmation/>.
+2. `uv run fbm auth --reset` (new Client ID/Secret), then `uv run fbm league select`.
+3. Set `[league] source = "yahoo"` in `config/settings.toml`.
+4. `uv run fbm snapshot`, then `uv run fbm ids` — fix unmatched players in `config/yahoo_id_overrides.toml`.
+5. `uv run fbm health` — everything should be OK.
+
+Yahoo stays read-only (`[yahoo] api_writes = false`): lineup/IL changes and approved moves are delivered as exact
+manual steps; the owner confirms ("done" / `mark_manual_done`) and the next snapshot shows the result.
 
 ## Layout
 

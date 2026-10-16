@@ -1,0 +1,18 @@
+---
+name: stream-plan
+description: Plan this week's streaming adds within the weekly add limit. Use for "Plan my streams for the week", "Who should I stream tomorrow?", "How many adds do I have left?".
+---
+
+# Stream plan
+
+Run as the `gm` agent. Streams are add/drops: each one is a proposal.
+
+1. `context_pack`; `schedule` for games left per team (ET days); in the Yahoo league `scoreboard` for what is
+   already banked.
+2. `simulate_matchup` → swing categories and `if_opponent_streams`.
+3. `streaming_plan(protect="<players never to drop>")` → the add/drop sequence by ET day, adds used vs the limit,
+   expected-category gain, and rest-of-season cost. Honor owner rules from `memory/playbook.md`.
+4. Sanity-check the first move with `evaluate_add_drop`; `waiver_decision` if the player is on waivers.
+5. Present the plan as a day-by-day table (local time + ET day). Propose only the next move(s) whose window is
+   open: `create_proposal` (expiry before that tip-off) → `reviewer` → owner approval → `execute_proposal`
+   (Yahoo league = manual steps).

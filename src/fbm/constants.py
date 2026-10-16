@@ -342,6 +342,58 @@ _ALL = [
         "Judgment: accept a ~30% risk of losing a marginal upgrade to keep priority.",
         "heuristic",
     ),
+    # opponent intel (manager profiles)
+    Constant(
+        "intel.sync_max_pages", 20, "pages", "Max transaction pages read per Yahoo sync.", "API budget.", "heuristic"
+    ),
+    Constant("intel.sync_page_size", 25, "transactions", "Transactions per Yahoo page.", "API default.", "rule"),
+    Constant(
+        "intel.recent_days",
+        14,
+        "days",
+        "Window for a manager's recent adds/week.",
+        "Judgment: two weeks tracks current habits.",
+        "heuristic",
+    ),
+    Constant(
+        "intel.stream_days",
+        7,
+        "days",
+        "An add dropped again within this many days counts as a stream.",
+        "Judgment: one fantasy week.",
+        "heuristic",
+    ),
+    Constant(
+        "intel.inactive_days",
+        14,
+        "days",
+        "No move for this long -> inactive manager.",
+        "Judgment: two missed weeks.",
+        "heuristic",
+    ),
+    Constant("intel.tier_active", 1.5, "adds/week", "Recent adds/week for 'active'.", "Judgment.", "heuristic"),
+    Constant(
+        "intel.tier_very_active", 3.0, "adds/week", "Recent adds/week for 'very active'.", "Judgment.", "heuristic"
+    ),
+    Constant(
+        "intel.min_moves",
+        5,
+        "moves",
+        "Moves needed before a profile replaces engine defaults (sim streaming, waiver activity).",
+        "Judgment: small samples are noise.",
+        "heuristic",
+    ),
+    Constant(
+        "intel.activity_floor",
+        0.05,
+        "probability",
+        "Clamp for profile waiver-claim activity (floor; ceiling = 1 - floor).",
+        "Judgment: nobody is certain to (not) claim.",
+        "heuristic",
+    ),
+    Constant("intel.strong_cat", 0.6, "win rate", "Category win rate counted as a strength.", "Judgment.", "heuristic"),
+    Constant("intel.weak_cat", 0.4, "win rate", "Category win rate counted as a weakness.", "Judgment.", "heuristic"),
+    Constant("intel.punt_cat", 0.25, "win rate", "Category win rate read as a likely punt.", "Judgment.", "heuristic"),
     # health heartbeat
     Constant(
         "health.data_max_age_h_gameday",
