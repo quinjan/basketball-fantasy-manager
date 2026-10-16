@@ -1,3 +1,4 @@
+# prepublish: ignore-file (this file deliberately contains fake secrets to test the scanner)
 import importlib.util
 from pathlib import Path
 
@@ -30,3 +31,11 @@ def test_personal_paths_flagged(tmp_path):
     files = ["memory/playbook.md", "config/settings.toml", "reports/daily/.gitkeep", "config/settings.example.toml"]
     findings = check.scan_files(tmp_path, files)
     assert len(findings) == 2
+
+
+def test_file_references_and_ignore_marker(tmp_path):
+    (tmp_path / "gen.py").write_text('content = "<!-- x -->\\n@AGENTS.md\\n"\n', encoding="utf-8")
+    (tmp_path / "fixture.py").write_text(
+        f"# {check.IGNORE_FILE_MARKER}\nowner = 'someone@gmail.com'\n", encoding="utf-8"
+    )
+    assert check.scan_files(tmp_path, ["gen.py", "fixture.py"]) == []

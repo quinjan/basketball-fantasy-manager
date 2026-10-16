@@ -17,6 +17,9 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     "user-path": re.compile(r"(?i)\b[A-Z]:\\\\?Users\\\\?[^\\\s'\"]+|/(?:home|Users)/[a-z0-9._-]+/"),
 }
 ALLOWED_EMAIL = re.compile(r"(?i)(@users\.noreply\.github\.com|@example\.(com|org)|@localhost)$")
+# "user@FILE.md"-style matches are file references (e.g. "@AGENTS.md" imports), not addresses.
+FILE_LIKE_DOMAIN = re.compile(r"(?i)\.(md|mdc|py|toml|json|txt|ya?ml)$")
+IGNORE_FILE_MARKER = "prepublish: ignore-file"  # put in a file's first lines (e.g. this scanner's own tests)
 ALLOWED_USERS = {"example", "user", "you", "<you>", "name", "runner", "<user>"}
 PERSONAL_PATHS = re.compile(
     r"^(memory/(?!README)|reports/.+(?<!\.gitkeep)$|data/(?!\.gitkeep)|config/(settings|league|constants|yahoo_id_overrides)\.toml$)"
@@ -36,7 +39,7 @@ def scan_text(rel: str, text: str) -> list[str]:
                 hit = m.group(m.lastindex or 0)
                 if name in ("app-password", "refresh-token") and re.fullmatch(r"[a-z_]+", hit):
                     continue
-                if name == "email" and ALLOWED_EMAIL.search(hit):
+                if name == "email" and (ALLOWED_EMAIL.search(hit) or FILE_LIKE_DOMAIN.search(hit)):
                     continue
                 if name == "user-path":
                     user = re.split(r"[\\/]+", hit.rstrip("/\\"))[-1].lower()
@@ -60,13 +63,17 @@ def scan_files(root: Path, files: list[str]) -> list[str]:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
+        if IGNORE_FILE_MARKER in "\n".join(text.splitlines()[:5]):
+            continue
         findings.extend(scan_text(rel, text))
     return findings
 
 
 def tracked_files(root: Path) -> list[str]:
-    out = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, text=True, check=True).stdout
-    return [f for f in out.split("\0") if f]
+    """Tracked files plus new files that would be committed (untracked and not ignored)."""
+    cmd = ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"]
+    out = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=True).stdout
+    return sorted({f for f in out.split("\0") if f})
 
 
 def main(argv: list[str] | None = None) -> int:
