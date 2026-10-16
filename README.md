@@ -35,6 +35,20 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 | `fbm sim --demo [--opponent KEY]` | Monte Carlo rest-of-week category odds |
 | `fbm profile --demo` | League-wide category strength (strategy/punt basis) |
 
+## Using the GM (Copilot)
+
+- **GM Office** — a Copilot app session in this folder running the `gm` agent (Opus). Ask anything: "How's my
+  matchup?", "Should I drop X for Y?", "What's pending?", "Approve P-12". Prompt catalog: see the plan's Appendix A.
+- **Agents** (`.github/agents/`): `gm` (decides), `reviewer` (different model family; independently re-checks every
+  proposal and records AGREE/DISAGREE/SPLIT), `scout` (news/injury digging).
+- **Skills** (`.github/skills/`): `daily-gm`, `lineup-guard`, `weekly-retro-preview`, `trade-scan`,
+  `season-strategy`, `approvals`, `consult`, `health`.
+- **MCP server** (`.github/mcp.json` → `fbm-mcp`): 24 tools over the engine. The folder must be trusted by Copilot.
+- **Approvals:** in chat with the GM, or `uv run fbm proposals list|show|approve|reject P-12`.
+- **Automations** (Copilot app → Automations, all disabled until Yahoo approval): Daily GM 15:00, Lineup Guard hourly
+  23:00–12:00, Weekly Retro Mon 15:30, Trade Scan Wed/Sat 16:00, Health Sun 10:00 (UTC+8).
+- **Memory:** `memory/` (strategy, playbook, journal, managers) is committed via `uv run fbm sync-memory`.
+
 ## Data sources
 
 - **Yahoo Fantasy API** (league data) — gated since mid-2026; access application pending. Read-only by default.
