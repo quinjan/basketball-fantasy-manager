@@ -16,4 +16,6 @@ description: Ad-hoc consultation with the owner — discuss an idea, a player, a
    - Playbook rules ("never drop X", "don't stream on Sundays") → `memory/playbook.md` under "Owner rules".
    - Autonomy/schedules/email preferences → `config/settings.toml` (and Copilot app automations).
    - Engine changes → edit code with tests (`uv run pytest -q`, `uv run ruff check src tests`), then commit.
+   - Tuning a number (thresholds, penalties, assumed opponent adds, play probabilities) → `config/constants.toml`
+     (see the `constants` tool for keys, defaults, and sources); journal the before/after and the evidence.
 6. End with a one-line summary of what changed (if anything) and `uv run fbm sync-memory -m "consult: <topic>"`.

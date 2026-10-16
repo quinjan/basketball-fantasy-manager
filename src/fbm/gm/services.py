@@ -22,6 +22,7 @@ from fbm.analytics.team_profile import league_profile as compute_profile
 from fbm.analytics.valuation import config_from_settings
 from fbm.analytics.week import date_range, fantasy_week, plan_team_week, teams_playing
 from fbm.config import LEAGUE_CONFIG_PATH, RAW_DIR, load_league_config
+from fbm.constants import C
 from fbm.data import sync
 from fbm.data.espn import EspnClient
 from fbm.gm import executors, memory, outcomes
@@ -63,12 +64,14 @@ def ctx() -> AnalyticsContext:
 def active_league() -> LeagueState:
     source = load_settings().league_source
     if source == "demo":
-        from fbm.league.demo import load_league, refresh_players
+        from fbm.league.demo import default_waiver_priority, load_league, refresh_players
 
         try:
             league = load_league()
         except FileNotFoundError as err:
             raise GMError("Demo league not built. Run `fbm demo build`.") from err
+        if not league.waiver_priority:
+            league.waiver_priority = default_waiver_priority(league)
         return refresh_players(league, _eligibility(), ctx().statuses(_conn()))
     raise GMError('Yahoo league adapter is pending Yahoo API approval; set [league] source = "demo".')
 
@@ -209,6 +212,10 @@ def league_overview() -> dict[str, Any]:
         "nba_game_day_et": nba_today().isoformat(),
         "fantasy_week": {"start": ws.isoformat(), "end": we.isoformat(), "first_remaining_day": start.isoformat()},
         "strategy": memory.current_strategy(),
+        "waiver_priority": {
+            "mine": league.waiver_priority.get(league.my_team_key),
+            "order": [t.name for t in sorted(league.teams, key=lambda t: league.waiver_priority.get(t.team_key, 99))],
+        },
         "open_proposals": [f"{p.ref} {p.status}: {p.title}" for p in props.list_proposals(conn, "open")],
         "data_freshness": {r["job"]: r["last_run"] for r in conn.execute("SELECT job, last_run FROM sync_log")},
         "yahoo": yahoo,
@@ -235,6 +242,8 @@ def my_roster(day: str | None = None, punts: str | None = None) -> dict[str, Any
                 "game_today": p.nba_team in playing_today,
                 "games_left_this_week": _games_remaining(p.nba_team, start, we),
                 "value": _r(value.get(p.player_id, 0.0)),
+                "role": _role(c, p.player_id),
+                "playoff_games": _player_playoff(p.player_id)["games"],
                 "g_by_cat": _cat_line(c, p.player_id),
                 "per_game": _per_game(c, p.player_id),
                 "injury": _injury(p.player_id),
@@ -279,6 +288,8 @@ def player_card(query: str) -> dict[str, Any]:
             "gp_prior": int(proj["gp_prior"]),
             "weight_current": float(proj["weight_current"]),
         },
+        "minutes_trend": _role(c, pid),
+        "playoff_schedule": _player_playoff(pid),
         "per_game_projection": _per_game(c, pid),
         "g_by_cat": _cat_line(c, pid),
         "z_by_cat": _cat_line(c, pid, "z"),
@@ -414,22 +425,48 @@ def schedule(days: int = 7) -> dict[str, Any]:
 # ------------------------------------------------------------------ analytics tools
 
 
-def optimize_lineup(day: str | None = None) -> dict[str, Any]:
-    league, c = active_league(), ctx()
-    target = parse_date(day) if day else nba_today()
-    nba = teams_playing(_conn(), target, target)[target]
+def _lineup_plan(league: LeagueState, target: date, apply_il: bool) -> dict[str, Any]:
+    """Lock-aware lineup for an ET day, with IL compliance moves applied first (when allowed)."""
+    from dataclasses import replace
+
+    from fbm.analytics.lineup import started_teams
+
+    c, conn = ctx(), _conn()
     team = league.my_team
-    playing = {p.player_id for p in team.players if p.nba_team in nba}
-    res = optimize_day(team.players, league.starting_slots(), playing, _value(c, _strategy_punts(None)).to_dict())
+    nba = teams_playing(conn, target, target)[target]
+    started = started_teams(
+        conn.execute("SELECT * FROM games WHERE et_date = ? AND season_type = 2", (target.isoformat(),)).fetchall(),
+        datetime.now(UTC),
+    )
+    locked = {p.player_id for p in team.players if p.nba_team in started}
     il_counts = {s.position: s.count for s in league.slots if s.position in IL_SLOTS}
+    moves = il_moves(team.players, il_counts, league.roster_size(), locked)
+    applied = [m for m in moves if not m.blocked] if apply_il else []
+    moved = {m.player_id: m.to_slot for m in applied}
+    players = [replace(p, selected=moved[p.player_id]) if p.player_id in moved else p for p in team.players]
+    playing = {p.player_id for p in players if p.nba_team in nba}
+    res = optimize_day(players, league.starting_slots(), playing, _value(c, _strategy_punts(None)).to_dict(), locked)
+    return {"res": res, "moves": moves, "applied": applied, "locked": locked, "players": players}
+
+
+def optimize_lineup(day: str | None = None) -> dict[str, Any]:
+    league = active_league()
+    target = parse_date(day) if day else nba_today()
+    plan = _lineup_plan(league, target, apply_il=load_settings().auto_il_moves)
+    res, team = plan["res"], league.my_team
     names = {p.player_id: p.name for p in team.players}
+    original = {p.player_id: p.selected for p in team.players}
     return {
         "date_et": target.isoformat(),
         "starters_with_games": res.starters_with_games,
         "assignments": {names[pid]: slot for pid, slot in res.assignments.items()},
-        "changes": [f"{names[pid]}: {old} -> {new}" for pid, (old, new) in res.changes.items()],
+        "changes": [
+            f"{names[pid]}: {original[pid]} -> {slot}" for pid, slot in res.assignments.items() if original[pid] != slot
+        ],
         "benched_with_games": [names[pid] for pid in res.benched_with_games],
-        "il_moves": [m.__dict__ for m in il_moves(team.players, il_counts)],
+        "locked_game_started": sorted(names[pid] for pid in plan["locked"]),
+        "il_moves": [m.__dict__ for m in plan["moves"]],
+        "il_moves_blocked": [m.name for m in plan["moves"] if m.blocked],
     }
 
 
@@ -465,7 +502,11 @@ def _team(league: LeagueState, query: str | None) -> FantasyTeam:
 
 
 def simulate_matchup_tool(
-    opponent: str | None = None, start: str | None = None, n: int = 10000, record: bool = False
+    opponent: str | None = None,
+    start: str | None = None,
+    n: int = 10000,
+    record: bool = False,
+    opponent_streams: int | None = None,
 ) -> dict[str, Any]:
     league = active_league()
     opp = _team(league, opponent)
@@ -484,6 +525,8 @@ def simulate_matchup_tool(
             [(pid, p.day) for p in my_plans for pid in p.started],
             [(pid, p.day) for p in opp_plans for pid in p.started],
         )
+    adds = int(C("sim.opponent_stream_adds")) if opponent_streams is None else opponent_streams
+    streaming = _opponent_streaming(league, opp, my_plans, date_range(day0, we), adds) if adds > 0 else None
     return {
         "me": league.my_team.name,
         "opponent": opp.name,
@@ -504,9 +547,70 @@ def simulate_matchup_tool(
         "expected_cats_won": _r(odds.expected_score),
         "p_win_majority": _r(odds.p_majority),
         "swing_categories": [o.category.label for o in odds.swing()],
+        "if_opponent_streams": streaming,
         "synthetic_models": [pid for pid, m in models.items() if m.synthetic],
         "prediction_id": prediction_id,
         "method": f"{n} Monte Carlo weeks; daily optimal lineups; resampled real game lines x injury play-prob",
+    }
+
+
+def _opponent_streaming(
+    league: LeagueState, opp: FantasyTeam, my_plans, days: list[date], adds: int
+) -> dict[str, Any] | None:
+    """Re-score the week assuming the opponent streams `adds` times optimally (greedy, against our planned week)."""
+    from fbm.analytics.bank import DrawBank
+    from fbm.analytics.streaming import StreamContext, plan_streams
+
+    if not days:
+        return None
+    c, conn = ctx(), _conn()
+    playing = teams_playing(conn, days[0], days[-1])
+    neutral = c.value_map()
+    elig = _eligibility()
+
+    def games(pid: str) -> int:
+        team = str(c.values.at[pid, "team"])
+        return sum(1 for d in days if team in playing.get(d, set()))
+
+    available = [pid for pid in _available_ids(league, c) if games(pid) > 0]
+    fa = sorted(available, key=lambda pid: -(neutral.get(pid, -9) + 3.0) * games(pid))[: int(C("stream.candidates"))]
+    pool = {p.player_id: p for p in opp.players}
+    pool.update({pid: executors.roster_player_from_values(pid, c.values, elig) for pid in fa})
+    models = c.models([*league.my_team.player_ids(), *opp.player_ids(), *fa], conn)
+    bank = DrawBank(models, n_sims=2000, seed=29)
+    my_totals = bank.total((pid, p.day) for p in my_plans for pid in p.started)
+    active = [p for p in opp.players if p.selected not in IL_SLOTS]
+    droppable = [p.player_id for p in sorted(active, key=lambda p: neutral.get(p.player_id, 0.0))[:4]]
+    sctx = StreamContext(
+        base=list(opp.players),
+        pool=pool,
+        days=days,
+        playing=playing,
+        starting_slots=league.starting_slots(),
+        capacity=league.roster_size(),
+        value=neutral,
+        bank=bank,
+        opp_totals=my_totals,
+        categories=league.categories,
+        weights={k.key: 1.0 for k in league.categories},
+    )
+    plan = plan_streams(sctx, fa, droppable, adds)
+    n_cats = len(league.categories)
+    name = {pid: p.name for pid, p in pool.items()}
+
+    def mine(o) -> dict[str, Any]:
+        return {"expected_cats": _r(n_cats - o.expected_score), "p_win_majority": _r(o.p_majority_loss)}
+
+    return {
+        "opponent_adds_assumed": adds,
+        "stand_pat": mine(plan.baseline),
+        "streaming": mine(plan.final),
+        "opponent_moves": [f"{m.move.day}: +{name[m.move.add]} / -{name.get(m.move.drop, '-')}" for m in plan.moves],
+        "my_p_win_by_cat_if_they_stream": {o.category.label: _r(o.p_loss) for o in plan.final.categories},
+        "note": (
+            "Upper bound: assumes the opponent streams optimally to maximize categories won (H2H category record); "
+            "P(win majority) can move either way. Real managers stream less precisely."
+        ),
     }
 
 
@@ -586,18 +690,26 @@ def evaluate_add_drop(add: str, drop: str | None = None, opponent: str | None = 
 
 
 def apply_lineup(day: str | None = None) -> dict[str, Any]:
-    if not load_settings().auto_lineups:
+    settings = load_settings()
+    if not settings.auto_lineups:
         raise GMError("Auto lineups are disabled in config/settings.toml.")
-    league, c = active_league(), ctx()
+    league = active_league()
     target = parse_date(day) if day else nba_today()
-    nba = teams_playing(_conn(), target, target)[target]
-    team = league.my_team
-    playing = {p.player_id for p in team.players if p.nba_team in nba}
-    res = optimize_day(team.players, league.starting_slots(), playing, _value(c, _strategy_punts(None)).to_dict())
-    result = executors.apply_lineup(league, res.assignments, target)
+    plan = _lineup_plan(league, target, apply_il=settings.auto_il_moves)
+    result = executors.apply_lineup(league, plan["res"].assignments, target)
+    blocked = [f"{m.name}: {m.reason}" for m in plan["moves"] if m.blocked]
+    names = {p.player_id: p.name for p in league.my_team.players}
     lines = "\n".join(f"- {x}" for x in result.detail.get("changes", [])) or "- no changes"
-    memory.journal_append("execution", f"Lineup {target}", f"Status: {result.status}\n\n{lines}")
-    return {"date_et": target.isoformat(), "status": result.status, **result.detail}
+    extra = "".join(f"\n- BLOCKED: {b}" for b in blocked)
+    memory.journal_append("execution", f"Lineup {target}", f"Status: {result.status}\n\n{lines}{extra}")
+    return {
+        "date_et": target.isoformat(),
+        "status": result.status,
+        **result.detail,
+        "il_moves_applied": [f"{m.name}: {m.from_slot} -> {m.to_slot}" for m in plan["applied"]],
+        "il_moves_blocked": blocked,
+        "locked_game_started": sorted(names[pid] for pid in plan["locked"]),
+    }
 
 
 def refresh_data() -> dict[str, Any]:
@@ -883,6 +995,7 @@ def _trade_dict(ev, c: AnalyticsContext) -> dict[str, Any]:
         "verdict": ev.verdict,
         "me": side(ev.me),
         "them": side(ev.them),
+        "playoff_outlook": _playoff_trade_info([*ev.me.gets, *ev.me.fa_adds], [*ev.me.gives, *ev.me.drops]),
         "notes": ev.notes,
         "payload_ids": {"partner": ev.them.team_key, "give": ev.me.gives, "get": ev.me.gets},
     }
@@ -1121,3 +1234,201 @@ def draft_mock(
         "avg_expected_cats": _r(sum(x["my_expected_cats"] for x in results) / len(results)),
         "method": "others draft by noisy ESPN ADP; I draft by the build-aware recommender; season-level sim",
     }
+
+
+# ------------------------------------------------------------------ playoffs
+
+
+def _playoff_schedule():
+    from fbm.analytics.playoffs import playoff_schedule
+
+    c = ctx()
+    key = f"playoffs|{c.season}|{_CTX_CACHE.get('key')}"
+    if _CTX_CACHE.get("playoff_key") != key:
+        _CTX_CACHE["playoff"] = playoff_schedule(_conn(), c.season, _league_summary())
+        _CTX_CACHE["playoff_key"] = key
+    return _CTX_CACHE["playoff"]
+
+
+def _playoff_weight() -> float:
+    from fbm.analytics.playoffs import season_progress
+
+    sched = _playoff_schedule()
+    row = (
+        _conn()
+        .execute("SELECT MIN(et_date) FROM games WHERE season = ? AND season_type = 2", (ctx().season,))
+        .fetchone()
+    )
+    if not sched.weeks or not row or not row[0]:
+        return 0.0
+    progress = season_progress(nba_today(), date.fromisoformat(row[0]), sched.weeks[0].start)
+    return round(float(C("trade.playoff_weight_max")) * progress, 3)
+
+
+def _replacement_value() -> float:
+    """G-score of the last rostered-caliber player (pool_size-th best): replacement level."""
+    c = ctx()
+    top = c.values["g_total"].nlargest(c.cfg.pool_size)
+    return float(top.min()) if len(top) else 0.0
+
+
+def _player_playoff(pid: str) -> dict[str, Any]:
+    """Playoff games and playoff value above replacement (value - replacement) x games / average games."""
+    from fbm.analytics.playoffs import playoff_value
+
+    c, sched = ctx(), _playoff_schedule()
+    team = str(c.projections.at[pid, "team"]) if pid in c.projections.index else ""
+    games = sched.games(team)
+    above_rep = (float(c.values.at[pid, "g_total"]) if pid in c.values.index else 0.0) - _replacement_value()
+    return {
+        "games": games,
+        "vs_avg": _r(games - sched.average_total, 1),
+        "playoff_value": _r(playoff_value(above_rep, games, sched.average_total)),
+    }
+
+
+def _playoff_trade_info(incoming: list[str], outgoing: list[str]) -> dict[str, Any]:
+    c = ctx()
+    inc = {_names(c, [p])[0]: _player_playoff(p) for p in incoming}
+    out = {_names(c, [p])[0]: _player_playoff(p) for p in outgoing}
+    return {
+        "playoff_games_delta": sum(v["games"] for v in inc.values()) - sum(v["games"] for v in out.values()),
+        "playoff_value_delta": _r(
+            sum(v["playoff_value"] for v in inc.values()) - sum(v["playoff_value"] for v in out.values())
+        ),
+        "incoming": inc,
+        "outgoing": out,
+        "suggested_weight": _playoff_weight(),
+        "note": "Weight grows from 0 (opening night) to trade.playoff_weight_max (playoffs start).",
+    }
+
+
+def playoff_outlook(scope: str = "my_roster", top: int = 25) -> dict[str, Any]:
+    """Fantasy-playoff schedule: games per NBA team in the playoff weeks and players' playoff value."""
+    league, c, sched = active_league(), ctx(), _playoff_schedule()
+    if not sched.weeks:
+        raise GMError("No schedule stored for this season. Run `fbm data sync`.")
+    owners = _owners(league)
+    if scope == "my_roster":
+        ids = league.my_team.player_ids()
+    elif scope == "free_agents":
+        ids = sorted(_available_ids(league, c), key=lambda p: -float(c.values.at[p, "g_total"]))[: top * 3]
+    else:
+        ids = [p for t in league.teams for p in t.player_ids()]
+    rows = []
+    for pid in ids:
+        if pid not in c.values.index:
+            continue
+        info = _player_playoff(pid)
+        rows.append(
+            {
+                "player": _names(c, [pid])[0],
+                "nba": str(c.values.at[pid, "team"]),
+                "owner": owners[pid].name if pid in owners else "FA",
+                **info,
+            }
+        )
+    rows.sort(key=lambda r: -r["playoff_value"])
+    totals = sorted(sched.totals.items(), key=lambda kv: -kv[1])
+    return {
+        "playoff_weeks_et": [f"wk{w.number}: {w.start}..{w.end}" for w in sched.weeks],
+        "average_team_games": _r(sched.average_total, 2),
+        "best_schedules": dict(totals[:8]),
+        "worst_schedules": dict(totals[-8:]),
+        "team_games_by_week": {t: sched.team_games[t] for t, _ in totals},
+        "players": rows[:top],
+        "trade_playoff_weight_now": _playoff_weight(),
+        "source": "Yahoo playoff settings" if _league_summary() else f"default: last {C('playoffs.weeks')} weeks",
+    }
+
+
+# ------------------------------------------------------------------ waivers
+
+
+def waiver_decision(player: str, drop: str | None = None, on_waivers: bool = True) -> dict[str, Any]:
+    """Should we spend waiver priority on this player now, wait for him to clear, or pass?"""
+    from fbm.analytics.trades import need_weights
+    from fbm.analytics.waivers import decide, interested_teams
+
+    league, c = active_league(), ctx()
+    pid = _resolve(player)
+    owners = _owners(league)
+    if pid in owners:
+        raise GMError(f"{_names(c, [pid])[0]} is rostered by {owners[pid].name}.")
+    pun = _strategy_punts(None)
+    value = _value(c, pun)
+    active = [p for p in league.my_team.players if p.selected not in IL_SLOTS]
+    drop_id = (
+        _resolve_on_team(drop, league.my_team)
+        if drop
+        else min((p.player_id for p in active), key=lambda x: value.get(x, 0.0))
+    )
+    ros_gain = float(value.get(pid, 0.0) - value.get(drop_id, 0.0))
+
+    sim, _fa = _league_sim(800)
+    keys = [k.key for k in league.categories]
+    vec = {k: float(c.values.at[pid, f"g_{k}"]) for k in keys} if pid in c.values.index else {}
+    weakest, weights, names = {}, {}, {}
+    for t in league.teams:
+        if t.team_key == league.my_team_key:
+            continue
+        ids = [p.player_id for p in t.players if p.selected not in IL_SLOTS and p.player_id in c.values.index]
+        if not ids:
+            continue
+        worst = min(ids, key=lambda x: float(c.values.at[x, "g_total"]))
+        weakest[t.team_key] = {k: float(c.values.at[worst, f"g_{k}"]) for k in keys}
+        weights[t.team_key] = need_weights(sim.profile(t.team_key)[0])
+        names[t.team_key] = t.name
+    priorities = league.waiver_priority
+    mine = priorities.get(league.my_team_key, len(league.teams))
+    comps = interested_teams(vec, mine, priorities, weakest, weights, names)
+    d = decide(ros_gain, on_waivers, mine, len(league.teams), comps)
+    return {
+        "player": _names(c, [pid])[0],
+        "player_id": pid,
+        "drop": _names(c, [drop_id])[0],
+        "drop_id": drop_id,
+        "action": d.action,
+        "reason": d.reason,
+        "ros_gain": _r(d.ros_gain),
+        "on_waivers": on_waivers,
+        "my_priority": f"{mine} of {len(league.teams)}",
+        "threshold_for_my_priority": None if d.threshold is None else _r(d.threshold),
+        "p_claimed_before_me": _r(d.p_claimed_before_me),
+        "p_claimed_by_another_team": _r(d.p_claimed_by_other),
+        "teams_likely_to_claim": [
+            f"#{x.priority} {x.name} (gain {x.gain}{', ahead of us' if x.priority < mine else ''})"
+            for x in d.competitors
+        ],
+        "punts_applied": list(pun),
+        "next_step": {
+            "claim": "create_proposal kind waiver_claim",
+            "add": "create_proposal kind add_drop",
+            "wait": "re-check after waivers clear",
+            "pass": "no action",
+        }[d.action],
+    }
+
+
+# ------------------------------------------------------------------ constants registry
+
+
+def constants_table() -> dict[str, Any]:
+    from fbm.constants import table, unknown_overrides
+
+    return {
+        "constants": table(),
+        "unknown_overrides": unknown_overrides(),
+        "how_to_change": 'Edit config/constants.toml, e.g. "stream.min_gain" = 0.08 (journal why).',
+    }
+
+
+def _role(c: AnalyticsContext, pid: str) -> dict[str, Any] | None:
+    """Recent minutes vs season minutes (role change) from the projection table."""
+    if pid not in c.projections.index or "minutes_trend" not in c.projections.columns:
+        return None
+    row = c.projections.loc[pid]
+    trend = row.get("minutes_trend")
+    if trend is None or pd.isna(trend):
+        return None
+    return {"recent_mpg": _r(row["recent_mpg"], 1), "minutes_trend": _r(trend, 1), "role": row.get("role", "")}

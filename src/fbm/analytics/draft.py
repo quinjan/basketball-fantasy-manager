@@ -19,11 +19,10 @@ import pandas as pd
 
 from fbm.analytics.categories import NINE_CAT, Category
 from fbm.config import DATA_DIR
+from fbm.constants import C
 from fbm.league.model import eligibility_from_espn_position
 
 DRAFT_STATE_PATH = DATA_DIR / "draft_state.json"
-BUILD_WEIGHT = 0.5
-TIER_GAP = 0.35
 POSITION_NEEDS = {"PG": 1, "SG": 1, "SF": 1, "PF": 1, "C": 2}
 
 
@@ -49,8 +48,9 @@ def build_board(
     punts: Sequence[str] = (),
     adp: Mapping[str, float] | None = None,
     eligibility: Mapping[str, tuple[str, ...]] | None = None,
-    tier_gap: float = TIER_GAP,
+    tier_gap: float | None = None,
 ) -> pd.DataFrame:
+    tier_gap = float(C("draft.tier_gap")) if tier_gap is None else tier_gap
     adp = adp or {}
     eligibility = eligibility or {}
     keys = [c.key for c in categories if c.key not in punts]
@@ -146,7 +146,7 @@ class DraftState:
 
 
 def _category_weights(state: DraftState, board: pd.DataFrame, categories: Sequence[Category]) -> dict[str, float]:
-    """1.0 baseline; up to 1+BUILD_WEIGHT for categories where my picks trail the average drafted player."""
+    """1.0 baseline; up to 1+draft.build_weight for categories where my picks trail the average drafted player."""
     mine = [p.pid for p in state.my_picks() if p.pid in board.index]
     drafted = [p.pid for p in state.picks if p.pid in board.index]
     weights = {}
@@ -158,7 +158,7 @@ def _category_weights(state: DraftState, board: pd.DataFrame, categories: Sequen
             weights[c.key] = 1.0
             continue
         deficit = float(board.loc[drafted, f"g_{c.key}"].mean() - board.loc[mine, f"g_{c.key}"].mean())
-        weights[c.key] = 1.0 + BUILD_WEIGHT * math.tanh(deficit / 0.5)
+        weights[c.key] = 1.0 + float(C("draft.build_weight")) * math.tanh(deficit / 0.5)
     return weights
 
 

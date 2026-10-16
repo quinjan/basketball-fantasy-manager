@@ -55,6 +55,18 @@ def can_fill(eligible: tuple[str, ...], slot: str) -> bool:
     return slot in ("UTIL", "BN") or slot in eligible
 
 
+def il_statuses() -> set[str]:
+    from fbm.constants import C
+
+    return {s.strip().upper() for s in str(C("lineup.il_statuses")).split(",") if s.strip()}
+
+
+def with_il_eligibility(eligible: tuple[str, ...], status: str) -> tuple[str, ...]:
+    """Add or remove IL/IL+ eligibility from injury status (demo league; Yahoo reports eligibility directly)."""
+    base = tuple(e for e in eligible if e not in IL_SLOTS)
+    return (*base, "IL", "IL+") if (status or "").upper() in il_statuses() else base
+
+
 @dataclass
 class RosterPlayer:
     player_id: str  # internal id (ESPN athlete id)
@@ -95,6 +107,7 @@ class LeagueState:
     week_end: date | None = None
     max_weekly_adds: int | None = None
     source: str = "yahoo"
+    waiver_priority: dict[str, int] = field(default_factory=dict)  # team_key -> rank (1 = first claim)
 
     def team(self, team_key: str) -> FantasyTeam:
         return next(t for t in self.teams if t.team_key == team_key)

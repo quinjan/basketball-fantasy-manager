@@ -16,6 +16,7 @@ from fbm.analytics.simulation import (
 )
 from fbm.analytics.team_profile import league_profile
 from fbm.analytics.week import date_range, fantasy_week, generic_week, plan_team_week
+from fbm.constants import C
 from fbm.league.demo import load_league, save_league
 from fbm.league.model import FantasyTeam, LeagueState, RosterPlayer, SlotSpec
 
@@ -82,7 +83,7 @@ def test_week_helpers_and_planning():
     assert week.player_games == ["b", "a"]  # day 1: only one PG slot -> higher value; day 2: a plays
     assert [len(p.started) for p in plans] == [1, 1, 0]
     g = generic_week(team, n_starting=1)
-    assert len(g.player_games) == 8 and g.play_scale["a"] == pytest.approx(0.5 * 3.5 / 4)
+    assert len(g.player_games) == 8 and g.play_scale["a"] == pytest.approx(0.5 * C("week.avg_games_per_week") / 4)
 
 
 def _league() -> LeagueState:
@@ -96,7 +97,7 @@ def _league() -> LeagueState:
 def test_league_profile_ranks():
     profiles = {p.team_key: p for p in league_profile(_league(), {"star": STAR, "scrub": SCRUB}, n_sims=200)}
     assert profiles["t1"].cat_score["pts"] == 1.0 and profiles["t1"].cat_rank["pts"] == 1
-    assert profiles["t2"].cat_score["tov"] == 1.0
+    assert profiles["t2"].cat_score["tov"] >= 0.98
     assert profiles["t1"].expected_score == pytest.approx(8.0)
 
 

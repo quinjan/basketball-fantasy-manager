@@ -55,4 +55,32 @@ def test_il_moves():
     hurt = p("h", "PG", "BN", status="INJ", eligible=("PG", "G", "UTIL", "IL"))
     healed = p("x", "C", "IL", eligible=("C", "UTIL"))
     moves = il_moves([hurt, healed], {"IL": 1, "IL+": 1})
-    assert [(m.player_id, m.to_slot) for m in moves] == [("x", "BN"), ("h", "IL")]
+    assert [(m.player_id, m.to_slot, m.blocked) for m in moves] == [("h", "IL", False), ("x", "BN", False)]
+
+
+def test_il_activation_blocked_when_roster_full_unless_stash_frees_a_spot():
+    healthy = [p(f"a{i}", "G", "BN") for i in range(3)]
+    healed = p("x", "C", "IL", eligible=("C", "UTIL"))
+    moves = il_moves([*healthy, healed], {"IL": 1}, capacity=3)
+    assert [(m.player_id, m.blocked) for m in moves] == [("x", True)]
+    hurt = p("h", "PG", "BN", status="O", eligible=("PG", "UTIL", "IL", "IL+"))
+    moves = il_moves([*healthy[:2], hurt, healed], {"IL": 1, "IL+": 1}, capacity=3)
+    assert [(m.player_id, m.to_slot, m.blocked) for m in moves] == [("h", "IL+", False), ("x", "BN", False)]
+    assert il_moves([*healthy[:2], hurt], {"IL": 1}, capacity=3, locked=["h"]) == []
+
+
+def test_started_teams_and_il_eligibility():
+    from datetime import UTC, datetime
+
+    from fbm.analytics.lineup import started_teams
+    from fbm.league.model import with_il_eligibility
+
+    now = datetime(2026, 10, 21, 0, 0, tzinfo=UTC)
+    games = [
+        {"start_utc": "2026-10-20T23:00:00+00:00", "state": "pre", "home": "BOS", "away": "NY"},
+        {"start_utc": "2026-10-21T02:00:00+00:00", "state": "pre", "home": "LAL", "away": "GS"},
+        {"start_utc": "2026-10-21T03:00:00+00:00", "state": "in", "home": "POR", "away": "PHX"},
+    ]
+    assert started_teams(games, now) == {"BOS", "NY", "POR", "PHX"}
+    assert with_il_eligibility(("C", "UTIL"), "OUT") == ("C", "UTIL", "IL", "IL+")
+    assert with_il_eligibility(("C", "UTIL", "IL", "IL+"), "GTD") == ("C", "UTIL")

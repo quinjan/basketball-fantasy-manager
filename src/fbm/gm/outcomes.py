@@ -20,12 +20,10 @@ from typing import Any
 from fbm.analytics.categories import Category
 from fbm.analytics.simulation import COL, STATS, MatchupOdds, category_values
 from fbm.analytics.valuation import PoolStats
+from fbm.constants import C
 from fbm.gm import proposals as props
 from fbm.timeutil import ET
 
-TEAM_STARTS_PER_WEEK = 35  # ~10 starting slots x 3.5 games
-GOOD_THRESHOLD = 0.5
-TOO_EARLY_GAMES = 3
 GRADED_KINDS = ("add_drop", "waiver_claim", "trade")
 
 ActualProvider = Callable[[sqlite3.Row], tuple[Mapping[str, float], Mapping[str, float]] | None]
@@ -226,7 +224,7 @@ def contribution(
         (pid, start.isoformat(), end.isoformat()),
     ).fetchall()
     totals = {s: sum(float(r[s] or 0) for r in rows) for s in STATS}
-    scale = sqrt(TEAM_STARTS_PER_WEEK)
+    scale = sqrt(float(C("outcomes.team_starts_per_week")))
     std: dict[str, float] = {}
     for cat in categories:
         sd = pool.sd.get(cat.key) or 1.0
@@ -250,11 +248,12 @@ def contribution(
 
 
 def _grade(delta: float, games: int, days: int) -> str:
-    if games < TOO_EARLY_GAMES and days < 4:
+    threshold = float(C("outcomes.good_threshold"))
+    if games < int(C("outcomes.too_early_games")) and days < 4:
         return "too early"
-    if delta >= GOOD_THRESHOLD:
+    if delta >= threshold:
         return "good"
-    if delta <= -GOOD_THRESHOLD:
+    if delta <= -threshold:
         return "bad"
     return "neutral"
 

@@ -152,6 +152,25 @@ def page_matchup() -> None:
     m1, m2 = st.columns(2)
     m1.metric("Expected categories won", f"{sim['expected_cats_won']:.2f}")
     m2.metric("P(win the week)", f"{sim['p_win_majority']:.0%}")
+    streams = sim.get("if_opponent_streams")
+    if streams:
+        s1, s2, s3 = st.columns(3)
+        s1.metric(
+            f"If they stream (up to {streams['opponent_adds_assumed']} adds): expected cats",
+            f"{streams['streaming']['expected_cats']:.2f}",
+            f"{streams['streaming']['expected_cats'] - streams['stand_pat']['expected_cats']:+.2f}",
+        )
+        s2.metric(
+            "P(win) if they stream",
+            f"{streams['streaming']['p_win_majority']:.0%}",
+            f"{streams['streaming']['p_win_majority'] - streams['stand_pat']['p_win_majority']:+.0%}",
+        )
+        s3.caption(
+            "Their likely moves: "
+            + ("; ".join(streams["opponent_moves"]) or "none")
+            + f" — deltas vs. stand pat ({streams['stand_pat']['expected_cats']:.2f} cats, "
+            + f"{streams['stand_pat']['p_win_majority']:.0%}) on the same draws. {streams['note']}"
+        )
     df = pd.DataFrame(sim["categories"]).rename(
         columns={"cat": "Cat", "me_mean": "Me", "opp_mean": "Opp", "p_win": "Win", "p_tie": "Tie", "p_loss": "Loss"}
     )
@@ -174,6 +193,8 @@ def page_roster() -> None:
             "Status": p["status"],
             "Game today": "✓" if p["game_today"] else "",
             "Games left": p["games_left_this_week"],
+            "Playoff G": p["playoff_games"],
+            "Role": (p["role"] or {}).get("role", ""),
             "Value": p["value"],
             **p["g_by_cat"],
         }
@@ -190,8 +211,12 @@ def page_roster() -> None:
     lu = call(svc.optimize_lineup)
     with st.expander(f"Optimal lineup today ({lu['starters_with_games']} starters with games)"):
         st.write(lu["changes"] or "Lineup already optimal.")
+        if lu["locked_game_started"]:
+            st.caption("🔒 Locked (game started): " + ", ".join(lu["locked_game_started"]))
         if lu["il_moves"]:
-            st.write("IL moves:", lu["il_moves"])
+            st.dataframe(pd.DataFrame(lu["il_moves"]).drop(columns=["player_id"]), hide_index=True)
+        if lu["il_moves_blocked"]:
+            st.warning("IL activation needs a drop (proposal): " + ", ".join(lu["il_moves_blocked"]))
 
 
 def page_players() -> None:
@@ -212,6 +237,19 @@ def page_players() -> None:
         height=520,
     )
     name = st.selectbox("Player card", [""] + list(df["player"]))
+    available = bool(name) and df.loc[df["player"] == name, "owner"].iloc[0] == "FA"
+    if name and not available:
+        st.caption("Waiver check is available for unrostered players only.")
+    if available and st.toggle("Waiver check (rolling priority)", key="waiver_toggle"):
+        on_waivers = st.radio("Status", ["On waivers", "Free agent"], horizontal=True) == "On waivers"
+        w = call(svc.waiver_decision, name, None, on_waivers)
+        st.markdown(f"**{w['action'].upper()}** {w['player']} (drop {w['drop']}) — {w['reason']}")
+        st.caption(
+            f"ROS gain {w['ros_gain']:+.2f} · my priority {w['my_priority']} · bar "
+            f"{w['threshold_for_my_priority']} · P(claimed ahead of me) {w['p_claimed_before_me']:.0%} · "
+            f"P(claimed by anyone if I wait) {w['p_claimed_by_another_team']:.0%} · "
+            + (", ".join(w["teams_likely_to_claim"]) or "no other team needs him")
+        )
     if name:
         card = call(svc.player_card, name)
         a, b = st.columns(2)
@@ -531,6 +569,46 @@ def page_memory() -> None:
                 st.markdown(text)
 
 
+def page_playoffs() -> None:
+    scope = st.radio("Players", ["my_roster", "free_agents", "league"], horizontal=True)
+    r = call(cached, "playoff_outlook", scope, 30)
+    st.caption(
+        f"Playoff weeks (ET): {', '.join(r['playoff_weeks_et'])} · average team games "
+        f"{r['average_team_games']:.1f} · {r['source']} · trade playoff weight now "
+        f"{r['trade_playoff_weight_now']}"
+    )
+    weeks = [w.split(":")[0] for w in r["playoff_weeks_et"]]
+    mat = pd.DataFrame(r["team_games_by_week"], index=weeks).T
+    mat["Total"] = mat.sum(axis=1)
+    fig = px.imshow(
+        mat,
+        text_auto=True,
+        aspect="auto",
+        color_continuous_scale=["#da3633", "#f6f8fa", "#2ea043"],
+        title="NBA games per team in the fantasy playoffs",
+    )
+    fig.update_layout(height=760, coloraxis_showscale=False)
+    left, right = st.columns([1, 1])
+    left.plotly_chart(fig, use_container_width=True)
+    right.dataframe(
+        pd.DataFrame(r["players"]).style.map(color_value, subset=["playoff_value"]).format(precision=2),
+        hide_index=True,
+        use_container_width=True,
+        height=760,
+    )
+
+
+def page_constants() -> None:
+    r = call(svc.constants_table)
+    st.caption(r["how_to_change"])
+    if r["unknown_overrides"]:
+        st.error("Unknown keys in config/constants.toml: " + ", ".join(r["unknown_overrides"]))
+    df = pd.DataFrame(r["constants"])[
+        ["key", "value", "default", "overridden", "unit", "kind", "description", "source"]
+    ]
+    st.dataframe(df, hide_index=True, use_container_width=True, height=760)
+
+
 PAGES = {
     "Overview": page_overview,
     "Matchup": page_matchup,
@@ -543,6 +621,8 @@ PAGES = {
     "Learning": page_learning,
     "Draft": page_draft,
     "Memory": page_memory,
+    "Playoffs": page_playoffs,
+    "Constants": page_constants,
 }
 
 

@@ -17,6 +17,7 @@ from fbm.analytics.bank import DrawBank
 from fbm.analytics.categories import Category
 from fbm.analytics.lineup import optimize_day
 from fbm.analytics.simulation import MatchupOdds, compare
+from fbm.constants import C
 from fbm.league.model import IL_SLOTS, RosterPlayer
 
 
@@ -148,9 +149,11 @@ def plan_streams(
     free_agents: Sequence[str],
     droppable: Sequence[str],
     adds_available: int,
-    min_gain: float = 0.05,
-    ros_penalty: float = 0.5,
+    min_gain: float | None = None,
+    ros_penalty: float | None = None,
 ) -> StreamPlan:
+    min_gain = float(C("stream.min_gain")) if min_gain is None else min_gain
+    ros_penalty = float(C("stream.ros_penalty")) if ros_penalty is None else ros_penalty
     base_odds, base_starts = evaluate(ctx, [])
     current_score = score(base_odds, ctx.weights)
     plan = StreamPlan(

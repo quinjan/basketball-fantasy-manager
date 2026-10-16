@@ -118,17 +118,45 @@ def schedule(days: int = 7) -> dict:
 
 @tool()
 def optimize_lineup(day: str | None = None) -> dict:
-    """Optimal lineup for an ET game day (max games started, then value) + IL moves. Read-only preview."""
+    """Optimal lineup for an ET game day (max games started, then value). Players whose games have started are
+    locked; IL moves are included (blocked activations need a drop proposal). Read-only preview."""
     return svc.optimize_lineup(day)
 
 
 @tool()
 def simulate_matchup(
-    opponent: str | None = None, start: str | None = None, n: int = 10000, record: bool = False
+    opponent: str | None = None,
+    start: str | None = None,
+    n: int = 10000,
+    record: bool = False,
+    opponent_streams: int | None = None,
 ) -> dict:
     """Monte Carlo rest-of-week matchup vs an opponent (team key or name): per-category win/tie/loss odds, expected
-    categories won, swing categories. record=True logs the prediction for later calibration (daily-gm does this)."""
-    return svc.simulate_matchup_tool(opponent, start, n, record)
+    categories won, swing categories. `if_opponent_streams` re-scores the week if the opponent streams
+    `opponent_streams` adds optimally (default sim.opponent_stream_adds; 0 = skip). record=True logs the prediction
+    for calibration (daily-gm does this)."""
+    return svc.simulate_matchup_tool(opponent, start, n, record, opponent_streams)
+
+
+@tool()
+def playoff_outlook(scope: str = "my_roster", top: int = 25) -> dict:
+    """Fantasy-playoff schedule: playoff weeks, NBA team games per playoff week (best/worst), and players' playoff
+    games and playoff value. scope: my_roster | free_agents | league. Also returns the current trade playoff weight."""
+    return svc.playoff_outlook(scope, top)
+
+
+@tool()
+def waiver_decision(player: str, drop: str | None = None, on_waivers: bool = True) -> dict:
+    """Rolling waivers: should we claim now (spend priority), wait for him to clear, add (free agent), or pass?
+    Uses rest-of-season gain vs the value of our priority and which teams ahead would likely claim him."""
+    return svc.waiver_decision(player, drop, on_waivers)
+
+
+@tool()
+def constants() -> dict:
+    """Every tunable engine constant with value, default, unit, kind (measured/research/rule/heuristic) and source.
+    Change values in config/constants.toml (owner-approved; journal why)."""
+    return svc.constants_table()
 
 
 @tool()
@@ -239,8 +267,9 @@ def draft_mock(my_slot: int = 1, teams: int = 12, rounds: int = 13, punts: str =
 
 @tool(WRITE)
 def apply_lineup(day: str | None = None) -> dict:
-    """AUTO-ALLOWED: set my optimal lineup for an ET game day (demo: applied; Yahoo: API if write access,
-    otherwise returns manual steps). Journaled."""
+    """AUTO-ALLOWED: set my optimal lineup for an ET game day, applying IL moves first (stash injured, activate
+    healthy when there is room) and never touching players whose games have started. Demo: applied; Yahoo: API if
+    write access, otherwise manual steps. Blocked IL activations are reported (they need a drop proposal)."""
     return svc.apply_lineup(day)
 
 

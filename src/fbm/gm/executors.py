@@ -12,7 +12,7 @@ from typing import Any
 from fbm.config import RAW_DIR
 from fbm.gm import memory
 from fbm.gm.proposals import Proposal
-from fbm.league.demo import roster_player, save_league
+from fbm.league.demo import default_waiver_priority, roster_player, rotate_waiver_priority, save_league
 from fbm.league.model import LeagueState, RosterPlayer
 
 
@@ -101,6 +101,9 @@ def execute(p: Proposal, league: LeagueState, values=None, eligibility=None) -> 
             if pay.get("drop"):
                 team.players = [x for x in team.players if x.player_id != pay["drop"]]
             team.players.append(roster_player_from_values(pay["add"], values, eligibility))
+            if p.kind == "waiver_claim":
+                current = league.waiver_priority or default_waiver_priority(league)
+                league.waiver_priority = rotate_waiver_priority(current, league.my_team_key)
         elif p.kind == "trade":
             mine, partner = league.my_team, league.team(pay["partner"])
             give, get = set(pay.get("give", [])), set(pay.get("get", []))

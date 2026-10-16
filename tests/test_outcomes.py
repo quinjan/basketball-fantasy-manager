@@ -5,6 +5,7 @@ import pytest
 from fbm.analytics.categories import NINE_CAT
 from fbm.analytics.simulation import CategoryOdds, MatchupOdds
 from fbm.analytics.valuation import PoolStats
+from fbm.constants import C
 from fbm.gm import outcomes
 from fbm.gm import proposals as props
 from fbm.store import db
@@ -120,7 +121,7 @@ def test_grade_executed_add_drop(conn):
     (g,) = graded
     assert g["ref"] == p.ref and g["executed_et"] == "2026-10-20" and g["window_et"] == "2026-10-20..2026-10-25"
     assert g["acquired"][0]["games"] == 3 and g["gave_up"][0]["games"] == 1
-    assert g["delta"] > outcomes.GOOD_THRESHOLD and g["grade"] == "good"
+    assert g["delta"] > C("outcomes.good_threshold") and g["grade"] == "good"
     assert g["acquired"][0]["player"] == "X Player"
 
 

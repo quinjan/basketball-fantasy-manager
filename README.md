@@ -31,7 +31,10 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 | `fbm data status` / `games` / `injuries` | Inspect the local NBA store |
 | `fbm rank [--season] [--punt FT%,TO] [--metric g\|z]` | 9-cat G-score / Z-score rankings |
 | `fbm demo build` | Simulated 12-team draft (demo league until Yahoo access is approved) |
-| `fbm lineup --demo [--date]` | Optimal daily lineup + IL moves |
+| `fbm lineup --demo [--date]` | Optimal daily lineup (🔒 started games stay put) + capacity-aware IL moves |
+| `fbm playoffs [--top N]` | Fantasy-playoff schedule: games per team, playoff value above replacement |
+| `fbm waiver PLAYER [--drop X] [--free-agent]` | Rolling-waiver decision: claim / wait / add / pass |
+| `fbm constants` | Every tunable constant: value, default, unit, source (override in `config/constants.toml`) |
 | `fbm sim --demo [--opponent KEY]` | Monte Carlo rest-of-week category odds |
 | `fbm profile --demo` | League-wide category strength (strategy/punt basis) |
 | `fbm stream [--opponent] [--adds] [--protect]` | Streaming plan: best add/drop sequence for the week |
@@ -39,7 +42,7 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 | `fbm trade find [--partner X]` | Find trades that help us and are defensible for them |
 | `fbm learn grade` / `calibration` / `retro` | Learning loop: grade executed moves, simulator calibration |
 | `fbm draft board/start/pick/undo/recommend/mock` | Draft assistant (ESPN ADP, tiers, live picks, mock drafts) |
-| `fbm dashboard [--port 8501]` | Local Streamlit dashboard (11 pages) |
+| `fbm dashboard [--port 8501]` | Local Streamlit dashboard (13 pages) |
 | `fbm proposals list/show/approve/reject` | Owner-side proposal decisions |
 | `fbm sync-memory -m "..."` | Commit + push memory/reports/config |
 
@@ -51,7 +54,7 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
   proposal and records AGREE/DISAGREE/SPLIT), `scout` (news/injury digging).
 - **Skills** (`.github/skills/`): `daily-gm`, `lineup-guard`, `weekly-retro-preview`, `trade-scan`,
   `season-strategy`, `approvals`, `consult`, `health`, `draft-assist`.
-- **MCP server** (`.github/mcp.json` → `fbm-mcp`): 36 tools over the engine. The folder must be trusted by Copilot.
+- **MCP server** (`.github/mcp.json` → `fbm-mcp`): 39 tools over the engine. The folder must be trusted by Copilot.
 - **Approvals:** in chat with the GM, or `uv run fbm proposals list|show|approve|reject P-12`.
 - **Automations** (Copilot app → Automations, all disabled until Yahoo approval): Daily GM 15:00, Lineup Guard hourly
   23:00–12:00, Weekly Retro Mon 15:30, Trade Scan Wed/Sat 16:00, Health Sun 10:00 (UTC+8).
@@ -67,14 +70,24 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 
 - **G-scores** (Rosenof, arXiv:2307.02188): `(μ_player − μ_pool) / √(σ² + κτ²)`, τ = RMS week-to-week SD,
   κ = 2N/(2N−1). FG%/FT% use volume-weighted impact. Z-scores shown alongside.
-- **Projections:** current-season per-game shrunk toward last season by games played.
-- **Lineups:** max games started, then value; prefers leaving players in place (fewer manual changes).
-- **Simulation:** resamples real game lines (keeps stat correlations) × injury play-probability.
+- **Projections:** current-season per-game shrunk toward last season by games played; counting stats scaled by
+  the recent-minutes trend (last 5 games vs season, damped and capped) so role changes show up early.
+- **Lineups:** max games started, then value; prefers leaving players in place (fewer manual changes). Players
+  whose game has tipped off are locked; IL moves respect roster capacity (blocked activations become proposals).
+- **Simulation:** resamples real game lines (keeps stat correlations) × injury play-probability. Matchup odds
+  include an "if the opponent streams" upper bound (the streaming planner run from their side).
 - **Streaming planner:** greedy add/drop search over effective ET days within the weekly add limit; each candidate
   re-plans daily lineups and re-simulates with common random numbers; rest-of-season cost penalized.
 - **Trades:** season-level (typical week vs every team) expected categories for both sides, rosters rebalanced
   (forced drops / free-agent fills); finder screens by need-weighted G-scores, confirms by simulation, and filters
-  offers that cost the partner > 1.0 ranking value.
+  offers that cost the partner > 1.0 ranking value. Output adds playoff-schedule value, weighted up as playoffs near.
+- **Playoffs:** fantasy weeks from the NBA schedule (default: last 3 weeks); games per team per playoff week and
+  playoff value above replacement.
+- **Rolling waivers:** claim if the ROS gain clears a bar that rises with the priority spent (priority rotates to
+  last after a claim). Below the bar, wait for free agency only if no other team (ahead or behind) is likely to
+  claim him; otherwise pass.
+- **Constants registry:** every tunable (`fbm constants`) records value, unit, and source (measured / literature /
+  heuristic); `config/constants.toml` overrides are validated.
 - **Learning loop:** executed moves graded by realized production (team-week SD units); matchup predictions
   graded by Brier score with reliability buckets.
 - **Draft:** punt-aware G-score board with tiers vs ESPN ADP; build-aware live recommendations; mock drafts.

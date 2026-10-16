@@ -9,9 +9,8 @@ from datetime import date, timedelta
 
 from fbm.analytics.lineup import LineupResult, optimize_day
 from fbm.analytics.simulation import TeamWeek
+from fbm.constants import C
 from fbm.league.model import IL_SLOTS, FantasyTeam
-
-AVG_GAMES_PER_WEEK = 3.5
 
 
 def fantasy_week(day: date) -> tuple[date, date]:
@@ -62,14 +61,15 @@ def plan_team_week(
     return TeamWeek(team.team_key, games), plans
 
 
-def generic_week(team: FantasyTeam, n_starting: int, games_per_player: float = AVG_GAMES_PER_WEEK) -> TeamWeek:
-    """Schedule-neutral week for season-level comparisons: every active player plays ~3.5 games, scaled by the
-    share of roster spots that can start."""
+def generic_week(team: FantasyTeam, n_starting: int, games_per_player: float | None = None) -> TeamWeek:
+    """Schedule-neutral week for season-level comparisons: every active player plays the average number of games
+    (week.avg_games_per_week), scaled by the share of roster spots that can start."""
+    per_player = float(C("week.avg_games_per_week")) if games_per_player is None else games_per_player
     active = [p for p in team.players if p.selected not in IL_SLOTS]
     if not active:
         return TeamWeek(team.team_key, [])
     games = 4
-    share = min(1.0, n_starting / len(active)) * games_per_player / games
+    share = min(1.0, n_starting / len(active)) * per_player / games
     return TeamWeek(
         team.team_key,
         [p.player_id for p in active for _ in range(games)],

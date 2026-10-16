@@ -17,15 +17,16 @@ import pandas as pd
 
 from fbm.analytics.bank import DrawBank
 from fbm.analytics.simulation import compare
+from fbm.constants import C
 from fbm.league.model import IL_SLOTS, LeagueState
 
-AVG_GAMES_PER_WEEK = 3.5
 GENERIC_GAMES = 4
 
 
 def need_weights(win_rates: Mapping[str, float], punts: Sequence[str] = ()) -> dict[str, float]:
     """Marginal importance of each category: highest near 50% win rate, low when locked/lost, 0 when punted."""
-    return {k: 0.0 if k in punts else max(0.1, 1.0 - abs(p - 0.5) * 1.6) for k, p in win_rates.items()}
+    floor, slope = float(C("trade.need_weight_floor")), float(C("trade.need_weight_slope"))
+    return {k: 0.0 if k in punts else max(floor, 1.0 - abs(p - 0.5) * slope) for k, p in win_rates.items()}
 
 
 class LeagueSim:
@@ -43,7 +44,7 @@ class LeagueSim:
     def team_totals(self, ids: Sequence[str]) -> np.ndarray:
         if not ids:
             return np.zeros((self.bank.n, 11))
-        share = min(1.0, self.n_start / len(ids)) * AVG_GAMES_PER_WEEK / GENERIC_GAMES
+        share = min(1.0, self.n_start / len(ids)) * float(C("week.avg_games_per_week")) / GENERIC_GAMES
         total = np.zeros((self.bank.n, 11))
         for pid in ids:
             total += self.bank.generic_week(pid, GENERIC_GAMES)
@@ -307,10 +308,12 @@ def find_trades(
     max_get: int = 2,
     confirm: int = 40,
     limit: int = 8,
-    max_their_value_loss: float = 1.0,
+    max_their_value_loss: float | None = None,
 ) -> list[TradeEval]:
     """Trades that help us, don't hurt them in simulation, and don't cost them more than `max_their_value_loss`
     in overall ranking value (real managers judge offers largely by rankings)."""
+    if max_their_value_loss is None:
+        max_their_value_loss = float(C("trade.max_their_value_loss"))
     candidates = screen_trades(
         sim, my_key, my_punts, free_agents, partners, max_give, max_get, max_their_value_loss=max_their_value_loss
     )[:confirm]

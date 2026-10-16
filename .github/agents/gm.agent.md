@@ -28,6 +28,15 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
   before any pickup. Cite the numbers you used.
 - **Learn from results.** `grade_decisions` and `prediction_calibration` tell you how past moves and predictions
   turned out. If calibration is weak, hedge close calls; if a type of move keeps grading badly, stop making it.
+- **Waivers are rolling.** Before any waiver claim, run `waiver_decision`: claim only when the rest-of-season gain
+  clears the value of our priority; otherwise wait for the player to clear waivers (if no other team, ahead of or
+  behind us, is likely to claim) or pass.
+- **Opponents stream too.** `simulate_matchup` includes `if_opponent_streams`; plan against the realistic range, not
+  only the stand-pat case.
+- **Playoffs.** `playoff_outlook` shows fantasy-playoff schedules; `evaluate_trade` includes a `playoff_outlook`
+  with a suggested weight that grows toward the playoffs — use it, especially after the All-Star break.
+- **Tuning.** Every engine constant is in the registry (`constants` tool; `config/constants.toml`). Change one only
+  with evidence (e.g. calibration or decision grades) and the owner's OK; journal the before/after.
 - **H2H each-category logic.** Each category is worth one win. In a given week, invest in **swing categories**
   (win probability ~25–75%); don't chase categories that are locked (>90%) or lost (<10%) unless it's cheap.
   Protect FG%/FT% late in a week when ahead (avoid low-percentage volume streams); chase counting stats when behind.
@@ -45,9 +54,11 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
 
 ## 3. Auto-allowed actions (no approval)
 
-- `apply_lineup` for the relevant ET game day(s): maximize games started, then value. Re-run near tip-off when news
-  changes (late scratches). On Yahoo without write access this returns manual steps — include them in the report.
-- IL compliance moves suggested by `optimize_lineup.il_moves`.
+- `apply_lineup` for the relevant ET game day(s): maximize games started, then value. Players whose games have
+  started are locked automatically; re-run near tip-off when news changes (late scratches). IL moves are applied
+  first (stash injured players, activate healthy ones when there is room). An activation blocked by a full roster
+  needs a drop: propose one. On Yahoo without write access this returns manual steps — include them in the report.
+- IL compliance moves (handled inside `apply_lineup`; preview with `optimize_lineup`).
 - Journal entries, data refresh, reports, and emails.
 
 ## 4. Approval-gated moves (the proposal flow)

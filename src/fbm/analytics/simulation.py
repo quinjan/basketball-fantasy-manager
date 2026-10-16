@@ -15,28 +15,35 @@ import numpy as np
 import pandas as pd
 
 from fbm.analytics.categories import Category
+from fbm.constants import C
 
 STATS: tuple[str, ...] = ("pts", "reb", "ast", "stl", "blk", "tov", "tpm", "fgm", "fga", "ftm", "fta")
 COL = {s: i for i, s in enumerate(STATS)}
 
-PLAY_PROB = {
+PLAY_PROB_FIXED = {
     "": 1.0,
     "ACTIVE": 1.0,
-    "DTD": 0.8,
-    "DAY-TO-DAY": 0.8,
-    "GTD": 0.6,
-    "QUESTIONABLE": 0.5,
-    "DOUBTFUL": 0.2,
     "O": 0.0,
     "OUT": 0.0,
+    "OFS": 0.0,
     "INJ": 0.0,
     "SUSP": 0.0,
     "NA": 0.0,
 }
+PLAY_PROB_TUNABLE = {
+    "DTD": "sim.play_prob.dtd",
+    "DAY-TO-DAY": "sim.play_prob.dtd",
+    "GTD": "sim.play_prob.gtd",
+    "QUESTIONABLE": "sim.play_prob.questionable",
+    "DOUBTFUL": "sim.play_prob.doubtful",
+}
 
 
 def play_probability(status: str | None) -> float:
-    return PLAY_PROB.get((status or "").strip().upper(), 1.0)
+    key = (status or "").strip().upper()
+    if key in PLAY_PROB_TUNABLE:
+        return float(C(PLAY_PROB_TUNABLE[key]))
+    return PLAY_PROB_FIXED.get(key, 1.0)
 
 
 @dataclass

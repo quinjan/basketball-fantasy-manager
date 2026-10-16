@@ -17,7 +17,9 @@ Run as the `gm` agent.
 3. **Calibration:** `prediction_calibration`. If Brier is not clearly better than the coin-flip baseline, or
    reliability buckets are off (e.g. our 80% calls win 60%), say so and be more cautious with close calls.
 4. **Playbook:** add or revise lessons in `memory/playbook.md` only with evidence (cite refs and counts). Remove
-   lessons contradicted by evidence. Keep it under ~60 lines.
+   lessons contradicted by evidence. Keep it under ~60 lines. If evidence says a registry constant is mis-set
+   (e.g. our 60% calls win 40%, or streams keep grading badly), propose a `config/constants.toml` change to the owner
+   with the numbers.
 
 ## Preview (new week)
 5. `schedule`, `simulate_matchup(record=true)` vs the new opponent, `streaming_plan` for the week, and

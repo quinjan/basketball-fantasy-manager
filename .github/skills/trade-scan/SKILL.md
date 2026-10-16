@@ -14,8 +14,9 @@ Run as the `gm` agent. Trades are never sent without the owner's explicit approv
    (managers judge offers by rankings).
 3. For promising ideas of your own (or the owner's), use `evaluate_trade(partner, give, get)`. Read both sides:
    expected categories before/after, category win-rate deltas, forced drops / free-agent fills, verdict.
-4. Judgment on top of the numbers: injuries, playoff-week schedules (late season), roster/position fit, and whether
-   the partner's manager is active. Prefer win-win and "favors us (defensible)" verdicts.
+4. Judgment on top of the numbers: injuries, the trade's `playoff_outlook` (playoff games and value delta, with a
+   suggested weight that grows toward the playoffs; check `playoff_outlook` for schedules), roster/position fit,
+   and whether the partner's manager is active. Prefer win-win and "favors us (defensible)" verdicts.
 5. At most 2 proposals per scan: `create_proposal` kind `trade` with `payload_ids` from the tool output plus names
    and a short respectful pitch (`note`) → invoke the `reviewer` agent.
 6. **Incoming offers** (when Yahoo data is live): `evaluate_trade` from our side; recommend accept/counter/reject via

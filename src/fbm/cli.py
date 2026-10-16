@@ -591,29 +591,27 @@ def lineup(
     day: str = typer.Option(None, "--date", help="ET game day (default: today ET)"),
     demo: bool = typer.Option(False, "--demo", help="Use the demo league."),
 ) -> None:
-    """Optimal lineup for one ET game day (max games started, then value) plus IL moves."""
-    from fbm.analytics.lineup import il_moves, optimize_day
-    from fbm.analytics.week import teams_playing
+    """Optimal lineup for one ET game day (max games started, then value): tip-off locks and IL moves applied."""
+    from fbm.gm import services as svc
 
     league = _load_league(demo)
-    ctx = _context()
     target = _resolve_day(day, nba_today())
-    nba = teams_playing(ctx.conn, target, target)[target]
-    team = league.my_team
-    playing = {p.player_id for p in team.players if p.nba_team in nba}
-    value = ctx.value_map()
-    res = optimize_day(team.players, league.starting_slots(), playing, value)
+    plan = _svc(svc._lineup_plan, league, target, True)
+    res, team = plan["res"], league.my_team
+    value = svc.ctx().value_map()
+    nba = svc.teams_playing(store.connect(), target, target)[target]
     order = {s: i for i, s in enumerate([*dict.fromkeys(league.starting_slots()), "BN", "IL", "IL+"])}
     table = Table(title=f"{team.name} — {target} (ET) · {res.starters_with_games} starters with games")
     for col in ("Slot", "Player", "NBA", "Game", "Status", "G-score", "Change"):
         table.add_column(col)
     for p in sorted(team.players, key=lambda x: order.get(res.assignments[x.player_id], 99)):
         new = res.assignments[p.player_id]
+        lock = " 🔒" if p.player_id in plan["locked"] else ""
         table.add_row(
             new,
-            p.name,
+            p.name + lock,
             p.nba_team,
-            "yes" if p.player_id in playing else "",
+            "yes" if p.nba_team in nba else "",
             p.status,
             f"{value.get(p.player_id, 0):+.2f}",
             f"{p.selected} → {new}" if p.selected != new else "",
@@ -622,9 +620,78 @@ def lineup(
     if res.benched_with_games:
         names = {p.player_id: p.name for p in team.players}
         console.print(f"[yellow]Benched with a game:[/] {', '.join(names[pid] for pid in res.benched_with_games)}")
-    il_counts = {s.position: s.count for s in league.slots if s.position in ("IL", "IL+")}
-    for m in il_moves(team.players, il_counts):
-        console.print(f"[cyan]IL move:[/] {m.name}: {m.from_slot} → {m.to_slot} ({m.reason})")
+    for m in plan["moves"]:
+        style = "red" if m.blocked else "cyan"
+        console.print(
+            f"[{style}]IL move{' (blocked)' if m.blocked else ''}:[/] {m.name}: {m.from_slot} → "
+            f"{m.to_slot} ({m.reason})"
+        )
+    if plan["locked"]:
+        console.print("[dim]🔒 = game started; slot locked[/]")
+
+
+@app.command()
+def playoffs(
+    scope: str = typer.Option("my_roster", help="my_roster | free_agents | league"),
+    top: int = typer.Option(20),
+) -> None:
+    """Fantasy-playoff schedule: best/worst NBA schedules and players' playoff games."""
+    from fbm.gm import services as svc
+
+    r = _svc(svc.playoff_outlook, scope, top)
+    console.print(
+        f"Playoff weeks (ET): {', '.join(r['playoff_weeks_et'])} · average team games "
+        f"{r['average_team_games']:.1f} · source: {r['source']}"
+    )
+    console.print(f"[green]Best:[/] {', '.join(f'{t} {g}' for t, g in r['best_schedules'].items())}")
+    console.print(f"[red]Worst:[/] {', '.join(f'{t} {g}' for t, g in r['worst_schedules'].items())}")
+    table = Table(title=f"Players ({scope})")
+    for col in ("Player", "NBA", "Owner", "Playoff games", "vs avg", "Playoff value"):
+        table.add_column(col)
+    for p in r["players"]:
+        table.add_row(
+            p["player"], p["nba"], p["owner"], str(p["games"]), f"{p['vs_avg']:+.1f}", f"{p['playoff_value']:+.2f}"
+        )
+    console.print(table)
+    console.print(f"[dim]Trade playoff weight right now: {r['trade_playoff_weight_now']}[/]")
+
+
+@app.command()
+def waiver(
+    player: str = typer.Argument(..., help="Player to claim."),
+    drop: str = typer.Option(None, help="Player to drop (default: my lowest-value active player)."),
+    free_agent: bool = typer.Option(False, "--free-agent", help="He is a free agent (no waiver claim needed)."),
+) -> None:
+    """Rolling waivers: claim now, wait for him to clear, or pass?"""
+    from fbm.gm import services as svc
+
+    r = _svc(svc.waiver_decision, player, drop, not free_agent)
+    color = {"claim": "green", "add": "green", "wait": "yellow", "pass": "red"}[r["action"]]
+    console.print(f"[bold {color}]{r['action'].upper()}[/] {r['player']} (drop {r['drop']}): {r['reason']}")
+    console.print(
+        f"ROS gain {r['ros_gain']:+.2f} · my priority {r['my_priority']} · bar "
+        f"{r['threshold_for_my_priority']} · P(claimed ahead of me) {r['p_claimed_before_me']:.0%} · "
+        f"P(claimed by anyone if I wait) {r['p_claimed_by_another_team']:.0%}"
+    )
+    if r["teams_likely_to_claim"]:
+        console.print(f"[dim]Teams he'd improve: {', '.join(r['teams_likely_to_claim'])}[/]")
+
+
+@app.command("constants")
+def constants_cmd() -> None:
+    """All tunable engine constants (value, kind, source). Override in config/constants.toml."""
+    from fbm.gm import services as svc
+
+    r = svc.constants_table()
+    table = Table(title="Engine constants")
+    for col in ("Key", "Value", "Unit", "Kind", "Source"):
+        table.add_column(col)
+    for c in r["constants"]:
+        value = f"[bold]{c['value']}[/] (default {c['default']})" if c["overridden"] else str(c["value"])
+        table.add_row(c["key"], value, c["unit"], c["kind"], c["source"])
+    console.print(table)
+    if r["unknown_overrides"]:
+        console.print(f"[red]Unknown keys in config/constants.toml:[/] {', '.join(r['unknown_overrides'])}")
 
 
 @app.command()

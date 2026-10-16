@@ -20,6 +20,7 @@ from fbm.league.model import (
     RosterPlayer,
     SlotSpec,
     eligibility_from_espn_position,
+    with_il_eligibility,
 )
 
 DEMO_PATH = DATA_DIR / "demo_league.json"
@@ -118,13 +119,27 @@ def build_demo_league(
 def refresh_players(
     league: LeagueState, eligibility: Mapping[str, tuple[str, ...]], statuses: Mapping[str, str]
 ) -> LeagueState:
-    """Overlay current ESPN eligibility and injury statuses on a (demo) league loaded from disk."""
+    """Overlay current ESPN eligibility and injury statuses (with derived IL eligibility) on a demo league."""
     for team in league.teams:
         for p in team.players:
-            if p.player_id in eligibility:
-                p.eligible = tuple(eligibility[p.player_id])
+            base = tuple(eligibility[p.player_id]) if p.player_id in eligibility else p.eligible
             p.status = statuses.get(p.player_id, "")
+            p.eligible = with_il_eligibility(base, p.status)
     return league
+
+
+def default_waiver_priority(league: LeagueState) -> dict[str, int]:
+    """Yahoo's initial rolling order is reverse draft order (team keys are in draft order)."""
+    n = len(league.teams)
+    return {t.team_key: n - i for i, t in enumerate(league.teams)}
+
+
+def rotate_waiver_priority(priority: Mapping[str, int], claimer: str) -> dict[str, int]:
+    """Rolling waivers: a successful claimer drops to last; everyone behind moves up one."""
+    old = priority[claimer]
+    out = {k: (v - 1 if v > old else v) for k, v in priority.items()}
+    out[claimer] = len(priority)
+    return out
 
 
 def save_league(league: LeagueState, path: Path = DEMO_PATH) -> None:
@@ -165,4 +180,5 @@ def load_league(path: Path = DEMO_PATH) -> LeagueState:
         week_end=date.fromisoformat(data["week_end"]) if data.get("week_end") else None,
         max_weekly_adds=data.get("max_weekly_adds"),
         source=data.get("source", "demo"),
+        waiver_priority={k: int(v) for k, v in (data.get("waiver_priority") or {}).items()},
     )

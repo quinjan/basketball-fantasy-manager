@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -83,22 +84,85 @@ class IlMove:
     from_slot: str
     to_slot: str
     reason: str
+    blocked: bool = False  # needs an approval-gated drop before it can happen
 
 
-def il_moves(players: list[RosterPlayer], il_slot_counts: Mapping[str, int]) -> list[IlMove]:
-    """Suggest IL compliance moves: activate healthy IL players; stash IL-eligible injured players in open IL slots."""
+def il_moves(
+    players: list[RosterPlayer],
+    il_slot_counts: Mapping[str, int],
+    capacity: int | None = None,
+    locked: Iterable[str] = (),
+) -> list[IlMove]:
+    """IL compliance moves.
+
+    1. Stash: injured active players that are IL/IL+-eligible go into open IL slots (frees active spots).
+    2. Activate: IL players no longer IL-eligible move to the bench if an active spot is open; otherwise the move is
+       `blocked` (Yahoo blocks all roster moves while an ineligible player sits in IL, so a drop must be proposed).
+    Players whose games have started (`locked`) are left alone.
+    """
+    locked_ids = set(locked)
     moves: list[IlMove] = []
     used = {slot: sum(1 for p in players if p.selected == slot) for slot in il_slot_counts}
-    for p in players:
-        if p.selected in IL_SLOTS and p.selected not in p.eligible:
-            moves.append(IlMove(p.player_id, p.name, p.selected, "BN", "no longer IL-eligible (must activate)"))
-            used[p.selected] -= 1
-    for p in players:
-        if p.selected in IL_SLOTS:
-            continue
+    active = sum(1 for p in players if p.selected not in IL_SLOTS)
+    injured = [
+        p
+        for p in players
+        if p.selected not in IL_SLOTS and p.player_id not in locked_ids and any(s in p.eligible for s in il_slot_counts)
+    ]
+    to_activate = [
+        p for p in players if p.selected in IL_SLOTS and p.selected not in p.eligible and p.player_id not in locked_ids
+    ]
+
+    def stash(p: RosterPlayer, slot: str) -> None:
+        nonlocal active
+        moves.append(IlMove(p.player_id, p.name, p.selected, slot, f"{p.status or 'injured'}; frees a spot"))
+        injured.remove(p)
+        active -= 1
+
+    # 1. Stash injured players into currently open IL slots.
+    for p in list(injured):
         for slot in ("IL", "IL+"):
             if slot in p.eligible and used.get(slot, 0) < il_slot_counts.get(slot, 0):
-                moves.append(IlMove(p.player_id, p.name, p.selected, slot, f"{p.status or 'injured'}; frees a spot"))
+                stash(p, slot)
+                used[slot] = used.get(slot, 0) + 1
+                break
+    # 2. Activate healthy IL players: swap with an injured player for the same slot, else use an open active spot.
+    for p in to_activate:
+        swap = next((q for q in injured if p.selected in q.eligible), None)
+        if swap is not None:
+            stash(swap, p.selected)
+            moves.append(IlMove(p.player_id, p.name, p.selected, "BN", "healthy: activate from IL"))
+            active += 1
+        elif capacity is None or active < capacity:
+            moves.append(IlMove(p.player_id, p.name, p.selected, "BN", "healthy: activate from IL"))
+            used[p.selected] -= 1
+            active += 1
+        else:
+            moves.append(
+                IlMove(
+                    p.player_id,
+                    p.name,
+                    p.selected,
+                    p.selected,
+                    "healthy but the roster is full: drop someone to activate (proposal needed)",
+                    True,
+                )
+            )
+    # 3. Stash remaining injured players into slots freed by activations.
+    for p in list(injured):
+        for slot in ("IL", "IL+"):
+            if slot in p.eligible and used.get(slot, 0) < il_slot_counts.get(slot, 0):
+                stash(p, slot)
                 used[slot] = used.get(slot, 0) + 1
                 break
     return moves
+
+
+def started_teams(games: Iterable[Mapping[str, object]], now: datetime) -> set[str]:
+    """NBA teams whose game on this ET day has started (by state or scheduled tip time) — their players are locked."""
+    out: set[str] = set()
+    for g in games:
+        start = datetime.fromisoformat(str(g["start_utc"]))
+        if g["state"] in ("in", "post") or start <= now:
+            out.update((str(g["home"]), str(g["away"])))
+    return out
