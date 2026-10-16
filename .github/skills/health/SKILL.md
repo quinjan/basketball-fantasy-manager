@@ -5,8 +5,10 @@ description: System health check — data freshness, Yahoo access status, email 
 
 # Health check
 
-1. Run `uv run fbm status` and `uv run fbm data status` (shell), and `context_pack` (tool).
-2. Check and report as a short table (OK / WARN / FAIL):
+1. Call the `health_check` tool first (shell: `uv run fbm health`; exit code 1 on any FAIL). It returns every check
+   below as OK / WARN / FAIL with a detail and a fix; thresholds are `health.*` constants (`fbm constants`).
+   Use `fbm status`, `fbm data status`, `fbm notify outbox` and `context_pack` only to dig into a WARN/FAIL.
+2. What it covers (report as a short table):
    - ESPN data: `sync_log` times for schedule, boxscores, injuries, news (WARN if >24h during the season).
    - Yahoo: credentials, league configured, write access, `[league] source` (demo vs yahoo).
    - Email: Gmail configured (`fbm status`); recent failures in the outbox (`uv run fbm notify outbox`).

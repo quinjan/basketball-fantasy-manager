@@ -1,5 +1,6 @@
-"""Executors: apply approved moves. Demo league -> applied to demo JSON. Yahoo -> API if write scope is confirmed,
-otherwise exact manual instructions for the owner (status awaiting_manual until the owner confirms)."""
+"""Executors: apply approved moves. Demo league -> applied to demo JSON. Yahoo -> exact manual instructions for the
+owner (status awaiting_manual until the owner confirms); Yahoo API writes are out of scope unless settings
+[yahoo] api_writes is true AND the write check passed (lineups only)."""
 
 from __future__ import annotations
 
@@ -23,6 +24,11 @@ class ExecutionResult:
 
 
 def yahoo_write_enabled() -> bool:
+    """API writes need BOTH the owner's opt-in ([yahoo] api_writes, off: out of scope) and a passing write check."""
+    from fbm.settings import load_settings
+
+    if not load_settings().yahoo_api_writes:
+        return False
     path = RAW_DIR / "write_check.json"
     return path.exists() and json.loads(path.read_text(encoding="utf-8")).get("ok") is True
 
@@ -118,7 +124,7 @@ def execute(p: Proposal, league: LeagueState, values=None, eligibility=None) -> 
         save_league(league)
         return ExecutionResult("executed", {"applied_to": "demo league"})
 
-    # Yahoo: transaction writes are not available via the API for this app yet -> manual instructions.
+    # Yahoo: transaction writes are out of scope (owner decision) -> exact manual instructions.
     if p.kind in ("add_drop", "waiver_claim"):
         steps = _manual_add_drop(pay, waiver=p.kind == "waiver_claim")
     elif p.kind == "trade":

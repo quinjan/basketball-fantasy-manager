@@ -298,7 +298,12 @@ def verify_write(
     day: str = typer.Option(None, "--date", help="ET game day to test (default: tomorrow ET)"),
     yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt."),
 ) -> None:
-    """Prove write access with a harmless no-op lineup re-save (one player, same slot)."""
+    """Yahoo writes are OUT OF SCOPE (owner decision). Optional: prove write access with a harmless no-op lineup
+    re-save; it only takes effect if config/settings.toml [yahoo] api_writes = true."""
+    console.print(
+        "[yellow]Yahoo writes are out of scope (owner decision): roster changes are exact manual steps. "
+        "This check only matters if [yahoo] api_writes = true in config/settings.toml.[/]"
+    )
     target = _resolve_day(day, nba_tomorrow())
     if not yes and not typer.confirm(f"Re-save one player's current slot for {target} (no lineup change)?"):
         raise typer.Exit()
@@ -620,6 +625,17 @@ def lineup(
     if res.benched_with_games:
         names = {p.player_id: p.name for p in team.players}
         console.print(f"[yellow]Benched with a game:[/] {', '.join(names[pid] for pid in res.benched_with_games)}")
+    if plan.get("swing_categories"):
+        label = {c.key: c.label for c in league.categories}.get
+        w = plan["swing_weights"]
+        cats = ", ".join(f"{label(k, k)} {w[k]:.2f}" for k in plan["swing_categories"])
+        console.print(f"[magenta]Swing categories this week (bench tie-break weights):[/] {cats}")
+        pnames = {p.player_id: p.name for p in team.players}
+        for t in plan.get("tiebreak_changes", []):
+            console.print(
+                f"[magenta]  tie-break:[/] {pnames[t['player_id']]}: {t['ros_lineup']} by ROS value → "
+                f"{t['swing_lineup']} for swing cats"
+            )
     for m in plan["moves"]:
         style = "red" if m.blocked else "cyan"
         console.print(
@@ -726,6 +742,25 @@ def waiver(
     )
     if r["teams_likely_to_claim"]:
         console.print(f"[dim]Teams he'd improve: {', '.join(r['teams_likely_to_claim'])}[/]")
+
+
+@app.command("health")
+def health_cmd() -> None:
+    """System health checks (OK/WARN/FAIL). Exit code 1 if any check FAILs."""
+    from rich.markup import escape
+
+    from fbm.gm import services as svc
+
+    r = svc.health_check()
+    colors = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
+    table = Table(title=f"FBM health · {r['phase']} · overall {r['overall']}")
+    for col in ("Check", "Status", "Detail", "Fix"):
+        table.add_column(col)
+    for c in r["checks"]:
+        table.add_row(c["check"], f"[{colors[c['status']]}]{c['status']}[/]", escape(c["detail"]), escape(c["fix"]))
+    console.print(table)
+    if r["overall"] == "FAIL":
+        raise typer.Exit(1)
 
 
 @app.command("constants")
@@ -1219,6 +1254,61 @@ def draft_recommend_cmd() -> None:
     _print_recommend(_svc(svc.draft_recommend))
 
 
+@draft_app.command("adp")
+def draft_adp_cmd(refresh: bool = typer.Option(False, "--refresh", help="Fetch Yahoo ADP (draft_analysis).")) -> None:
+    """Show which ADP source the board uses; --refresh fetches Yahoo ADP (falls back to ESPN)."""
+    from fbm.gm import services as svc
+
+    if refresh:
+        r = _svc(svc.draft_adp_refresh)
+        if r["refreshed"]:
+            console.print(f"Yahoo ADP cached: {r['players']} players ({r['mapped']} mapped, {r['unmapped']} unmapped)")
+        else:
+            console.print(f"[yellow]{r['message']}[/]")
+    s = _svc(svc.draft_adp_status)
+    console.print(
+        f"ADP source: [bold]{s['adp_source']}[/] · {s['players_with_adp']} players · Yahoo cached "
+        f"{s['yahoo_cached']} (needs ≥{s['yahoo_min_players']})"
+    )
+
+
+def _print_sync(r: dict) -> None:
+    for p in r["new_picks"]:
+        tag = " [green](mine)[/]" if p["mine"] else ""
+        unmapped = " [dim](unmapped)[/]" if not p["mapped"] else ""
+        console.print(f"#{p['overall']} (R{p['round']}): {p['player']}{tag}{unmapped}")
+    if r["my_turn"] and r.get("recommendations"):
+        _print_recommend(r["recommendations"])
+
+
+@draft_app.command("live")
+def draft_live_cmd(
+    interval: float = typer.Option(None, help="Seconds between polls (default: draft.live_interval_sec)."),
+) -> None:
+    """Poll Yahoo draft results until the draft completes (Ctrl+C to stop); advice when I'm on the clock."""
+    import time
+
+    from fbm.constants import C
+    from fbm.gm import services as svc
+
+    wait = float(interval if interval is not None else C("draft.live_interval_sec"))
+    last_turn_pick = None
+    try:
+        while True:
+            r = _svc(svc.draft_sync_yahoo)
+            if r["my_turn"] and last_turn_pick == r["next_overall"]:
+                r = {**r, "recommendations": None}  # already shown for this pick
+            _print_sync(r)
+            if r["my_turn"]:
+                last_turn_pick = r["next_overall"]
+            if r["done"]:
+                console.print("[green]Draft complete.[/]")
+                break
+            time.sleep(wait)
+    except KeyboardInterrupt:
+        console.print("Stopped polling.")
+
+
 @draft_app.command("mock")
 def draft_mock_cmd(
     slot: int = typer.Option(1),
@@ -1264,6 +1354,8 @@ def dashboard(port: int = typer.Option(8501, help="Local port."), open_browser: 
     console.print(f"Dashboard → http://localhost:{port}  (Ctrl+C to stop)")
     subprocess.run(cmd, check=False)
 
+
+from fbm import cli_yahoo  # noqa: E402,F401  (registers the Yahoo league commands on `app`)
 
 if __name__ == "__main__":
     app()

@@ -54,6 +54,52 @@ def recent_minutes(conn: sqlite3.Connection, season: int, window: int) -> pd.Dat
     return pd.DataFrame({"recent_mpg": recent.mean(), "recent_games": recent.size()})
 
 
+RATE_STATS = tuple(s for s in BASE_STATS if s != "minutes")
+
+
+def recent_form(conn: sqlite3.Connection, season: int, window: int) -> pd.DataFrame:
+    """Per-minute production over each player's last `window` played games (sum of stat / sum of minutes)."""
+    lines = pd.read_sql_query(
+        "SELECT espn_id, et_date, " + ", ".join(BASE_STATS) + " FROM box_lines "
+        "WHERE season = ? AND played = 1 ORDER BY et_date DESC",
+        conn,
+        params=(season,),
+    )
+    if lines.empty:
+        return pd.DataFrame(columns=[*RATE_STATS, "form_games", "form_minutes"])
+    lines = lines.dropna(subset=["minutes", "pts"])  # lines without a stat line carry no form signal
+    recent = lines.groupby("espn_id").head(window).fillna(0.0)
+    sums = recent.groupby("espn_id")[list(BASE_STATS)].sum()
+    out = sums[list(RATE_STATS)].div(sums["minutes"].where(sums["minutes"] > 0), axis=0)
+    out["form_games"] = recent.groupby("espn_id").size()
+    out["form_minutes"] = sums["minutes"]
+    return out[out["form_minutes"] > 0]
+
+
+def apply_recent_form(proj: pd.DataFrame, form: pd.DataFrame) -> pd.DataFrame:
+    """Blend recent per-minute rates into the projection's per-minute rates, keeping projected minutes.
+
+    weight = min(projection.form_max_weight, n / (n + projection.form_shrink_games)) for n recent played games;
+    rate = (1 - weight) * projected_rate + weight * recent_rate; stat = rate * projected minutes. Conservative by
+    design (most hot/cold streaks regress). Players with no recent games or no projected minutes are unchanged.
+    """
+    shrink = float(C("projection.form_shrink_games"))
+    cap = float(C("projection.form_max_weight"))
+    out = proj.copy()
+    n = form["form_games"].reindex(out.index).fillna(0.0).astype(float) if not form.empty else pd.Series(0.0, out.index)
+    w = (n / (n + shrink)).clip(upper=cap).where((n > 0) & (out["minutes"] > 0), 0.0)
+    out["form_weight"] = w.round(3)
+    if not (w > 0).any():
+        return out
+    mins = out["minutes"].where(out["minutes"] > 0)
+    for stat in RATE_STATS:
+        rate = out[stat] / mins
+        recent = form[stat].reindex(out.index)
+        blended = ((1 - w) * rate + w * recent).where(w > 0, rate)
+        out[stat] = (blended * out["minutes"]).where(w > 0, out[stat])
+    return out
+
+
 def apply_minutes_trend(proj: pd.DataFrame, current_mpg: pd.Series, recent: pd.DataFrame) -> pd.DataFrame:
     """Shift projections toward recent minutes when a role change is detected.
 
@@ -94,7 +140,8 @@ def projection_table(
     """Rest-of-season per-game projection: current season shrunk toward the prior season by games played,
     then adjusted for recent minutes trends (role changes).
 
-    weight_current = gp_current / (gp_current + shrink_games). Players without prior data use current stats only;
+    weight_current = gp_current / (gp_current + shrink_games). Recent per-minute form (apply_recent_form) is blended
+    in before the minutes trend. Players without prior data use current stats only;
     players without current data use the prior (pre-season / injured).
     """
     shrink = float(C("projection.shrink_games")) if shrink_games is None else shrink_games
@@ -116,6 +163,7 @@ def projection_table(
         out[stat] = w * cur[stat].fillna(0.0) + (1 - w) * prev[stat].fillna(0.0)
     out["gp"] = np.maximum(out["gp_current"], out["gp_prior"])
     out.index.name = "espn_id"
+    out = apply_recent_form(out, recent_form(conn, current, int(C("projection.form_games"))))
     recent = recent_minutes(conn, current, int(C("projection.recent_games")))
     if recent.empty:
         out["recent_mpg"] = np.nan

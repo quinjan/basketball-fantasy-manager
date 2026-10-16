@@ -24,6 +24,7 @@ class Settings:
     recipients: tuple[str, ...] = field(default_factory=tuple)
     quiet_hours: str = ""
     git_account: str = "quinjan"
+    yahoo_api_writes: bool = False
 
 
 def load_settings(path: Path = SETTINGS_PATH) -> Settings:
@@ -45,4 +46,5 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
         recipients=tuple(notify.get("recipients", ())),
         quiet_hours=notify.get("quiet_hours", ""),
         git_account=raw.get("git", {}).get("account", default.git_account),
+        yahoo_api_writes=bool(raw.get("yahoo", {}).get("api_writes", default.yahoo_api_writes)),
     )

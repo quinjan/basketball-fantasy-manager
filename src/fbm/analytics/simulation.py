@@ -85,8 +85,11 @@ def build_player_models(
     max_games: int = 40,
     min_games: int = 8,
     seed: int | None = 7,
+    play_probs: Mapping[str, float] | None = None,
 ) -> dict[str, PlayerModel]:
-    """Recent real games (most recent seasons first); synthetic from projections when history is thin."""
+    """Recent real games (most recent seasons first); synthetic from projections when history is thin.
+
+    `play_probs` overrides the status-derived play probability per player (e.g. rest-of-season availability)."""
     ids = list(dict.fromkeys(player_ids))
     rng = np.random.default_rng(seed)
     statuses = statuses or {}
@@ -112,7 +115,10 @@ def build_player_models(
         if len(samples) == 0:
             samples = np.zeros((1, len(STATS)))
             synthetic = True
-        models[pid] = PlayerModel(pid, samples, play_probability(statuses.get(pid, "")), synthetic)
+        prob = (
+            play_probs[pid] if play_probs is not None and pid in play_probs else play_probability(statuses.get(pid, ""))
+        )
+        models[pid] = PlayerModel(pid, samples, float(prob), synthetic)
     return models
 
 

@@ -115,6 +115,9 @@ class LeagueState:
     on_waivers: dict[str, str] = field(default_factory=dict)  # player_id -> ET date he clears waivers
     adds_used: dict[str, int] = field(default_factory=dict)  # team_key -> roster adds used this week
     fetched_at: str = ""  # UTC ISO time the snapshot was read
+    # This week's pairings: {week, status, is_playoffs, teams: [{team_key, name, stats, points}], stat_winners}.
+    matchups: list[dict] = field(default_factory=list)
+    ownership: dict[str, list[float | None]] = field(default_factory=dict)  # player_id -> [percent_owned, delta]
 
     def team(self, team_key: str) -> FantasyTeam:
         return next(t for t in self.teams if t.team_key == team_key)

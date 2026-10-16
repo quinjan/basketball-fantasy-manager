@@ -169,6 +169,17 @@ CREATE TABLE IF NOT EXISTS player_meta (
     eligible TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS yahoo_adp (
+    yahoo_id TEXT PRIMARY KEY,
+    espn_id TEXT,
+    name TEXT,
+    average_pick REAL,
+    average_round REAL,
+    average_cost REAL,
+    percent_drafted REAL,
+    updated_at TEXT NOT NULL
+);
 """
 
 

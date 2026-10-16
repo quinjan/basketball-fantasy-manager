@@ -29,6 +29,7 @@ from fbm.yahoo.league_reads import (
     fetch_scoreboard,
     fetch_standings,
     fetch_teams,
+    parse_players,
 )
 
 SNAPSHOT_PATH = DATA_DIR / "yahoo_league.json"
@@ -77,6 +78,7 @@ def assemble(
     waivers: list[YahooPlayer],
     mapper: IdMapper,
     fetched_at: datetime,
+    available: list[YahooPlayer] | None = None,
 ) -> tuple[LeagueState, list[Match]]:
     """Pure: Yahoo reads -> LeagueState (+ every player match, for the mapping cache)."""
     matches: dict[str, Match] = {}
@@ -107,6 +109,11 @@ def assemble(
             on_waivers[mapped(w.player_id, w.name, w.nba_team).espn_id or f"yahoo:{w.player_id}"] = (
                 w.waiver_date.isoformat()
             )
+    ownership: dict[str, list[float | None]] = {}
+    for p in [*waivers, *(available or [])]:
+        if p.percent_owned is not None:
+            pid = mapped(p.player_id, p.name, p.nba_team).espn_id or f"yahoo:{p.player_id}"
+            ownership[pid] = [p.percent_owned, p.percent_owned_delta]
     settings = summary.get("settings") or {}
     max_adds = settings.get("max_weekly_adds")
     league = LeagueState(
@@ -129,8 +136,36 @@ def assemble(
         on_waivers=on_waivers,
         adds_used={t.team_key: t.week_adds for t in teams if t.week_adds is not None},
         fetched_at=fetched_at.astimezone(UTC).isoformat(timespec="seconds"),
+        matchups=[matchup_dict(m) for m in matchups],
+        ownership=ownership,
     )
     return league, list(matches.values())
+
+
+def matchup_dict(m: Matchup) -> dict[str, Any]:
+    return {
+        "week": m.week,
+        "status": m.status,
+        "is_playoffs": m.is_playoffs,
+        "teams": [
+            {"team_key": t.team_key, "name": t.name, "stats": dict(t.stats), "points": t.points} for t in m.teams
+        ],
+        "stat_winners": dict(m.stat_winners),
+    }
+
+
+def fetch_ownership(client, league_key: str, limit: int, page: int = 25) -> list[YahooPlayer]:
+    """Available players by actual rank, with percent owned (and its weekly delta)."""
+    out: list[YahooPlayer] = []
+    start = 0
+    while start < limit:
+        path = f"league/{league_key}/players;status=A;sort=AR;start={start};count={page}/percent_owned"
+        batch = parse_players(client.get(path))
+        out.extend(batch)
+        if len(batch) < page:
+            break
+        start += page
+    return out[:limit]
 
 
 def build_snapshot(client, cfg: LeagueConfig, mapper: IdMapper, day: date, waiver_limit: int = 100):
@@ -143,7 +178,12 @@ def build_snapshot(client, cfg: LeagueConfig, mapper: IdMapper, day: date, waive
     matchups = fetch_scoreboard(client, cfg.league_key)
     standings = fetch_standings(client, cfg.league_key)
     waivers = fetch_players(client, cfg.league_key, "W", waiver_limit)
-    league, matches = assemble(cfg, summary, teams, rosters, matchups, standings, waivers, mapper, datetime.now(UTC))
+    from fbm.constants import C
+
+    available = fetch_ownership(client, cfg.league_key, int(C("yahoo.ownership_limit")))
+    league, matches = assemble(
+        cfg, summary, teams, rosters, matchups, standings, waivers, mapper, datetime.now(UTC), available
+    )
     return league, summary, matches
 
 

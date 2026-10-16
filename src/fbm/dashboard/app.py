@@ -136,7 +136,7 @@ def page_overview() -> None:
             use_container_width=True,
         )
         y = ov["yahoo"]
-        st.caption(f"Yahoo: {y['status']} · write access: {'yes' if y['write_enabled'] else 'no'}")
+        st.caption(f"Yahoo: {y['status']} · roster writes: {y.get('api_writes', 'manual steps')}")
 
 
 def page_matchup() -> None:
@@ -382,7 +382,38 @@ def page_trades() -> None:
             show_trade(call(svc.evaluate_trade_tool, team.team_key, ",".join(give), ",".join(get)))
 
 
+def _yahoo_league_panels() -> None:
+    standings = call(svc.standings_tool)
+    if standings.get("available") is False:
+        st.info("Standings and the live scoreboard need the Yahoo league (pending Yahoo API approval).")
+        return
+    st.subheader(f"Standings · as of {standings['as_of']}")
+    rows = [
+        {
+            "Rank": r.get("rank"),
+            "Team": ("★ " if r["mine"] else "") + r["name"],
+            "W-L-T": f"{r['wins']}-{r['losses']}-{r['ties']}",
+            "Pct": r.get("pct"),
+            "GB": r.get("games_back"),
+        }
+        for r in standings["standings"]
+    ]
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    board = call(svc.scoreboard_tool)
+    st.subheader(f"Live scoreboard · week {board['week']}")
+    for m in board["matchups"]:
+        names = m["teams"]
+        won = m["categories_won"]
+        title = " – ".join(f"{n} {won.get(n, 0)}" for n in names)
+        with st.expander(("★ " if m["mine"] else "") + f"{title} · {m['status']}", expanded=m["mine"]):
+            df = pd.DataFrame(
+                [{"Cat": c["category"], **c["values"], "Leader": c["leader"] or "tie"} for c in m["categories"]]
+            )
+            st.dataframe(df, hide_index=True, use_container_width=True)
+
+
 def page_league() -> None:
+    _yahoo_league_panels()
     r = call(cached, "league_profile_tool", 4000)
     teams = r["teams"]
     mat = pd.DataFrame(

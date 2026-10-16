@@ -187,4 +187,6 @@ def load_league(path: Path = DEMO_PATH) -> LeagueState:
         on_waivers=dict(data.get("on_waivers") or {}),
         adds_used={k: int(v) for k, v in (data.get("adds_used") or {}).items()},
         fetched_at=data.get("fetched_at", ""),
+        matchups=list(data.get("matchups") or []),
+        ownership={k: list(v) for k, v in (data.get("ownership") or {}).items()},
     )

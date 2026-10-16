@@ -10,6 +10,7 @@ from datetime import date
 import pandas as pd
 
 from fbm.analytics import players as player_tables
+from fbm.analytics.availability import load_availability, ros_adjust
 from fbm.analytics.simulation import PlayerModel, build_player_models
 from fbm.analytics.valuation import PoolStats, ValuationConfig, value_players
 from fbm.data.espn import current_season
@@ -26,6 +27,18 @@ class AnalyticsContext:
     values: pd.DataFrame
     pool: PoolStats
     cfg: ValuationConfig
+    availability: pd.DataFrame | None = None
+    ros_values: pd.DataFrame | None = None
+
+    def availability_of(self, pid: str) -> tuple[float, str]:
+        """Rest-of-season availability share and reason (healthy players = 1.0)."""
+        av = self.availability
+        if av is None or pid not in av.index:
+            return 1.0, "healthy"
+        return float(av.at[pid, "availability_ros"]), str(av.at[pid, "availability_reason"])
+
+    def ros_play_probs(self) -> dict[str, float]:
+        return {} if self.availability is None else self.availability["availability_ros"].astype(float).to_dict()
 
     def value_map(self, column: str = "g_total") -> dict[str, float]:
         return self.values[column].to_dict()
@@ -41,10 +54,26 @@ class AnalyticsContext:
             )
         return out
 
-    def models(self, player_ids: Iterable[str], conn: sqlite3.Connection | None = None) -> dict[str, PlayerModel]:
-        """Pass `conn` when calling from a different thread than the one that built this context."""
+    def models(
+        self, player_ids: Iterable[str], conn: sqlite3.Connection | None = None, horizon: str = "week"
+    ) -> dict[str, PlayerModel]:
+        """Pass `conn` when calling from a different thread than the one that built this context.
+
+        horizon="week": play probability from today's injury status (this week's matchups, daily lineups).
+        horizon="season": play probability = rest-of-season availability share (season-level sims).
+        """
         c = conn or self.conn
-        return build_player_models(c, player_ids, [self.season, self.prior], self.projections, self.statuses(c))
+        ids = list(player_ids)
+        if horizon == "season":
+            probs = self.ros_play_probs()
+            return build_player_models(
+                c,
+                ids,
+                [self.season, self.prior],
+                self.projections,
+                play_probs={pid: probs.get(pid, 1.0) for pid in ids},
+            )
+        return build_player_models(c, ids, [self.season, self.prior], self.projections, self.statuses(c))
 
 
 def build_context(conn: sqlite3.Connection, today: date, cfg: ValuationConfig | None = None) -> AnalyticsContext:
@@ -56,4 +85,7 @@ def build_context(conn: sqlite3.Connection, today: date, cfg: ValuationConfig | 
     has_current = bool(projections["gp_current"].sum())
     weekly = player_tables.weekly_table(conn, season if has_current else prior)
     values, pool = value_players(projections, cfg, weekly=None if weekly.empty else weekly)
-    return AnalyticsContext(conn, season, prior, projections, values, pool, cfg or ValuationConfig())
+    cfg = cfg or ValuationConfig()
+    availability = load_availability(conn, projections["team"].astype(str).to_dict(), today)
+    ros = ros_adjust(values, availability["availability_ros"].to_dict(), cfg.pool_size)
+    return AnalyticsContext(conn, season, prior, projections, values, pool, cfg, availability, ros)
