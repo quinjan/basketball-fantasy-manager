@@ -1,8 +1,11 @@
-"""Proposal lifecycle — the code-level guardrail for every approval-gated move.
+"""Proposal lifecycle. FBM never changes the league: a proposal ends in exact steps the OWNER performs.
 
 pending_review --record_review--> pending_approval --owner decision--> approved | rejected
-approved --execute (re-validated)--> executed | awaiting_manual (manual executor) | failed
-any open state past expires_at --> expired   (nothing executes after expiry)
+approved --proposal_steps (re-validated)--> awaiting_owner (steps handed to the owner) | failed
+awaiting_owner --owner confirms (confirm_done)--> done
+strategy proposals change only FBM's memory: approved --proposal_steps--> done
+any open state past expires_at --> expired   (no steps after expiry)
+(The `executed_at` column records when the proposal reached its outcome.)
 """
 
 from __future__ import annotations
@@ -188,19 +191,20 @@ def record_owner_decision(conn: sqlite3.Connection, ref: str | int, approved: bo
     return get(conn, p.id)
 
 
-def ready_to_execute(conn: sqlite3.Connection, ref: str | int) -> Proposal:
+def ready_for_steps(conn: sqlite3.Connection, ref: str | int) -> Proposal:
     expire_stale(conn)
     p = get(conn, ref)
     if p.status != "approved":
-        raise ProposalError(f"{p.ref} is {p.status}; only approved, unexpired proposals can execute.")
+        raise ProposalError(f"{p.ref} is {p.status}; only approved, unexpired proposals get owner steps.")
     if not p.owner_quote:
         raise ProposalError(f"{p.ref} has no recorded owner approval.")
     return p
 
 
-def record_execution(conn: sqlite3.Connection, ref: str | int, status: str, result: dict[str, Any]) -> Proposal:
-    if status not in ("executed", "awaiting_manual", "failed"):
-        raise ProposalError("invalid execution status")
+def record_outcome(conn: sqlite3.Connection, ref: str | int, status: str, result: dict[str, Any]) -> Proposal:
+    """awaiting_owner (steps handed to the owner) | done (owner confirmed / FBM-internal change) | failed."""
+    if status not in ("awaiting_owner", "done", "failed"):
+        raise ProposalError("invalid proposal outcome status")
     p = get(conn, ref)
     conn.execute(
         "UPDATE proposals SET status=?, executed_at=?, execution=? WHERE id=?",
@@ -211,19 +215,20 @@ def record_execution(conn: sqlite3.Connection, ref: str | int, status: str, resu
     return get(conn, p.id)
 
 
-def mark_manual_done(conn: sqlite3.Connection, ref: str | int, note: str) -> Proposal:
+def confirm_done(conn: sqlite3.Connection, ref: str | int, note: str, extra: dict[str, Any] | None = None) -> Proposal:
+    """The OWNER says they made the move in their league."""
     p = get(conn, ref)
-    if p.status != "awaiting_manual":
-        raise ProposalError(f"{p.ref} is {p.status}, not awaiting_manual.")
-    result = {**(p.execution or {}), "manual_confirmation": note}
-    return record_execution(conn, p.id, "executed", result)
+    if p.status != "awaiting_owner":
+        raise ProposalError(f"{p.ref} is {p.status}, not awaiting_owner.")
+    result = {**(p.execution or {}), **(extra or {}), "owner_confirmation": note}
+    return record_outcome(conn, p.id, "done", result)
 
 
 def list_proposals(conn: sqlite3.Connection, status: str | None = None, limit: int = 20) -> list[Proposal]:
     expire_stale(conn)
     if status == "open":
         rows = conn.execute(
-            f"SELECT * FROM proposals WHERE status IN ({','.join('?' * len(OPEN))}, 'awaiting_manual') "
+            f"SELECT * FROM proposals WHERE status IN ({','.join('?' * len(OPEN))}, 'awaiting_owner') "
             "ORDER BY id DESC LIMIT ?",
             (*OPEN, limit),
         )

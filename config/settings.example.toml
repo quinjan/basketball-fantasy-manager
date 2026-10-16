@@ -26,14 +26,11 @@ mode = "none"
 # Any of: data-sync, lineup-guard, daily-gm, weekly-retro, trade-scan, health
 jobs = []
 
-[autonomy]
-# Lineup and IL plans are produced automatically (journaled). In a Yahoo league they are exact manual steps.
-auto_lineups = true
-auto_il_moves = true
-# Everything else is a proposal: GM drafts -> independent review -> you approve -> re-validate -> execute.
-approval_required = ["add_drop", "waiver_claim", "trade", "strategy"]
-# Unapproved proposals expire; nothing executes after expiry.
-default_expiry_hours = 18
+[proposals]
+# FBM never changes your league. It gives insights, daily lineup recommendations (exact steps you set in Yahoo)
+# and proposals (add/drop, waiver claim, trade, strategy): GM drafts -> independent review -> you approve or reject
+# -> FBM gives exact steps -> you make the move in Yahoo -> you confirm. Unapproved proposals expire.
+expiry_hours = 18
 
 [notify]
 # Optional Gmail notifications (`fbm notify setup`). Reports also live in reports/ and your agent session.
@@ -46,7 +43,3 @@ quiet_hours = ""
 [git]
 # Optional: GitHub account used when pushing changes to FBM's code (empty = your normal git credentials).
 account = ""
-
-[yahoo]
-# Yahoo roster writes are out of scope: roster changes are delivered as exact manual steps for you.
-api_writes = false

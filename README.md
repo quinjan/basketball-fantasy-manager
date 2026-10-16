@@ -12,7 +12,8 @@ FBM turns the AI agent you already use (GitHub Copilot, Claude Code, Codex, Curs
 agent) into a general manager for **one** Yahoo Fantasy Basketball league. A deterministic Python engine does all
 the math — player values, projections, matchup simulations, lineups, streaming, waivers, trades — and exposes it to
 your agent as tools. The AI reasons over those numbers, drafts proposals, has them independently reviewed, and asks
-you before any roster move that matters. Everything runs on your machine.
+for your approval. FBM never changes your league: it gives you insights, recommendations and proposals, and you
+make every move in Yahoo yourself. Everything runs on your machine.
 
 > Fantasy data provided by Yahoo Fantasy. Not affiliated with Yahoo, ESPN, or the NBA.
 
@@ -27,7 +28,7 @@ you before any roster move that matters. Everything runs on your machine.
 - **Values players** with G-scores (a variance-aware improvement on Z-scores) and punt-aware rankings.
 - **Projects players** from this season, last season, recent form, minutes trends, and injury status.
 - **Simulates your matchup** (Monte Carlo, including stats already banked this week) for per-category win odds.
-- **Sets the daily lineup** and IL moves, respecting tip-off locks.
+- **Recommends the daily lineup** and IL moves with exact steps, respecting tip-off locks.
 - **Plans streaming** adds/drops within your weekly add limit.
 - **Decides rolling waivers**: claim now, wait for free agency, or pass.
 - **Evaluates and finds trades** for both sides; compares punt builds; looks ahead to the fantasy playoffs.
@@ -45,8 +46,8 @@ Interfaces: an MCP server (50 tools), the `fbm` CLI, and a local Streamlit dashb
 - **Not supported:** points or rotisserie leagues; extra or different categories (e.g. DD, TD, OREB, A/T, FTM);
   FAAB bidding; keeper/dynasty valuation; more than one league per install; ESPN, Sleeper, Fantrax, or other
   platforms.
-- **No Yahoo writes.** FBM reads your Yahoo league; it never changes it. Roster changes come back as exact steps you
-  perform in Yahoo yourself.
+- **FBM never changes your league.** It has no Yahoo write access by design. Lineups and approved moves come back as
+  exact steps you perform in Yahoo yourself.
 - **Yahoo API access is gated.** Since mid-2026 every user must apply for access, which reportedly takes weeks.
   Until then FBM runs on a realistic demo league (see [docs/yahoo.md](docs/yahoo.md)).
 - **Unofficial data sources.** NBA data comes from public, undocumented ESPN endpoints that may change or break.
@@ -101,8 +102,15 @@ and switching agents: [docs/agents.md](docs/agents.md).
 
 ## How decisions work
 
+FBM produces three kinds of output — nothing is automatic:
+
+- **Insights:** read-only analysis (rankings, matchup odds, simulations, opponent intel, health).
+- **Recommendations:** the daily lineup / IL plan with exact steps. You set it in Yahoo; no approval needed. Tell
+  the GM it's done (or `uv run fbm lineup --done`).
+- **Proposals:** add/drop, waiver claims, trades and strategy changes:
+
 ```
-engine numbers → GM proposal → reviewer verdict → your approval → re-validation → execution
+engine numbers → GM proposal → reviewer verdict → your approval → re-validation → exact steps → you do it in Yahoo → you confirm
 ```
 
 - **Engine numbers:** every stat, projection, and probability comes from an engine tool. The AI never does math in
@@ -111,10 +119,12 @@ engine numbers → GM proposal → reviewer verdict → your approval → re-val
   family; on single-vendor agents it is a fresh-context reviewer of the same family, which is a weaker check.
 - **You approve** in chat (your exact words are recorded) or with `uv run fbm proposals approve P-12`. Unapproved
   proposals expire.
-- **Re-validation:** the move is checked again against the current league state before it executes.
-- **Lineup and IL plans** are automatic — no approval needed.
-- **In your Yahoo league, every roster change is a manual step:** FBM tells you exactly what to do in Yahoo, you do
-  it, and the next snapshot verifies it. In the demo league FBM applies changes itself.
+- **Re-validation:** after approval the move is checked again against the current league state, then FBM gives
+  you the exact steps (`fbm proposals approve` prints them; `uv run fbm proposals steps P-12` shows them again).
+  Strategy proposals only change FBM's memory and are recorded directly.
+- **You confirm** when it's done (`uv run fbm proposals done P-12 --note "..."`); the next Yahoo snapshot verifies it.
+  In the demo league, your confirmation is what updates the demo roster.
+- **Scheduled runs** only produce insights, recommendations and proposals; they never act or approve.
 
 ## Privacy & security
 

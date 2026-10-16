@@ -14,5 +14,5 @@ Run as the `gm` agent. Streams are add/drops: each one is a proposal.
    expected-category gain, and rest-of-season cost. Honor owner rules from `memory/playbook.md`.
 4. Sanity-check the first move with `evaluate_add_drop`; `waiver_decision` if the player is on waivers.
 5. Present the plan as a day-by-day table (local time + ET day). Propose only the next move(s) whose window is
-   open: `create_proposal` (expiry before that tip-off) → `reviewer` → owner approval → `execute_proposal`
-   (Yahoo league = manual steps).
+   open: `create_proposal` (expiry before that tip-off) → `reviewer` → owner approval → `proposal_steps`
+   → owner does it in Yahoo → `confirm_done`.

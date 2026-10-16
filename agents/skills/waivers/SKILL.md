@@ -5,7 +5,7 @@ description: Free-agent pickups and rolling-waiver decisions. Use for "Best pick
 
 # Waivers
 
-Run as the `gm` agent. Add/drops and claims are proposals — never execute without owner approval.
+Run as the `gm` agent. Add/drops and claims are proposals — FBM never makes them; the owner does, after approving.
 
 1. `context_pack`; `refresh_data` if data is stale; in the Yahoo league `snapshot` for the current waiver list and
    ownership.
@@ -16,5 +16,5 @@ Run as the `gm` agent. Add/drops and claims are proposals — never execute with
    a clear multi-week upgrade, never on a one-day stream.
 5. Respect owner rules in `memory/playbook.md` (e.g. "never drop X").
 6. If clearly positive: `create_proposal` (payload ids + names, rationale with tool numbers, expiry before the
-   waiver run or tip-off in ET) → `reviewer` agent → owner decision → `execute_proposal`. In the Yahoo league this
-   returns manual steps; the owner confirms with "done" → `mark_manual_done`.
+   waiver run or tip-off in ET) → `reviewer` agent → owner decision → `proposal_steps`. It returns the
+   exact steps; the owner makes the claim in Yahoo and confirms with "done" → `confirm_done`.

@@ -29,7 +29,7 @@ from fbm.data import queries, sync
 from fbm.data.espn import EspnClient
 from fbm.data.espn import current_season as espn_current_season
 from fbm.store import db as store
-from fbm.timeutil import ET, nba_today, nba_tomorrow, parse_date
+from fbm.timeutil import ET, nba_today, parse_date
 from fbm.yahoo import discovery
 from fbm.yahoo import settings as yahoo_settings
 from fbm.yahoo.auth import (
@@ -42,7 +42,6 @@ from fbm.yahoo.auth import (
 )
 from fbm.yahoo.client import YahooAPIError, YahooClient
 from fbm.yahoo.roster import get_roster
-from fbm.yahoo.writes import verify_write_scope
 
 app = typer.Typer(no_args_is_help=True, help="FBM — AI front office for Yahoo Fantasy Basketball (9-cat H2H).")
 league_app = typer.Typer(no_args_is_help=True, help="League discovery and selection.")
@@ -306,38 +305,6 @@ def roster(
     _run(_roster)
 
 
-@app.command("verify-write")
-def verify_write(
-    day: str = typer.Option(None, "--date", help="ET game day to test (default: tomorrow ET)"),
-    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt."),
-) -> None:
-    """Yahoo writes are OUT OF SCOPE (owner decision). Optional: prove write access with a harmless no-op lineup
-    re-save; it only takes effect if config/settings.toml [yahoo] api_writes = true."""
-    console.print(
-        "[yellow]Yahoo writes are out of scope (owner decision): roster changes are exact manual steps. "
-        "This check only matters if [yahoo] api_writes = true in config/settings.toml.[/]"
-    )
-    target = _resolve_day(day, nba_tomorrow())
-    if not yes and not typer.confirm(f"Re-save one player's current slot for {target} (no lineup change)?"):
-        raise typer.Exit()
-
-    def _verify() -> None:
-        cfg = load_league_config()
-        with YahooClient() as client:
-            result = verify_write_scope(client, cfg.team_key, target)
-        RAW_DIR.mkdir(parents=True, exist_ok=True)
-        (RAW_DIR / "write_check.json").write_text(
-            json.dumps({"date": target.isoformat(), "ok": result.ok, "detail": result.detail}, indent=2),
-            encoding="utf-8",
-        )
-        color = {True: "green", False: "red", None: "yellow"}[result.ok]
-        console.print(f"[{color}]{result.detail}[/]")
-        if result.ok is False:
-            raise typer.Exit(code=2)
-
-    _run(_verify)
-
-
 # ---------------------------------------------------------------- NBA data (ESPN)
 
 data_app = typer.Typer(no_args_is_help=True, help="NBA data (ESPN) sync and inspection.")
@@ -555,11 +522,10 @@ def _context():
         _fail(str(err))
 
 
-def _load_league(demo: bool):
+def _load_league(demo: bool = False):
+    """The configured league ([league] source in config/settings.toml). `--demo` is accepted for compatibility."""
     from fbm.gm import services as svc
 
-    if not demo:
-        _fail("Live Yahoo league data is pending Yahoo API approval. Use --demo for now.")
     try:
         return svc.active_league()
     except svc.GMError as err:
@@ -607,11 +573,17 @@ def demo_build(
 @app.command()
 def lineup(
     day: str = typer.Option(None, "--date", help="ET game day (default: today ET)"),
-    demo: bool = typer.Option(False, "--demo", help="Use the demo league."),
+    done: bool = typer.Option(False, "--done", help="Confirm you set this lineup in Yahoo (demo: updates the demo)."),
+    demo: bool = typer.Option(False, "--demo", hidden=True),
 ) -> None:
-    """Optimal lineup for one ET game day (max games started, then value): tip-off locks and IL moves applied."""
+    """Recommended lineup for one ET game day (max games started, then value) with tip-off locks and IL moves.
+    FBM never changes your league: set it in Yahoo yourself, then optionally confirm with --done."""
     from fbm.gm import services as svc
 
+    if done:
+        r = _svc(svc.lineup_steps, day, True)
+        console.print(f"[green]Recorded:[/] lineup for {r['date_et']} set by you ({len(r['changes'])} changes).")
+        return
     league = _load_league(demo)
     target = _resolve_day(day, nba_today())
     plan = _svc(svc._lineup_plan, league, target, True)
@@ -657,6 +629,14 @@ def lineup(
         )
     if plan["locked"]:
         console.print("[dim]🔒 = game started; slot locked[/]")
+    changed = sum(1 for p in team.players if p.selected != res.assignments[p.player_id])
+    if changed:
+        console.print(
+            f"[bold]Set these {changed} change(s) in Yahoo (My Team → {target} → Edit lineup); FBM doesn't change "
+            "your league.[/] Then confirm with `fbm lineup --done`."
+        )
+    else:
+        console.print("[green]Your lineup already matches the recommendation.[/]")
 
 
 @app.command()
@@ -798,7 +778,7 @@ def sim(
     start: str = typer.Option(None, help="First ET day to simulate (default: today or first game day)."),
     opponent: str = typer.Option(None, help="Opponent team key (default: next team in the demo rotation)."),
     n: int = typer.Option(10000, help="Simulations."),
-    demo: bool = typer.Option(False, "--demo", help="Use the demo league."),
+    demo: bool = typer.Option(False, "--demo", hidden=True),
 ) -> None:
     """Monte Carlo the rest of this fantasy week against an opponent: per-category win odds."""
     from fbm.analytics.simulation import simulate_matchup
@@ -851,7 +831,7 @@ def sim(
 
 @app.command()
 def profile(
-    demo: bool = typer.Option(False, "--demo", help="Use the demo league."),
+    demo: bool = typer.Option(False, "--demo", hidden=True),
     n: int = typer.Option(4000, help="Simulations per team."),
 ) -> None:
     """League-wide category strength: each team's typical-week win rate per category."""
@@ -932,7 +912,9 @@ app.add_typer(proposals_app, name="proposals")
 
 
 @proposals_app.command("list")
-def proposals_list(status: str = typer.Option("open", help="open | pending_approval | executed | all")) -> None:
+def proposals_list(
+    status: str = typer.Option("open", help="open | pending_approval | awaiting_owner | done | all"),
+) -> None:
     """List proposals."""
     from fbm.gm import proposals as props
 
@@ -954,6 +936,14 @@ def proposals_show(ref: str) -> None:
     console.print_json(json.dumps(svc.get_proposal(ref), default=str))
 
 
+def _print_steps(p: dict) -> None:
+    console.print(f"{p['ref']} → [bold]{p['status']}[/]")
+    for step in (p.get("execution") or {}).get("manual_steps", []):
+        console.print(step)
+    if p["status"] == "awaiting_owner":
+        console.print(f"[dim]FBM doesn't change your league. After you do it: `fbm proposals done {p['ref']}`.[/]")
+
+
 def _decide(ref: str, approved: bool, note: str) -> None:
     from fbm.gm import services as svc
     from fbm.gm.proposals import ProposalError
@@ -962,18 +952,14 @@ def _decide(ref: str, approved: bool, note: str) -> None:
         p = svc.record_owner_decision(ref, approved, note or ("approve" if approved else "reject") + " (CLI)")
         console.print(f"{p['ref']} → [bold]{p['status']}[/]")
         if approved:
-            p = svc.execute_proposal(ref)
-            console.print(f"Execution: [bold]{p['status']}[/]")
-            steps = (p.get("execution") or {}).get("manual_steps")
-            if steps:
-                console.print("\n".join(steps))
+            _print_steps(svc.proposal_steps(ref))
     except ProposalError as err:
         _fail(str(err))
 
 
 @proposals_app.command("approve")
 def proposals_approve(ref: str, note: str = typer.Option("", help="Your words, recorded in the audit trail.")) -> None:
-    """Approve (then immediately re-validate and execute) a reviewed proposal."""
+    """Approve a reviewed proposal and get the exact steps to make the move in Yahoo yourself."""
     _decide(ref, True, note)
 
 
@@ -981,6 +967,32 @@ def proposals_approve(ref: str, note: str = typer.Option("", help="Your words, r
 def proposals_reject(ref: str, note: str = typer.Option("", help="Why (recorded).")) -> None:
     """Reject a reviewed proposal."""
     _decide(ref, False, note)
+
+
+@proposals_app.command("steps")
+def proposals_steps(ref: str) -> None:
+    """Show the exact steps for an approved proposal (re-validates first if steps weren't generated yet)."""
+    from fbm.gm import services as svc
+    from fbm.gm.proposals import ProposalError
+
+    try:
+        p = svc.get_proposal(ref)
+        _print_steps(svc.proposal_steps(ref) if p["status"] == "approved" else p)
+    except ProposalError as err:
+        _fail(str(err))
+
+
+@proposals_app.command("done")
+def proposals_done(ref: str, note: str = typer.Option("done", help="What you did (recorded).")) -> None:
+    """Confirm you made the move in Yahoo (demo league: updates the demo roster to match)."""
+    from fbm.gm import services as svc
+    from fbm.gm.proposals import ProposalError
+
+    try:
+        p = svc.confirm_done(ref, note)
+        console.print(f"{p['ref']} → [bold]{p['status']}[/]")
+    except ProposalError as err:
+        _fail(str(err))
 
 
 @notify_app.command("outbox")

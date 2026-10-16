@@ -54,9 +54,8 @@ what fails. Works the same in any agent (Copilot, Claude Code, Codex, Cursor, Ge
    If approved: they create a NEW Yahoo app (Fantasy Sports Read; redirect URI `https://localhost:8080`), submit
    its Client ID at https://sports.yahoo.com/developer/application-confirmation/, then continue in step 3 below.
 6. **Preferences.**
-   - Autonomy: lineups + IL moves automatic; add/drop, waivers, trades and strategy need their approval
-     (default — confirm; changes go in `[autonomy]` of config/settings.toml).
-   - Approval expiry (`--expiry-hours`, default 18).
+   - Proposal expiry (`--expiry-hours`, default 18; `[proposals] expiry_hours`). FBM never changes the league —
+     lineups are recommendations and moves are proposals the owner approves — so there is no autonomy to choose.
    - Notifications: none or email (`--email` / `--no-email`); quiet hours (`--quiet-hours 23:00-07:00`).
    - Risk appetite (conservative / balanced / aggressive): not a setup flag — journal it later with
      `journal_append` (kind `owner`) for the season-strategy run.

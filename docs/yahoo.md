@@ -47,11 +47,12 @@ uv run fbm health          # everything should be OK
 FBM matches Yahoo players to ESPN ids automatically. `fbm ids` lists any it couldn't match and how to fix them: add
 the mapping to `config/yahoo_id_overrides.toml` (personal, gitignored), then re-run `fbm snapshot`.
 
-## Read-only scope and manual steps
+## FBM never changes your league
 
-FBM is read-only against Yahoo (`[yahoo] api_writes = false`); Yahoo API writes are out of scope. When a lineup,
-IL move, add/drop, waiver claim or trade is decided, FBM gives you **exact manual steps** to perform in the Yahoo app
-or website. Tell the GM "done" (or it records `mark_manual_done`), and the next snapshot verifies the result.
+FBM has no Yahoo write access by design; it only reads. Lineup and IL recommendations and approved proposals
+(add/drop, waiver claim, trade) come with **exact steps** to perform in the Yahoo app or website. Tell the GM "done"
+(`fbm lineup --done`, or `fbm proposals done REF` / `confirm_done` for proposals), and the next snapshot verifies
+the result.
 Pending trades and waiver claims are shown by `fbm offers`; accept or reject them in Yahoo yourself.
 
 ## Troubleshooting

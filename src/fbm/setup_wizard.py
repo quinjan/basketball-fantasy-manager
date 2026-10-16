@@ -85,7 +85,7 @@ class SetupOptions:
             ("league", "source"): self.league_source,
             ("notify", "email_enabled"): self.email,
             ("notify", "quiet_hours"): self.quiet_hours,
-            ("autonomy", "default_expiry_hours"): self.expiry_hours,
+            ("proposals", "expiry_hours"): self.expiry_hours,
             ("git", "account"): self.git_account,
         }
         return {k: v for k, v in mapping.items() if v is not None}

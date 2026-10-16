@@ -80,8 +80,8 @@ apparent category build, plus the best trade partners by complementary needs.
 
 ## Learning loop
 
-- **Decision grading:** executed add/drops, waiver claims and trades are graded by realized production since
-  execution (acquired minus given up), in team-week standard-deviation units.
+- **Decision grading:** completed (`done`) add/drops, waiver claims and trades are graded by realized production since
+  completion (acquired minus given up), in team-week standard-deviation units.
 - **Calibration:** finished matchup predictions are graded by Brier score against a coin-flip baseline, with
   reliability buckets.
 

@@ -76,7 +76,7 @@ def test_render_keeps_comments_and_values():
     assert data["owner"]["timezone"] == "Asia/Tokyo"
     assert data["automation"]["jobs"] == ["health"]
     assert data["notify"]["email_enabled"] is True
-    assert data["yahoo"]["api_writes"] is False
+    assert data["proposals"]["expiry_hours"] == 18 and "yahoo" not in data and "autonomy" not in data
     assert "# decisions: a frontier model" in text
 
 

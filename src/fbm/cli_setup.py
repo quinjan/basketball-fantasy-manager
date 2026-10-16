@@ -99,7 +99,7 @@ def _interactive(opts: wiz.SetupOptions, current: dict) -> None:
     if opts.expiry_hours is None:
         opts.expiry_hours = typer.prompt(
             "Hours before an unapproved proposal expires",
-            default=float(current.get("autonomy", {}).get("default_expiry_hours", 18)),
+            default=float(current.get("proposals", {}).get("expiry_hours", 18)),
             type=float,
         )
 

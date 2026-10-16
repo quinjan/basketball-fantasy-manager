@@ -9,7 +9,7 @@ Run as the `gm` agent.
 
 ## Retro (last week)
 1. `context_pack`, `refresh_data`, then `weekly_retro_data` (defaults to the last completed fantasy week). It
-   returns: graded executed moves (realized production acquired minus given up, in team-week SD units:
+   returns: graded completed (`done`) moves (realized production acquired minus given up, in team-week SD units:
    good ≥ +0.5, bad ≤ −0.5, or too early), proposals created with reviewer verdicts and owner quotes, graded
    matchup predictions, and season calibration.
    In the Yahoo league also read `scoreboard` (final category results) and `standings` (record, playoff race).

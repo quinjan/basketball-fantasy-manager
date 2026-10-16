@@ -2,7 +2,6 @@
 
 Everything runs on XML fixtures; nothing touches the network."""
 
-import json
 import sqlite3
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
@@ -10,12 +9,11 @@ from types import SimpleNamespace
 import pytest
 
 from fbm.config import LeagueConfig
-from fbm.gm import executors
 from fbm.gm import services as svc
+from fbm.gm import steps
 from fbm.league.demo import load_league, save_league
 from fbm.league.yahoo_league import assemble
 from fbm.league.yahoo_views import category_value, scoreboard_view, split_pending, standings_rows
-from fbm.settings import Settings
 from fbm.yahoo import xmlparse
 from fbm.yahoo.ids import IdMapper
 from fbm.yahoo.league_reads import parse_players, parse_scoreboard, parse_standings, parse_teams, parse_transactions
@@ -235,26 +233,20 @@ def test_live_week_uses_banked_and_skips_started_games(monkeypatch):
     assert svc._remaining_games(league.my_team, plans, skip) == [("e2", date(2026, 10, 29))]
 
 
-def test_yahoo_lineup_is_manual_even_with_write_check(monkeypatch, tmp_path):
+def test_yahoo_lineup_is_steps_for_the_owner():
     league = _yahoo_league()
-    (tmp_path / "write_check.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
-    monkeypatch.setattr(executors, "RAW_DIR", tmp_path)
-    monkeypatch.setattr("fbm.settings.load_settings", lambda *a, **k: Settings(yahoo_api_writes=False))
-    assert executors.yahoo_write_enabled() is False
-    res = executors.apply_lineup(league, {"e2": "BN", "e5": "C"}, date(2026, 10, 29))
-    assert res.status == "awaiting_manual"
-    assert res.detail["changes"] == ["Shai Gilgeous-Alexander: PG → BN"]
-    assert "2026-10-29" in res.detail["manual_steps"][0]
-    monkeypatch.setattr("fbm.settings.load_settings", lambda *a, **k: Settings(yahoo_api_writes=True))
-    assert executors.yahoo_write_enabled() is True
+    res = steps.lineup_steps(league, {"e2": "BN", "e5": "C"}, date(2026, 10, 29))
+    assert res["changes"] == ["Shai Gilgeous-Alexander: PG → BN"]
+    assert "2026-10-29" in res["manual_steps"][0]
+    assert steps.simulate_lineup_in_demo(league, {"e2": "BN"}) is False
 
 
-def test_yahoo_trade_execution_is_manual():
+def test_yahoo_trade_is_steps_for_the_owner():
     league = _yahoo_league()
     p = SimpleNamespace(
         kind="trade",
         ref="P-1",
         payload={"partner": THEM, "partner_name": "Bench Mob", "give": ["e2"], "get": ["e3"], "note": "hi"},
     )
-    res = executors.execute(p, league)
-    assert res.status == "awaiting_manual" and "Propose Trade" in res.detail["manual_steps"][0]
+    res = steps.owner_steps(p, league)
+    assert res.status == "awaiting_owner" and "Propose Trade" in res.detail["manual_steps"][0]

@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import pytest
 
-from fbm.gm import executors, memory
+from fbm.gm import memory, steps
 from fbm.gm import proposals as props
 from fbm.league.model import FantasyTeam, LeagueState, RosterPlayer, SlotSpec
 from fbm.notify import email as notify
@@ -38,7 +38,7 @@ def test_lifecycle_requires_review_then_owner_quote(conn):
     with pytest.raises(props.ProposalError):
         props.record_owner_decision(conn, p.ref, True, "yes")  # not reviewed yet
     with pytest.raises(props.ProposalError):
-        props.ready_to_execute(conn, p.ref)
+        props.ready_for_steps(conn, p.ref)
     with pytest.raises(props.ProposalError):  # same model family as GM
         props.record_review(conn, p.ref, "AGREE", "ok", "claude-sonnet-5", gm_model="claude-opus-5.5")
     p = props.record_review(conn, p.ref, "agree", "numbers check out", "gpt-5.6-sol", 0.8, "claude-opus-5.5")
@@ -46,19 +46,19 @@ def test_lifecycle_requires_review_then_owner_quote(conn):
     with pytest.raises(props.ProposalError):
         props.record_owner_decision(conn, p.ref, True, "   ")
     p = props.record_owner_decision(conn, p.ref, True, "yes do it")
-    assert p.status == "approved" and props.ready_to_execute(conn, p.ref).id == p.id
+    assert p.status == "approved" and props.ready_for_steps(conn, p.ref).id == p.id
     events = [r["event"] for r in conn.execute("SELECT event FROM proposal_events WHERE proposal_id=?", (p.id,))]
     assert events == ["created", "reviewed", "approved"]
 
 
-def test_expired_proposals_cannot_execute(conn):
+def test_expired_proposals_get_no_steps(conn):
     p = _proposal(conn, expires_in_hours=1)
     props.record_review(conn, p.ref, "AGREE", "ok", "gpt-5.6-sol")
     props.record_owner_decision(conn, p.ref, True, "ok")
     past = (datetime.now(ZoneInfo("UTC")) - timedelta(minutes=1)).isoformat(timespec="seconds")
     conn.execute("UPDATE proposals SET expires_at=? WHERE id=?", (past, p.id))
     with pytest.raises(props.ProposalError, match="expired"):
-        props.ready_to_execute(conn, p.ref)
+        props.ready_for_steps(conn, p.ref)
 
 
 def test_create_validation(conn):
@@ -80,33 +80,67 @@ def _league(tmp_path, monkeypatch) -> LeagueState:
 VALUES = pd.DataFrame({"name": ["X Free"], "team": ["MIA"], "position": ["F"]}, index=["x"])
 
 
-def test_demo_executor_add_drop_and_revalidation(conn, tmp_path, monkeypatch):
+def test_steps_never_change_the_league_until_owner_confirms(conn, tmp_path, monkeypatch):
     league = _league(tmp_path, monkeypatch)
-    monkeypatch.setattr("fbm.gm.executors.save_league", lambda lg: None)
-    p = _proposal(conn)
-    assert executors.revalidate(p, league) == []
-    result = executors.execute(p, league, VALUES)
-    assert result.status == "executed"
+    monkeypatch.setattr("fbm.gm.steps.save_league", lambda lg: None)
+    p = _proposal(conn, payload={"add": "x", "add_name": "X Free", "drop": "a", "drop_name": "A"})
+    assert steps.revalidate(p, league) == []
+    result = steps.owner_steps(p, league)
+    assert result.status == "awaiting_owner"
+    assert any("X Free" in s for s in result.detail["manual_steps"])
+    assert [x.player_id for x in league.my_team.players] == ["a"]  # nothing changed
+    # The owner confirms -> the demo league is updated to mirror the move.
+    assert steps.simulate_in_demo(p, league, VALUES) == {"demo_league": "updated to reflect the owner's move"}
     assert [x.player_id for x in league.my_team.players] == ["x"]
-    # Second attempt: x is now rostered and a is gone -> re-validation blocks it.
-    assert len(executors.revalidate(p, league)) == 2
+    assert len(steps.revalidate(p, league)) == 2  # x rostered, a gone
 
 
-def test_yahoo_source_returns_manual_steps(conn, tmp_path, monkeypatch):
+def test_yahoo_source_returns_steps_and_never_simulates(conn, tmp_path, monkeypatch):
     league = _league(tmp_path, monkeypatch)
     league.source = "yahoo"
     p = _proposal(conn, payload={"add": "x", "add_name": "X Free", "drop": "a", "drop_name": "A"})
-    result = executors.execute(p, league, VALUES)
-    assert result.status == "awaiting_manual"
-    assert any("X Free" in s for s in result.detail["manual_steps"])
+    result = steps.owner_steps(p, league)
+    assert result.status == "awaiting_owner"
+    assert not any("Demo league" in s for s in result.detail["manual_steps"])
+    assert steps.simulate_in_demo(p, league, VALUES) == {}
+    assert [x.player_id for x in league.my_team.players] == ["a"]
+
+
+def test_owner_confirmation_lifecycle(conn):
+    p = _proposal(conn)
+    props.record_review(conn, p.ref, "AGREE", "ok", "gpt-5.6-sol")
+    props.record_owner_decision(conn, p.ref, True, "yes")
+    with pytest.raises(props.ProposalError):
+        props.confirm_done(conn, p.ref, "did it")  # no steps yet
+    props.record_outcome(conn, p.ref, "awaiting_owner", {"manual_steps": ["x"]})
+    assert p.ref in [x.ref for x in props.list_proposals(conn, "open")]
+    done = props.confirm_done(conn, p.ref, "did it", {"demo_league": "updated"})
+    assert done.status == "done" and done.execution["owner_confirmation"] == "did it"
+    with pytest.raises(props.ProposalError):
+        props.record_outcome(conn, p.ref, "executed", {})
 
 
 def test_strategy_proposal_writes_strategy(conn, tmp_path, monkeypatch):
     monkeypatch.setattr(memory, "STRATEGY_JSON", tmp_path / "strategy.json")
     league = _league(tmp_path, monkeypatch)
     p = _proposal(conn, kind="strategy", payload={"punts": ["FT%"], "targets": ["BLK"], "notes": "bigs"})
-    assert executors.execute(p, league).status == "executed"
+    assert steps.owner_steps(p, league).status == "done"
     assert memory.current_strategy()["punts"] == ["FT%"]
+
+
+def test_lineup_steps_change_nothing(tmp_path, monkeypatch):
+    from datetime import date
+
+    league = _league(tmp_path, monkeypatch)
+    saved = []
+    monkeypatch.setattr("fbm.gm.steps.save_league", lambda lg: saved.append(lg))
+    out = steps.lineup_steps(league, {"a": "BN"}, date(2026, 10, 21))
+    assert out["changes"] == ["A: PG → BN"] and "2026-10-21" in out["manual_steps"][0]
+    assert league.my_team.players[0].selected == "PG" and saved == []
+    assert steps.simulate_lineup_in_demo(league, {"a": "BN"}) is True
+    assert league.my_team.players[0].selected == "BN" and len(saved) == 1
+    league.source = "yahoo"
+    assert steps.simulate_lineup_in_demo(league, {"a": "PG"}) is False
 
 
 def test_journal_append(tmp_path, monkeypatch):

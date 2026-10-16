@@ -12,5 +12,5 @@ Run as the `gm` agent. Memory lives in `memory/` (see AGENTS.md "Memory protocol
 2. "Remember about manager Y" → append the observation with date and source to `memory/managers/<team>.md`.
 3. "New rule" → confirm the exact wording, add it under "Owner rules" in `memory/playbook.md`.
 4. Strategy changes are not memory edits: use the `season-strategy` proposal flow (`memory/strategy.json` is
-   written only by an executed `strategy` proposal).
+   written only by an approved `strategy` proposal via `proposal_steps`).
 5. `journal_append` (kind `owner`) with the change (memory is saved locally).

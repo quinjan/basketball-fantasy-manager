@@ -1,6 +1,6 @@
 ---
 name: daily-gm
-description: The GM's main daily run (after all NBA games are final, ~10:00 ET). Refresh data, set lineups, assess the matchup, scan free agents/streams, draft reviewed proposals, email the daily report.
+description: The GM's main daily run (after all NBA games are final, ~10:00 ET). Refresh data, recommend lineups, assess the matchup, scan free agents/streams, draft reviewed proposals, email the daily report.
 ---
 
 # Daily GM run
@@ -9,8 +9,8 @@ Run as the `gm` agent. Follow AGENTS.md. Be efficient: this runs every day.
 
 1. **Load & refresh.** `context_pack` → `refresh_data` → `snapshot` (Yahoo league; fresh rosters, scoreboard,
    waivers) → `health_check` (mention any WARN/FAIL with its fix). Note any `rostered_injury_changes`.
-2. **Lineups (auto).** `apply_lineup` for the next ET game day (`nba_game_day_et`, or the next day with games).
-   In the Yahoo league it returns exact manual steps (writes are out of scope) — put them at the top of the report.
+2. **Lineup recommendation.** `lineup_steps` for the next ET game day (`nba_game_day_et`, or the next day with
+   games). It returns the recommended lineup and exact steps for the owner — put them at the top of the report.
 3. **Matchup.** In the Yahoo league, `scoreboard` for stats already banked this week. `simulate_matchup(record=true)`
    (current opponent; includes banked stats; recording feeds the calibration loop). Identify swing categories,
    expected categories won, P(win week), games-started gap, and remaining adds.

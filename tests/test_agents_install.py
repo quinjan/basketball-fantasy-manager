@@ -39,7 +39,7 @@ def test_install_renders_valid_files(tmp_path, agent):
 def test_role_frontmatter_per_agent():
     cop = {p.path: p for p in _plan("copilot")}
     rev = cop[".github/agents/reviewer.agent.md"].content
-    assert 'model: "rev-model-y"' in rev and '"fbm/record_review"' in rev and "fbm/execute_proposal" not in rev
+    assert 'model: "rev-model-y"' in rev and '"fbm/record_review"' in rev and "fbm/proposal_steps" not in rev
     assert "Model family note" not in rev
     assert 'model: "gm-model-x"' in cop[".github/agents/gm.agent.md"].content
     assert 'model: "cheap-model-z"' in cop[".github/agents/scout.agent.md"].content

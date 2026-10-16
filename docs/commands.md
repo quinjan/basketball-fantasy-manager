@@ -51,7 +51,6 @@ Jobs: `data-sync`, `lineup-guard`, `daily-gm`, `weekly-retro`, `trade-scan`, `he
 | `fbm offers` | Your pending trades (incoming offers evaluated) and waiver claims; accept/reject manually in Yahoo |
 | `fbm intel [--team X] [--sync]` | Opponent intel: manager activity, streaming, trades, builds, best trade partners |
 | `fbm ids` | Yahoo players not mapped to ESPN ids, and how to fix them (`config/yahoo_id_overrides.toml`) |
-| `fbm verify-write [--date D] [--yes]` | Out of scope (Yahoo writes are disabled). Optional harmless no-op write check |
 
 ## NBA data (`fbm data`)
 
@@ -68,7 +67,7 @@ Jobs: `data-sync`, `lineup-guard`, `daily-gm`, `weekly-retro`, `trade-scan`, `he
 | Command | Purpose |
 |---|---|
 | `fbm rank [--season] [--top N] [--punt FT%,TO] [--metric g\|z] [--team] [--min-gp] [--csv]` | Rank players by 9-cat value (G-score or Z-score) |
-| `fbm lineup [--date D] [--demo]` | Optimal lineup for an ET game day with tip-off locks and IL moves |
+| `fbm lineup [--date D] [--done]` | Recommended lineup for an ET game day with exact steps (tip-off locks, IL moves first); `--done` = you set it in Yahoo (demo league: updates the demo roster) |
 | `fbm sim [--start] [--opponent KEY] [--n N] [--demo]` | Monte Carlo the rest of this week: per-category win odds |
 | `fbm profile [--demo] [--n N]` | League-wide category strength per team |
 | `fbm stream [--opponent] [--adds] [--protect]` | Streaming plan: best add/drop sequence within the add limit |
@@ -84,14 +83,16 @@ Jobs: `data-sync`, `lineup-guard`, `daily-gm`, `weekly-retro`, `trade-scan`, `he
 |---|---|
 | `fbm proposals list [--status S]` | List proposals |
 | `fbm proposals show REF` | One proposal in full |
-| `fbm proposals approve REF` | Approve a reviewed proposal (then it is re-validated and executed) |
+| `fbm proposals approve REF [--note]` | Approve a reviewed proposal; prints the exact steps to make the move in Yahoo |
 | `fbm proposals reject REF` | Reject a reviewed proposal |
+| `fbm proposals steps REF` | Show the steps again (re-validates an approved proposal first) |
+| `fbm proposals done REF [--note "..."]` | Confirm you made the move in Yahoo (demo league: applies it) |
 
 ## Learning loop (`fbm learn`)
 
 | Command | Purpose |
 |---|---|
-| `fbm learn grade [--days N]` | Grade executed moves by realized production |
+| `fbm learn grade [--days N]` | Grade completed moves by realized production |
 | `fbm learn calibration` | Simulator calibration (Brier score vs coin flip, reliability) |
 | `fbm learn retro [--week-start D]` | Retro data for a fantasy week (JSON) |
 

@@ -21,5 +21,5 @@ Run as the `gm` agent.
    FT% frees you to stream bigs).
 5. `create_proposal` kind `strategy`, payload `{"punts": [...], "targets": [...], "notes": "..."}` → `reviewer`
    agent → ask the owner (or email kind `approval`).
-6. After execution, rewrite `memory/strategy.md` (narrative: build, targets, punts, how to play waivers/trades
+6. After approval and `proposal_steps` (records the strategy, status `done`), rewrite `memory/strategy.md` (narrative: build, targets, punts, how to play waivers/trades
    under it, conditions that would make us revisit), journal (memory is saved locally).

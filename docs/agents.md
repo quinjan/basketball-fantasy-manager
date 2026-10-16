@@ -70,8 +70,8 @@ jobs only run while your computer is on.
 
 ### Headless commands and safety flags (`scheduler` mode)
 
-Scheduled AI runs are **read-only plus FBM tools**: they can analyze, journal and draft proposals, but can never
-approve one — approval always needs your words.
+Scheduled AI runs are **read-only plus FBM tools**: they produce insights, lineup recommendations and draft
+proposals, but never act on the league and never approve — approval always needs your words.
 
 | Agent | Command FBM schedules |
 |---|---|

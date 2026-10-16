@@ -184,9 +184,10 @@ def job_prompt(job: str) -> str:
     return (
         f"Run the {skill} skill (agents/skills/{skill}/SKILL.md) for my FBM league. This is an unattended "
         "scheduled run: use only the fbm MCP tools and read-only file access; do not edit files, change settings, "
-        "or run shell commands. Numbers must come from fbm tool output. You may create proposals and journal "
-        "entries through fbm tools, but never execute add/drop, waiver claims or trades: those need my explicit "
-        "approval. Finish with a short report."
+        "or run shell commands. Numbers must come from fbm tool output. FBM never changes my league: produce "
+        "insights, the lineup recommendation (lineup_steps, without confirm) and proposals (create_proposal) only. "
+        "Never record approvals, never call proposal_steps or confirm_done, never claim a move was made. "
+        "Finish with a short report listing anything I need to do in Yahoo."
     )
 
 

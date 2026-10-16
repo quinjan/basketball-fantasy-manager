@@ -17,4 +17,4 @@ Run as the `gm` agent. Every number comes from tool output.
 4. Context: `schedule` (games left), `injuries(scope="my_roster")`; opponent habits via `league_intel` /
    `manager_profile` if available, and `memory/managers/`.
 5. Lead with the verdict, then a short category odds table. Any add/drop is a proposal (`create_proposal` →
-   `reviewer` → owner approval → `execute_proposal`; Yahoo league = manual steps).
+   `reviewer` → owner approval → `proposal_steps` → owner does it in Yahoo → `confirm_done`).

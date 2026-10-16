@@ -105,12 +105,12 @@ def test_contribution_scaling(conn):
     assert c["std"]["FG%"] == pytest.approx((6 - 0.47 * 10) / 12 / 0.5 / scale, abs=1e-3)
 
 
-def test_grade_executed_add_drop(conn):
+def test_grade_done_add_drop(conn):
     p = props.create(conn, "add_drop", "Add X", "s", {"add": "x", "drop": "y"}, "because", {"delta": 1})
     props.record_review(conn, p.ref, "AGREE", "ok", "gpt-5.6-sol")
     props.record_owner_decision(conn, p.ref, True, "yes")
     executed = datetime(2026, 10, 20, 16, 0, tzinfo=UTC).isoformat()  # 12:00 ET Oct 20
-    conn.execute("UPDATE proposals SET status='executed', executed_at=? WHERE id=?", (executed, p.id))
+    conn.execute("UPDATE proposals SET status='done', executed_at=? WHERE id=?", (executed, p.id))
     for i, day in enumerate(("2026-10-20", "2026-10-22", "2026-10-24")):
         add_game(conn, f"g{i}", day)
         add_line(conn, f"g{i}", "x", day, pts=22, reb=8, ast=4, stl=1, blk=1, tov=2, tpm=2, fgm=8, fga=15, ftm=4, fta=5)

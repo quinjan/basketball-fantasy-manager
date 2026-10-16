@@ -51,7 +51,7 @@ Descriptions are summarized from each tool's docstring in `src/fbm/mcp_server.py
 
 | Tool | Description |
 |---|---|
-| `grade_decisions` | Grade executed add/drop, waiver and trade proposals by realized production |
+| `grade_decisions` | Grade completed (`done`) add/drop, waiver and trade proposals by realized production |
 | `prediction_calibration` | Grade finished matchup predictions: Brier score vs coin flip, reliability |
 | `weekly_retro_data` | Everything the weekly retro needs for a fantasy week (default: last completed) |
 
@@ -68,17 +68,19 @@ Descriptions are summarized from each tool's docstring in `src/fbm/mcp_server.py
 | `draft_sync_yahoo` | Read the league's Yahoo draft results and record every new pick |
 | `draft_adp_refresh` | Fetch Yahoo ADP into the local cache; the board then prefers it over ESPN |
 
-## Actions, proposals and memory
+## Recommendations, proposals and memory
+
+FBM never changes the league. These tools return recommendations and exact steps the owner performs in Yahoo.
 
 | Tool | Description |
 |---|---|
-| `apply_lineup` | Auto-allowed: set my optimal lineup for a game day, IL moves first; never touches started games (demo: applied; Yahoo: manual steps while writes are disabled) |
+| `lineup_steps` | Recommended lineup for a game day with exact steps, IL moves first; never touches started games. `confirm=true` records that the owner set it (demo league: updates the demo roster) |
 | `journal_append` | Append to today's decision journal in `memory/journal` |
-| `create_proposal` | Draft an approval-gated move: `add_drop`, `waiver_claim`, `trade`, `strategy`, `other` |
+| `create_proposal` | Draft a proposal for the owner: `add_drop`, `waiver_claim`, `trade`, `strategy`, `other` |
 | `record_review` | Record the independent reviewer's verdict (AGREE / DISAGREE / SPLIT) |
 | `record_owner_decision` | Record the owner's decision, only with the owner's own words from the conversation |
-| `execute_proposal` | Execute an approved, unexpired proposal after re-validating it against current league state |
-| `mark_manual_done` | Owner confirms they performed a manual-execution proposal in Yahoo |
-| `list_proposals` | Proposals by status (open, pending_review, pending_approval, approved, rejected, expired, …) |
+| `proposal_steps` | Re-validate an approved, unexpired proposal and return the exact manual steps (`awaiting_owner`, or `failed`); strategy proposals are recorded and marked `done` |
+| `confirm_done` | Owner confirms they made the move in Yahoo (`done`; demo league: applies the change) |
+| `list_proposals` | Proposals by status (open, pending_review, pending_approval, approved, rejected, expired, awaiting_owner, failed, done) |
 | `get_proposal` | One proposal with its full event history |
 | `send_email` | Email the owner (Gmail): report, approval, alert, or retro |

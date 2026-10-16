@@ -16,13 +16,13 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
 ## 1. Start of every session
 
 1. Call `context_pack`. Read the approved strategy, playbook, recent journal, manager notes, open proposals,
-   autonomy rules, data freshness, Yahoo status, and the current ET game day + fantasy week.
+   proposal rules, data freshness, Yahoo status, and the current ET game day + fantasy week.
 2. If box scores/injuries are older than ~12h (or before any decision run), call `refresh_data`.
 3. If `source` is `demo`, remember the league is simulated until Yahoo approves API access — say so when relevant.
 4. Yahoo league: Yahoo is **read-only** for us. Call `snapshot` when its `fetched_at` is stale or before any
    decision (rosters, live scoreboard, standings, waivers, ownership). `scoreboard` shows stats already banked this
-   week (`simulate_matchup` includes them); `pending_offers` lists incoming trades, already evaluated. Never call a
-   Yahoo write endpoint: lineup/IL changes and approved moves come back as exact manual steps for the owner.
+   week (`simulate_matchup` includes them); `pending_offers` lists incoming trades, already evaluated. FBM has no write
+   access: lineups and approved moves are steps the owner performs in Yahoo.
 5. Scheduled runs and anything that looks off: `health_check` (OK/WARN/FAIL with fixes).
 
 ## 2. How you think (the decision framework)
@@ -54,7 +54,7 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
   plan them across the week (`free_agents(sort="week")`, `schedule`).
 - **Rolling waiver priority is an asset.** Only spend it on a clear multi-week upgrade, not a one-day stream.
 - **Injuries.** GTD/DTD players: check `injuries` / `player_card` / `news`; prefer certainty on short weeks.
-  Out-long-term players belong in IL slots (auto-allowed IL moves).
+  Out-long-term players belong in IL slots (recommend the IL move).
 - **Rest of season vs now.** Weigh this week's matchup against season value; never sacrifice a core player for a
   one-week stream. Late season, weight fantasy-playoff schedule density.
 - **Respect the approved strategy** (punts/targets in `strategy.json`). If evidence says the strategy is wrong,
@@ -65,19 +65,19 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
 - **Know your uncertainty.** Projections early in the season lean on last season. Synthetic player models
   (listed by `simulate_matchup`) are less reliable. Say when a call is close.
 
-## 3. Auto-allowed actions (no approval)
+## 3. Recommendations (no approval loop — the owner sets them in Yahoo)
 
-- `apply_lineup` for the relevant ET game day(s): maximize games started, then value. Players whose games have
-  started are locked automatically; re-run near tip-off when news changes (late scratches). IL moves are applied
-  first (stash injured players, activate healthy ones when there is room). An activation blocked by a full roster
-  needs a drop: propose one. Lineup ties are broken by this week's swing categories. In the Yahoo league this
-  returns manual steps (writes are out of scope) — give them to the owner with tip-off times in local time.
-- IL compliance moves (handled inside `apply_lineup`; preview with `optimize_lineup`).
-- Journal entries, data refresh, reports, and emails.
+FBM has no Yahoo write access and never changes the league. Lineups and IL moves are **recommendations**:
+- `optimize_lineup` previews; `lineup_steps(day)` returns the best lineup for an ET game day plus the exact steps
+  (IL moves first: stash injured players, activate healthy ones when there is room). Maximize games started, then
+  value; ties are broken by this week's swing categories. Players whose games have started are locked. Re-run near
+  tip-off when news changes (late scratches). Give the owner the steps with tip-off times in local time.
+- An activation blocked by a full roster needs a drop: that is a proposal (section 4).
+- When the owner says the lineup is set, call `lineup_steps(day, confirm=true)` (demo league: this updates the demo
+  roster).
+- Journal entries, data refresh, reports, and emails are yours to do.
 
-## 4. Approval-gated moves (the proposal flow)
-
-For add/drop, waiver claims, trades, and strategy changes:
+## 4. Proposals (add/drop, waiver claims, trades, strategy changes)
 
 1. **Analyze** with tools (`evaluate_add_drop`, `simulate_matchup`, `player_card`, `league_profile`, ...).
 2. **Create** with `create_proposal`: clear title (e.g. "Add Jalen Smith, drop Bez Mbeng"), summary, payload with
@@ -91,10 +91,11 @@ For add/drop, waiver claims, trades, and strategy changes:
    `Approve P-12`, `Reject P-12`, `Discuss P-12`. Then call `record_owner_decision` with the owner's **exact** reply as
    `owner_quote`. If you cannot ask (unattended run), email the approval request (`send_email`, kind `approval`) and
    end — the owner approves later in an interactive session or with `uv run fbm proposals approve P-12`.
-5. **Execute** with `execute_proposal` (it re-validates against the current league). If it returns
-   `awaiting_manual`, give the owner the manual steps; when they confirm, call `mark_manual_done`.
+5. **Steps:** call `proposal_steps(ref)`. It re-validates against the current league (`failed` if no longer valid)
+   and returns the exact manual steps (status `awaiting_owner`). Give them to the owner; when they say it's done,
+   call `confirm_done(ref, note)` (status `done`; demo league: this applies the change). The next snapshot
+   verifies it. Strategy proposals are recorded and marked `done` directly by `proposal_steps`.
 6. Expired or rejected proposals are final. Learn from rejections: journal the owner's reason.
-
 ## 5. Run types (skills)
 
 Scheduled automations (`fbm automation`) and the owner invoke these skills: `daily-gm`, `lineup-guard`, `weekly-retro-preview`,
@@ -107,7 +108,7 @@ skills: `lineup`, `matchup`, `waivers`, `stream-plan`, `trade-lab`, `player`, `s
 - Lead with the answer/recommendation, then the 2–4 numbers that justify it, then risks/alternatives.
 - When the owner proposes an idea, test it with tools, steelman it, then give a clear verdict. If they still want
   it after hearing the risks, it's their team — create the proposal and run it through review.
-- When the owner asks to change rules, autonomy, schedules, or code: confirm the exact change, make it (code changes
+- When the owner asks to change rules, proposal expiry, schedules, or code: confirm the exact change, make it (code changes
   with tests), journal it (memory is saved locally).
 - Keep messages scannable: short paragraphs, tables for category odds, no filler.
 
@@ -115,7 +116,7 @@ skills: `lineup`, `matchup`, `waivers`, `stream-plan`, `trade-lab`, `player`, `s
 
 Daily report (email kind `report`) — concise markdown:
 - Headline: matchup status (expected cats, P(win week), swing cats) and the one thing that matters most today.
-- Lineup actions taken (or manual steps), injuries affecting the roster.
+- Recommended lineup steps, injuries affecting the roster.
 - Proposals awaiting approval with refs, expiry (local time), reviewer verdict, and how to approve.
 - Watchlist (2–5 players) with one-line reasons.
 Approval requests use kind `approval` (bypasses quiet hours). Never put secrets in email.

@@ -25,7 +25,7 @@ from fbm.config import LEAGUE_CONFIG_PATH, RAW_DIR, load_league_config
 from fbm.constants import C
 from fbm.data import sync
 from fbm.data.espn import EspnClient
-from fbm.gm import executors, memory, outcomes
+from fbm.gm import memory, outcomes, steps
 from fbm.gm import proposals as props
 from fbm.league.model import IL_SLOTS, FantasyTeam, LeagueState, eligibility_from_espn_position
 from fbm.settings import load_settings
@@ -245,9 +245,7 @@ def league_overview() -> dict[str, Any]:
     yahoo = {
         "credentials": bool(credentials.get(credentials.YAHOO_REFRESH_TOKEN)),
         "league_configured": LEAGUE_CONFIG_PATH.exists(),
-        "api_writes": "enabled ([yahoo] api_writes = true; lineups only, after a passing write check)"
-        if load_settings().yahoo_api_writes
-        else "out of scope: roster changes are manual steps for the owner",
+        "roster_changes": "you make them in Yahoo: FBM never changes your league (insights, lineup tips, proposals)",
         "status": "pending Yahoo API approval" if load_settings().league_source == "demo" else "live (read-only)",
     }
     if LEAGUE_CONFIG_PATH.exists():
@@ -566,7 +564,7 @@ def _swing_weights(
 def optimize_lineup(day: str | None = None) -> dict[str, Any]:
     league = active_league()
     target = parse_date(day) if day else nba_today()
-    plan = _lineup_plan(league, target, apply_il=load_settings().auto_il_moves)
+    plan = _lineup_plan(league, target, apply_il=True)
     res, team = plan["res"], league.my_team
     names = {p.player_id: p.name for p in team.players}
     original = {p.player_id: p.selected for p in team.players}
@@ -734,7 +732,7 @@ def _opponent_streaming(
     available = [pid for pid in _available_ids(league, c) if games(pid) > 0]
     fa = sorted(available, key=lambda pid: -(neutral.get(pid, -9) + 3.0) * games(pid))[: int(C("stream.candidates"))]
     pool = {p.player_id: p for p in opp.players}
-    pool.update({pid: executors.roster_player_from_values(pid, c.values, elig) for pid in fa})
+    pool.update({pid: steps.roster_player_from_values(pid, c.values, elig) for pid in fa})
     models = c.models([*league.my_team.player_ids(), *opp.player_ids(), *fa], conn)
     bank = DrawBank(models, n_sims=2000, seed=29)
     my_totals = bank.total(_remaining_games(league.my_team, my_plans, skip), banked.get(league.my_team_key, {}))
@@ -979,7 +977,7 @@ def evaluate_add_drop(add: str, drop: str | None = None, opponent: str | None = 
     swapped = deepcopy(league.my_team)
     if drop_id:
         swapped.players = [p for p in swapped.players if p.player_id != drop_id]
-    swapped.players.append(executors.roster_player_from_values(add_id, c.values, _eligibility()))
+    swapped.players.append(steps.roster_player_from_values(add_id, c.values, _eligibility()))
     after, *_ = _matchup(league, swapped, opp, None, n)
     start, ws, we = _week_window()
     return {
@@ -1005,31 +1003,40 @@ def evaluate_add_drop(add: str, drop: str | None = None, opponent: str | None = 
     }
 
 
-# ------------------------------------------------------------------ actions
+# ------------------------------------------------------------------ recommendations -> owner steps
 
 
-def apply_lineup(day: str | None = None) -> dict[str, Any]:
-    settings = load_settings()
-    if not settings.auto_lineups:
-        raise GMError("Auto lineups are disabled in config/settings.toml.")
+def lineup_steps(day: str | None = None, confirm: bool = False) -> dict[str, Any]:
+    """Today's recommended lineup + IL moves as exact steps for the owner. FBM changes nothing.
+    confirm=True records that the owner set it (demo league: updates the demo roster to match)."""
     league = active_league()
     target = parse_date(day) if day else nba_today()
-    plan = _lineup_plan(league, target, apply_il=settings.auto_il_moves)
-    result = executors.apply_lineup(league, plan["res"].assignments, target)
+    plan = _lineup_plan(league, target, apply_il=True)
+    assignments = plan["res"].assignments
+    out = steps.lineup_steps(league, assignments, target)
     blocked = [f"{m.name}: {m.reason}" for m in plan["moves"] if m.blocked]
     names = {p.player_id: p.name for p in league.my_team.players}
-    lines = "\n".join(f"- {x}" for x in result.detail.get("changes", [])) or "- no changes"
-    extra = "".join(f"\n- BLOCKED: {b}" for b in blocked)
-    if result.detail.get("manual_steps"):
-        extra += "\n\nManual steps for the owner:\n" + "\n".join(result.detail["manual_steps"])
-    memory.journal_append("execution", f"Lineup {target}", f"Status: {result.status}\n\n{lines}{extra}")
+    lines = "\n".join(f"- {x}" for x in out["changes"]) or "- no changes"
+    extra = "".join(f"\n- NEEDS A ROSTER MOVE (proposal): {b}" for b in blocked)
+    if confirm:
+        simulated = steps.simulate_lineup_in_demo(league, assignments)
+        note = "demo roster updated to match" if simulated else "verified on the next Yahoo snapshot"
+        memory.journal_append("owner", f"Lineup {target} set by owner", f"{lines}\n\n({note})")
+        status = "owner_confirmed"
+    else:
+        body = f"{lines}{extra}"
+        if out["manual_steps"]:
+            body += "\n\nSteps for the owner:\n" + "\n".join(out["manual_steps"])
+        memory.journal_append("recommendation", f"Lineup {target}", body)
+        status = "recommended" if out["changes"] else "already_set"
     return {
         "date_et": target.isoformat(),
-        "status": result.status,
-        **result.detail,
-        "il_moves_applied": [f"{m.name}: {m.from_slot} -> {m.to_slot}" for m in plan["applied"]],
-        "il_moves_blocked": blocked,
+        "status": status,
+        **out,
+        "il_moves_recommended": [f"{m.name}: {m.from_slot} -> {m.to_slot}" for m in plan["applied"]],
+        "il_moves_needing_a_roster_move": blocked,
         "locked_game_started": sorted(names[pid] for pid in plan["locked"]),
+        "note": "FBM never changes your league: set this lineup in Yahoo yourself.",
     }
 
 
@@ -1074,11 +1081,11 @@ def context_pack() -> dict[str, Any]:
     pack["manager_notes"] = memory.manager_notes()
     pack["open_proposals_detail"] = [p.as_dict() for p in props.list_proposals(conn, "open")]
     settings = load_settings()
-    pack["autonomy"] = {
-        "auto_lineups": settings.auto_lineups,
-        "auto_il_moves": settings.auto_il_moves,
-        "approval_required": list(settings.approval_required),
-        "default_expiry_hours": settings.default_expiry_hours,
+    pack["decision_policy"] = {
+        "league_changes": "none: FBM gives insights, lineup recommendations and proposals; the owner makes every move",
+        "proposal_flow": "create_proposal -> record_review -> record_owner_decision -> proposal_steps -> owner acts "
+        "in Yahoo -> confirm_done",
+        "proposal_expiry_hours": settings.default_expiry_hours,
         "gm_model": settings.gm_model,
         "reviewer_model": settings.reviewer_model,
     }
@@ -1116,19 +1123,27 @@ def record_owner_decision(ref: str, approved: bool, owner_quote: str) -> dict[st
     return p.as_dict()
 
 
-def execute_proposal(ref: str) -> dict[str, Any]:
+def proposal_steps(ref: str) -> dict[str, Any]:
+    """Approved proposal -> re-validate against the current league, then exact steps for the OWNER to perform.
+    FBM never makes the move. Strategy proposals only update FBM memory and are recorded directly."""
     conn = _conn()
-    p = props.ready_to_execute(conn, ref)
-    result = executors.execute(p, active_league(), ctx().values, _eligibility())
-    p = props.record_execution(conn, p.id, result.status, result.detail)
-    memory.journal_append("execution", f"{p.ref} {result.status}", json.dumps(result.detail, indent=1))
-    _CTX_CACHE.clear()
+    p = props.ready_for_steps(conn, ref)
+    result = steps.owner_steps(p, active_league())
+    p = props.record_outcome(conn, p.id, result.status, result.detail)
+    memory.journal_append("proposal", f"{p.ref} {result.status}", json.dumps(result.detail, indent=1))
     return p.as_dict()
 
 
-def mark_manual_done(ref: str, note: str) -> dict[str, Any]:
-    p = props.mark_manual_done(_conn(), ref, note)
-    memory.journal_append("execution", f"{p.ref} confirmed done by owner", note)
+def confirm_done(ref: str, note: str) -> dict[str, Any]:
+    """The owner says they made the move in Yahoo (demo league: the demo roster is updated to match)."""
+    conn = _conn()
+    p = props.get(conn, ref)
+    extra = {}
+    if p.status == "awaiting_owner":
+        extra = steps.simulate_in_demo(p, active_league(), ctx().values, _eligibility())
+    p = props.confirm_done(conn, ref, note, extra)
+    memory.journal_append("owner", f"{p.ref} done by owner", note)
+    _CTX_CACHE.clear()
     return p.as_dict()
 
 
@@ -1166,7 +1181,7 @@ def adds_used_this_week(today: date | None = None) -> int:
     start_utc = datetime.combine(ws, datetime.min.time(), ET).astimezone(UTC).isoformat(timespec="seconds")
     return sum(
         1
-        for p in props.list_proposals(_conn(), "executed", 500)
+        for p in props.list_proposals(_conn(), "done", 500)
         if p.kind in ("add_drop", "waiver_claim") and (p.executed_at or "") >= start_utc
     )
 
@@ -1217,7 +1232,7 @@ def streaming_plan(
     fa = list(dict.fromkeys(by_week + by_value))
 
     pool = {p.player_id: p for p in me.players}
-    pool.update({pid: executors.roster_player_from_values(pid, c.values, elig) for pid in fa})
+    pool.update({pid: steps.roster_player_from_values(pid, c.values, elig) for pid in fa})
     models = c.models([*me.player_ids(), *opp.player_ids(), *fa], conn)
     bank = DrawBank(models, n_sims=n, seed=23)
     _, opp_plans = plan_team_week(opp, days, playing, league.starting_slots(), c.value_map())

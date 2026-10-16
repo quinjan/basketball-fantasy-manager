@@ -5,7 +5,6 @@ import pytest
 
 from fbm.timeutil import nba_today
 from fbm.yahoo.auth import YahooAuthError, authorize_url, extract_code
-from fbm.yahoo.writes import roster_positions_xml
 
 
 def test_extract_code_from_url():
@@ -25,15 +24,7 @@ def test_authorize_url_contains_redirect():
     url = authorize_url("cid")
     assert "client_id=cid" in url and "redirect_uri=https%3A%2F%2Flocalhost%3A8080" in url
     assert "scope=" not in url
-    assert "scope=fspt-w" in authorize_url("cid", scope="fspt-w")
-
-
-def test_roster_positions_xml_escapes_and_formats():
-    xml = roster_positions_xml(date(2026, 10, 21), {"466.p.1": "BN", "466.p.2": "PG"})
-    assert "<coverage_type>date</coverage_type><date>2026-10-21</date>" in xml
-    assert "<player><player_key>466.p.1</player_key><position>BN</position></player>" in xml
-    with pytest.raises(ValueError):
-        roster_positions_xml(date(2026, 10, 21), {})
+    assert "scope=fspt-r" in authorize_url("cid", scope="fspt-r")
 
 
 def test_nba_today_uses_eastern_date():

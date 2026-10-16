@@ -63,7 +63,7 @@ def test_proposals():
     rows = [
         {
             "ref": "P-1",
-            "status": "awaiting_manual",
+            "status": "awaiting_owner",
             "created_at": _iso(NOW - timedelta(hours=30)),
             "expires_at": future,
             "decided_at": None,

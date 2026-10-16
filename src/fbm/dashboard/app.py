@@ -136,7 +136,7 @@ def page_overview() -> None:
             use_container_width=True,
         )
         y = ov["yahoo"]
-        st.caption(f"Yahoo: {y['status']} · roster writes: {y.get('api_writes', 'manual steps')}")
+        st.caption(f"Yahoo: {y['status']} · roster changes: {y.get('roster_changes', 'made by you in Yahoo')}")
 
 
 def page_matchup() -> None:
@@ -537,19 +537,21 @@ def page_proposals() -> None:
             if p["status"] == "pending_approval":
                 note = st.text_input("Your note (recorded verbatim)", key=f"note_{p['id']}")
                 a, b = st.columns(2)
-                if a.button("Approve & execute", key=f"ap_{p['id']}", type="primary"):
+                if a.button("Approve: show me the steps", key=f"ap_{p['id']}", type="primary"):
                     call(svc.record_owner_decision, p["ref"], True, note or "Approved via dashboard")
-                    res = call(svc.execute_proposal, p["ref"])
+                    res = call(svc.proposal_steps, p["ref"])
                     st.success(f"{res['ref']} → {res['status']}")
-                    st.json(res.get("execution") or {})
+                    for step in (res.get("execution") or {}).get("manual_steps", []):
+                        st.write(step)
                 if b.button("Reject", key=f"rj_{p['id']}"):
                     call(svc.record_owner_decision, p["ref"], False, note or "Rejected via dashboard")
                     st.warning(f"{p['ref']} rejected")
-            if p["status"] == "awaiting_manual":
+            if p["status"] == "awaiting_owner":
+                st.caption("FBM doesn't change your league. Make this move in Yahoo, then confirm:")
                 for step in (p.get("execution") or {}).get("manual_steps", []):
                     st.write(step)
                 if st.button("I did it in Yahoo", key=f"md_{p['id']}"):
-                    call(svc.mark_manual_done, p["ref"], "Confirmed via dashboard")
+                    call(svc.confirm_done, p["ref"], "Confirmed via dashboard")
                     st.success("Marked done")
             with st.popover("Details"):
                 st.json(call(svc.get_proposal, p["ref"]))

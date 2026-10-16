@@ -16,4 +16,4 @@ Run as the `gm` agent. Nothing is sent to another manager without the owner's ex
    forced drops, `playoff_outlook` weight, verdict.
 5. Counter-offer: iterate `evaluate_trade` on variants; keep it defensible for the partner.
 6. `create_proposal` kind `trade` (payload ids + names, short respectful `note`) → `reviewer` → owner decision →
-   `execute_proposal`. In the Yahoo league sending/accepting is a manual step for the owner (`mark_manual_done`).
+   `proposal_steps` (exact steps). The owner sends/accepts it in Yahoo, then `confirm_done`.

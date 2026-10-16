@@ -274,7 +274,7 @@ def grade_decisions(
     names = names or {}
     cutoff = (datetime.now(UTC) - timedelta(days=lookback_days)).isoformat(timespec="seconds")
     out = []
-    for p in props.list_proposals(conn, "executed", 500):
+    for p in props.list_proposals(conn, "done", 500):
         if p.kind not in GRADED_KINDS or not p.executed_at or p.executed_at < cutoff:
             continue
         start = _et_date(p.executed_at)

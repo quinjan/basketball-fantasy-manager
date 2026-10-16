@@ -16,7 +16,7 @@ description: Ad-hoc consultation with the owner — discuss an idea, a player, a
    - Strategy → `season-strategy` flow (proposal).
    - Notes about other managers → `memory/managers/<team>.md`.
    - Playbook rules ("never drop X", "don't stream on Sundays") → `memory/playbook.md` under "Owner rules".
-   - Autonomy/schedules/email preferences → `config/settings.toml` (and `fbm automation` schedules).
+   - Proposal expiry/schedules/email preferences → `config/settings.toml` (and `fbm automation` schedules).
    - Engine changes → edit code with tests (`uv run pytest -q`, `uv run ruff check src tests`), then commit.
    - Tuning a number (thresholds, penalties, assumed opponent adds, play probabilities) → `config/constants.toml`
      (see the `constants` tool for keys, defaults, and sources); journal the before/after and the evidence.

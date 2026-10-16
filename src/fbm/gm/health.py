@@ -157,7 +157,7 @@ def check_proposals(rows: list[dict[str, Any]], now: datetime) -> list[dict[str,
     manual = [
         r["ref"]
         for r in rows
-        if r["status"] == "awaiting_manual" and _age_h(r["executed_at"] or r["created_at"], now) > manual_h
+        if r["status"] == "awaiting_owner" and _age_h(r["executed_at"] or r["created_at"], now) > manual_h
     ]
     approved = [
         r["ref"]
@@ -167,16 +167,16 @@ def check_proposals(rows: list[dict[str, Any]], now: datetime) -> list[dict[str,
     expired = [r["ref"] for r in rows if r["status"] in OPEN and _parse(r["expires_at"]) <= now]
     return [
         result(
-            "Proposals awaiting manual",
+            "Proposals awaiting the owner",
             WARN if manual else OK,
             f"older than {manual_h}h: {', '.join(manual)}" if manual else "none stale",
-            "Owner: do the move in Yahoo, then `mark_manual_done`." if manual else "",
+            "Owner: make the move in Yahoo, then confirm it (`confirm_done`)." if manual else "",
         ),
         result(
-            "Proposals approved, not executed",
+            "Proposals approved, no steps yet",
             WARN if approved else OK,
             f"older than {approved_h}h: {', '.join(approved)}" if approved else "none",
-            "Run `execute_proposal` (re-validates first)." if approved else "",
+            "Run `proposal_steps` (re-validates, then gives the owner exact steps)." if approved else "",
         ),
         result(
             "Proposals past expiry",
@@ -325,7 +325,7 @@ def gather(
             }
             for r in conn.execute(
                 "SELECT * FROM proposals WHERE status IN "
-                "('pending_review','pending_approval','approved','awaiting_manual')"
+                "('pending_review','pending_approval','approved','awaiting_owner')"
             )
         ]
         since = (now - timedelta(hours=C("health.outbox_lookback_h"))).isoformat()

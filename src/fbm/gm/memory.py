@@ -23,7 +23,7 @@ from fbm.timeutil import ET
 JOURNAL_DIR = MEMORY_DIR / "journal"
 MANAGERS_DIR = MEMORY_DIR / "managers"
 STRATEGY_JSON = MEMORY_DIR / "strategy.json"
-JOURNAL_KINDS = ("decision", "observation", "proposal", "execution", "review", "retro", "owner", "system")
+JOURNAL_KINDS = ("decision", "observation", "recommendation", "proposal", "review", "retro", "owner", "system")
 
 
 TEMPLATE_DIR = PROJECT_ROOT / "templates" / "memory"
