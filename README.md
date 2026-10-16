@@ -34,6 +34,14 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 | `fbm lineup --demo [--date]` | Optimal daily lineup + IL moves |
 | `fbm sim --demo [--opponent KEY]` | Monte Carlo rest-of-week category odds |
 | `fbm profile --demo` | League-wide category strength (strategy/punt basis) |
+| `fbm stream [--opponent] [--adds] [--protect]` | Streaming plan: best add/drop sequence for the week |
+| `fbm trade eval --partner X --give A,B --get C` | Evaluate a trade for both sides (season-level) |
+| `fbm trade find [--partner X]` | Find trades that help us and are defensible for them |
+| `fbm learn grade` / `calibration` / `retro` | Learning loop: grade executed moves, simulator calibration |
+| `fbm draft board/start/pick/undo/recommend/mock` | Draft assistant (ESPN ADP, tiers, live picks, mock drafts) |
+| `fbm dashboard [--port 8501]` | Local Streamlit dashboard (11 pages) |
+| `fbm proposals list/show/approve/reject` | Owner-side proposal decisions |
+| `fbm sync-memory -m "..."` | Commit + push memory/reports/config |
 
 ## Using the GM (Copilot)
 
@@ -42,8 +50,8 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 - **Agents** (`.github/agents/`): `gm` (decides), `reviewer` (different model family; independently re-checks every
   proposal and records AGREE/DISAGREE/SPLIT), `scout` (news/injury digging).
 - **Skills** (`.github/skills/`): `daily-gm`, `lineup-guard`, `weekly-retro-preview`, `trade-scan`,
-  `season-strategy`, `approvals`, `consult`, `health`.
-- **MCP server** (`.github/mcp.json` → `fbm-mcp`): 24 tools over the engine. The folder must be trusted by Copilot.
+  `season-strategy`, `approvals`, `consult`, `health`, `draft-assist`.
+- **MCP server** (`.github/mcp.json` → `fbm-mcp`): 36 tools over the engine. The folder must be trusted by Copilot.
 - **Approvals:** in chat with the GM, or `uv run fbm proposals list|show|approve|reject P-12`.
 - **Automations** (Copilot app → Automations, all disabled until Yahoo approval): Daily GM 15:00, Lineup Guard hourly
   23:00–12:00, Weekly Retro Mon 15:30, Trade Scan Wed/Sat 16:00, Health Sun 10:00 (UTC+8).
@@ -52,8 +60,8 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 ## Data sources
 
 - **Yahoo Fantasy API** (league data) — gated since mid-2026; access application pending. Read-only by default.
-- **ESPN public JSON** (NBA schedule, box scores, season averages, injuries, news). NBA.com CDN and
-  stats.nba.com are blocked on the owner's network.
+- **ESPN public JSON** (NBA schedule, box scores, season averages, injuries, news) and **ESPN Fantasy** (ADP,
+  rankings, positional eligibility). NBA.com CDN and stats.nba.com are blocked on the owner's network.
 
 ## Analytics
 
@@ -62,6 +70,14 @@ auto-handle lineups, and ask for approval before add/drops, waiver claims, and t
 - **Projections:** current-season per-game shrunk toward last season by games played.
 - **Lineups:** max games started, then value; prefers leaving players in place (fewer manual changes).
 - **Simulation:** resamples real game lines (keeps stat correlations) × injury play-probability.
+- **Streaming planner:** greedy add/drop search over effective ET days within the weekly add limit; each candidate
+  re-plans daily lineups and re-simulates with common random numbers; rest-of-season cost penalized.
+- **Trades:** season-level (typical week vs every team) expected categories for both sides, rosters rebalanced
+  (forced drops / free-agent fills); finder screens by need-weighted G-scores, confirms by simulation, and filters
+  offers that cost the partner > 1.0 ranking value.
+- **Learning loop:** executed moves graded by realized production (team-week SD units); matchup predictions
+  graded by Brier score with reliability buckets.
+- **Draft:** punt-aware G-score board with tiers vs ESPN ADP; build-aware live recommendations; mock drafts.
 
 ## Layout
 
