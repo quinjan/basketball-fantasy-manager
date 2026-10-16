@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 import webbrowser
 from datetime import date
 
@@ -58,9 +60,51 @@ def _run(fn, *args, **kwargs):
         _fail(f"{err}{hint}")
 
 
+def _printable(value: str) -> str:
+    return "".join(ch for ch in value if ch.isprintable()).strip()
+
+
+def _clipboard(action: str) -> str:
+    command = "Get-Clipboard -Raw" if action == "read" else "Set-Clipboard -Value ' '"
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=15
+    )
+    return result.stdout or ""
+
+
+def _prompt_secret() -> str:
+    console.print(
+        "[bold]Client Secret:[/] copy it from the Yahoo app page, then just press [bold]Enter[/] here and "
+        "FBM will read it from your clipboard (and clear the clipboard). You can also type it."
+    )
+    typed = _printable(typer.prompt("Client Secret", hide_input=True, default="", show_default=False))
+    secret = typed or _printable(_clipboard("read"))
+    if not typed and secret:
+        _clipboard("clear")
+    if not secret:
+        _fail("No Client Secret received.")
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", secret):
+        console.print(
+            f"[yellow]Warning:[/] secret is {len(secret)} chars and not 40 hex chars, which Yahoo secrets "
+            "usually are. Double-check you copied the Client Secret, not the Client ID."
+        )
+        if not typer.confirm("Use it anyway?", default=False):
+            raise typer.Exit(code=1)
+    return secret
+
+
 @app.command()
 def auth(
     reset: bool = typer.Option(False, "--reset", help="Re-enter the Yahoo Client ID and Secret."),
+    scope: str = typer.Option(
+        None, "--scope", help="Explicit OAuth scope, e.g. 'fspt-w' to request Fantasy Sports read/write."
+    ),
+    code: str = typer.Option(
+        None,
+        "--code",
+        help="Redirected URL or code from a consent you already completed (skips the browser).",
+    ),
+    league_key: str = typer.Option(None, "--league-key", help="League to manage if you have several."),
 ) -> None:
     """Connect to Yahoo (one-time browser consent), then pick your league."""
     client_id = credentials.get(credentials.YAHOO_CLIENT_ID)
@@ -69,29 +113,36 @@ def auth(
             "Enter the credentials from your Yahoo app page. They are stored in Windows Credential "
             "Manager, never in the repo."
         )
-        client_id = typer.prompt("Yahoo Client ID (Consumer Key)").strip()
-        client_secret = typer.prompt("Yahoo Client Secret (Consumer Secret)", hide_input=True).strip()
+        client_id = _printable(typer.prompt("Yahoo Client ID (Consumer Key)"))
+        if not client_id.startswith("dj0y"):
+            console.print("[yellow]Warning:[/] Yahoo Client IDs usually start with 'dj0y'.")
+        client_secret = _prompt_secret()
         credentials.put(credentials.YAHOO_CLIENT_ID, client_id)
         credentials.put(credentials.YAHOO_CLIENT_SECRET, client_secret)
 
-    url = authorize_url(client_id)
-    console.print("\n[bold]1.[/] A browser window will open. Sign in and click [bold]Agree/Allow[/].")
-    console.print(
-        f"[bold]2.[/] You'll land on a page that fails to load ({REDIRECT_URI}/?code=...). That's expected."
-    )
-    console.print("[bold]3.[/] Copy the [bold]full URL[/] from the address bar and paste it below.\n")
-    console.print(f"If no browser opens, visit:\n{url}\n")
-    webbrowser.open(url)
-    pasted = typer.prompt("Paste the redirected URL (or just the code)")
+    if code:
+        pasted = code
+    else:
+        url = authorize_url(client_id, scope=scope)
+        console.print("\n[bold]1.[/] A browser window will open. Sign in and click [bold]Agree/Allow[/].")
+        console.print(
+            f"[bold]2.[/] You'll land on a page that fails to load ({REDIRECT_URI}/?code=...). "
+            "That's expected."
+        )
+        console.print("[bold]3.[/] Copy the [bold]full URL[/] from the address bar and paste it below.\n")
+        console.print(f"If no browser opens, visit:\n{url}\n")
+        webbrowser.open(url)
+        pasted = typer.prompt("Paste the redirected URL (or just the code)")
 
     def _exchange() -> None:
-        code = extract_code(pasted)
-        payload = exchange_code(client_id, credentials.require(credentials.YAHOO_CLIENT_SECRET), code)
+        payload = exchange_code(
+            client_id, credentials.require(credentials.YAHOO_CLIENT_SECRET), extract_code(pasted)
+        )
         store_token_response(payload)
 
     _run(_exchange)
     console.print("[green]Yahoo authorized.[/] Refresh token stored in Windows Credential Manager.\n")
-    _run(_select_league, None)
+    _run(_select_league, league_key)
 
 
 def _select_league(league_key: str | None) -> LeagueConfig:

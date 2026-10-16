@@ -24,6 +24,8 @@ def test_extract_code_rejects_garbage():
 def test_authorize_url_contains_redirect():
     url = authorize_url("cid")
     assert "client_id=cid" in url and "redirect_uri=https%3A%2F%2Flocalhost%3A8080" in url
+    assert "scope=" not in url
+    assert "scope=fspt-w" in authorize_url("cid", scope="fspt-w")
 
 
 def test_roster_positions_xml_escapes_and_formats():

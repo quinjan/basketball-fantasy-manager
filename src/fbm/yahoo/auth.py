@@ -21,16 +21,16 @@ class YahooAuthError(RuntimeError):
     pass
 
 
-def authorize_url(client_id: str, redirect_uri: str = REDIRECT_URI) -> str:
-    query = urlencode(
-        {
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "response_type": "code",
-            "language": "en-us",
-        }
-    )
-    return f"{AUTH_URL}?{query}"
+def authorize_url(client_id: str, redirect_uri: str = REDIRECT_URI, scope: str | None = None) -> str:
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "language": "en-us",
+    }
+    if scope:
+        params["scope"] = scope
+    return f"{AUTH_URL}?{urlencode(params)}"
 
 
 def extract_code(pasted: str) -> str:
