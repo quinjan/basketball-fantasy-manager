@@ -12,7 +12,7 @@ from typing import Any
 from fbm.gm import memory
 from fbm.gm.proposals import Proposal
 from fbm.league.demo import default_waiver_priority, roster_player, rotate_waiver_priority, save_league
-from fbm.league.model import LeagueState, RosterPlayer
+from fbm.league.model import IL_SLOTS, LeagueState, RosterPlayer
 
 
 @dataclass
@@ -39,7 +39,8 @@ def revalidate(p: Proposal, league: LeagueState) -> list[str]:
             problems.append(f"{pay.get('add_name', add)} is no longer available (rostered by {owners[add]})")
         if drop and owners.get(drop) != mine:
             problems.append(f"{pay.get('drop_name', drop)} is not on your roster")
-        if not drop and len(league.my_team.players) >= league.roster_size():
+        active = [x for x in league.my_team.players if x.selected not in IL_SLOTS]
+        if not drop and len(active) >= league.roster_size():
             problems.append("roster is full: a drop is required")
     elif p.kind == "trade":
         partner = pay.get("partner")

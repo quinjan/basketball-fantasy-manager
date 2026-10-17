@@ -95,6 +95,16 @@ def test_steps_never_change_the_league_until_owner_confirms(conn, tmp_path, monk
     assert len(steps.revalidate(p, league)) == 2  # x rostered, a gone
 
 
+def test_no_drop_claim_counts_only_non_il_players(conn, tmp_path, monkeypatch):
+    league = _league(tmp_path, monkeypatch)
+    league.slots = (SlotSpec("PG", 1, True), SlotSpec("BN", 1, False), SlotSpec("IL", 1, False))
+    league.my_team.players.append(RosterPlayer("c", "C Hurt", "BOS", ("PG", "UTIL"), "BN"))
+    p = _proposal(conn, kind="waiver_claim", payload={"add": "x", "add_name": "X Free", "drop": None})
+    assert steps.revalidate(p, league) == ["roster is full: a drop is required"]
+    league.my_team.players[-1].selected = "IL"  # owner stashes the injured player on IL
+    assert steps.revalidate(p, league) == []
+
+
 def test_yahoo_source_returns_steps_and_never_simulates(conn, tmp_path, monkeypatch):
     league = _league(tmp_path, monkeypatch)
     league.source = "yahoo"
