@@ -130,6 +130,22 @@ def test_owner_confirmation_lifecycle(conn):
         props.record_outcome(conn, p.ref, "executed", {})
 
 
+def test_owner_can_reject_awaiting_owner_but_not_reapprove(conn):
+    p = _proposal(conn)
+    props.record_review(conn, p.ref, "AGREE", "ok", "gpt-5.6-sol")
+    props.record_owner_decision(conn, p.ref, True, "yes")
+    props.record_outcome(conn, p.ref, "awaiting_owner", {"manual_steps": ["x"]})
+    with pytest.raises(props.ProposalError, match="only be rejected"):
+        props.record_owner_decision(conn, p.ref, True, "yes again")
+    p = props.record_owner_decision(conn, p.ref, False, "changed my mind")
+    assert p.status == "rejected" and p.owner_quote == "changed my mind"
+    assert p.ref not in [x.ref for x in props.list_proposals(conn, "open")]
+    with pytest.raises(props.ProposalError):
+        props.confirm_done(conn, p.ref, "did it")
+    with pytest.raises(props.ProposalError):
+        props.record_owner_decision(conn, p.ref, False, "again")
+
+
 def test_strategy_proposal_writes_strategy(conn, tmp_path, monkeypatch):
     monkeypatch.setattr(memory, "STRATEGY_JSON", tmp_path / "strategy.json")
     league = _league(tmp_path, monkeypatch)

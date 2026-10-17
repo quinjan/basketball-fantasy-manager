@@ -3,6 +3,7 @@
 pending_review --record_review--> pending_approval --owner decision--> approved | rejected
 approved --proposal_steps (re-validated)--> awaiting_owner (steps handed to the owner) | failed
 awaiting_owner --owner confirms (confirm_done)--> done
+awaiting_owner --owner changes their mind before making the move (owner decision, reject)--> rejected
 strategy proposals change only FBM's memory: approved --proposal_steps--> done
 any open state past expires_at --> expired   (no steps after expiry)
 (The `executed_at` column records when the proposal reached its outcome.)
@@ -174,10 +175,14 @@ def record_review(
 
 
 def record_owner_decision(conn: sqlite3.Connection, ref: str | int, approved: bool, owner_quote: str) -> Proposal:
-    """Record the OWNER's decision. `owner_quote` must be the owner's own words (audit trail)."""
+    """Record the OWNER's decision. `owner_quote` must be the owner's own words (audit trail).
+
+    An approved proposal still `awaiting_owner` (steps handed over, move not made) can only be rejected."""
     expire_stale(conn)
     p = get(conn, ref)
-    if p.status != "pending_approval":
+    if p.status == "awaiting_owner" and approved:
+        raise ProposalError(f"{p.ref} is already approved and awaiting_owner; it can only be rejected now.")
+    if p.status not in ("pending_approval", "awaiting_owner"):
         raise ProposalError(f"{p.ref} is {p.status}; only reviewed proposals (pending_approval) can be decided.")
     if not owner_quote.strip():
         raise ProposalError("owner_quote is required: the owner's exact reply.")
