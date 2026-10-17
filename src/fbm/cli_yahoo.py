@@ -42,6 +42,11 @@ def snapshot() -> None:
         f"[bold]{r['league']}[/] week {r['week']} ({start} → {end}) · opponent {r['opponent'] or '-'} · "
         f"{r['teams']} teams · fetched {r['fetched_at']}"
     )
+    tx = r.get("transactions") or {}
+    if "error" in tx:
+        console.print(f"[yellow]Transaction history not synced: {tx['error']}[/]")
+    elif tx:
+        console.print(f"Transactions: {tx['new']} new ({tx['total_stored']} stored).")
     if r["unmatched_players"]:
         console.print(f"[yellow]{len(r['unmatched_players'])} unmatched players[/] — {r['how_to_fix_unmatched']}")
         for p in r["unmatched_players"]:

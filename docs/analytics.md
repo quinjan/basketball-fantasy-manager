@@ -110,7 +110,8 @@ worst schedules) and each player's playoff games and value above replacement.
 ## Opponent intel
 
 Built from league transaction history: each manager's adds per week, waiver claims, streaming habits, trades, and
-apparent category build, plus the best trade partners by complementary needs.
+apparent category build, plus the best trade partners by complementary needs. History syncs incrementally from Yahoo
+on every snapshot (and `refresh_data`); a manager's own claim rate replaces the default only once there is enough of it.
 
 ## Learning loop
 

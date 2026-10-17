@@ -164,8 +164,9 @@ def constants() -> dict:
 
 @tool()
 def snapshot() -> dict:
-    """Force a fresh read of the live Yahoo league (rosters, scoreboard, standings, waivers, ownership). Returns week,
-    opponent, fetched_at and Yahoo players not mapped to ESPN ids (+ how to fix). Demo league: a message."""
+    """Force a fresh read of the live Yahoo league (rosters, scoreboard, standings, waivers, ownership) and sync new
+    league transactions (manager intel history). Returns week, opponent, fetched_at, the transaction sync result and
+    Yahoo players not mapped to ESPN ids (+ how to fix). Demo league: a message."""
     return svc.snapshot_tool()
 
 

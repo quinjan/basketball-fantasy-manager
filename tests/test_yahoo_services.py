@@ -194,6 +194,19 @@ def test_pending_offers_evaluates_incoming(yahoo, monkeypatch):
     assert len(r["outgoing_trades"]) == 1 and len(r["waiver_claims"]) == 1
 
 
+def test_snapshot_syncs_transaction_history(yahoo, monkeypatch):
+    monkeypatch.setattr("fbm.league.yahoo_league.refresh", lambda: (yahoo.league, []))
+    monkeypatch.setattr(svc, "sync_transactions_tool", lambda: {"new": 2, "total_stored": 2})
+    assert svc.snapshot_tool()["transactions"] == {"new": 2, "total_stored": 2}
+
+    def broken():
+        raise svc.GMError("Transaction sync failed")
+
+    monkeypatch.setattr(svc, "sync_transactions_tool", broken)
+    r = svc.snapshot_tool()  # intel history is additive: the snapshot still succeeds
+    assert r["transactions"] == {"error": "Transaction sync failed"} and r["week"] == 2
+
+
 def test_split_pending_ignores_other_teams():
     txs = parse_transactions(xmlparse.parse(PENDING_XML))
     groups = split_pending(txs, "466.l.1.t.9")

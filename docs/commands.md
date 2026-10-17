@@ -48,7 +48,7 @@ Jobs: `data-sync`, `lineup-guard`, `daily-gm`, `weekly-retro`, `trade-scan`, `he
 | `fbm league select [--league-key KEY]` | Choose which league FBM manages |
 | `fbm settings` | Fetch and summarize your league settings from Yahoo |
 | `fbm roster [--date D]` | Your roster and selected positions for an ET game day |
-| `fbm snapshot` | Re-read the Yahoo league now (rosters, scoreboard, standings, waivers, ownership) |
+| `fbm snapshot` | Re-read the Yahoo league now (rosters, scoreboard, standings, waivers, ownership) and sync new league transactions |
 | `fbm standings` | League standings |
 | `fbm scoreboard` | This week's live category totals for every matchup (yours first) |
 | `fbm transactions [--count N] [--team X]` | Recent league transactions |

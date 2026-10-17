@@ -1062,14 +1062,10 @@ def refresh_data() -> dict[str, Any]:
     if _is_yahoo():
         try:
             snap = snapshot_tool()
-            yahoo_summary = {k: snap[k] for k in ("week", "opponent", "fetched_at", "teams")}
+            yahoo_summary = {k: snap[k] for k in ("week", "opponent", "fetched_at", "teams", "transactions")}
             yahoo_summary["unmatched_players"] = len(snap["unmatched_players"])
         except GMError as err:
             yahoo_summary = {"error": str(err)}
-        try:
-            yahoo_summary["transactions"] = sync_transactions_tool()
-        except GMError as err:
-            yahoo_summary["transactions"] = {"error": str(err)}
     league = active_league()
     rostered = {p.player_id: t.name for t in league.teams for p in t.players}
     changes = [
@@ -2204,6 +2200,10 @@ def snapshot_tool() -> dict[str, Any]:
     except Exception as err:
         raise GMError(f"Yahoo snapshot failed: {type(err).__name__}: {err}") from err
     opp = league.team(league.opponent_key).name if league.opponent_key else None
+    try:
+        transactions = sync_transactions_tool()
+    except GMError as err:  # intel history is additive; never fail the snapshot over it
+        transactions = {"error": str(err)}
     return {
         "league": league.name,
         "week": league.week,
@@ -2215,6 +2215,7 @@ def snapshot_tool() -> dict[str, Any]:
         "ownership_rows": len(league.ownership),
         "unmatched_players": [{"yahoo_id": m.yahoo_id, "name": m.name, "team": m.team} for m in unmatched],
         "how_to_fix_unmatched": _OVERRIDE_HELP if unmatched else None,
+        "transactions": transactions,
     }
 
 
