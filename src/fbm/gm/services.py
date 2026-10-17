@@ -1338,7 +1338,9 @@ def _league_sim(n: int = 1500):
 
     league, c = active_league(), ctx()
     ros = _ros_frame(c)
-    fa = sorted(_available_ids(league, c), key=lambda pid: -float(ros.at[pid, "g_total"]))[:12]
+    on_waivers = set(league.on_waivers)
+    available = [pid for pid in _available_ids(league, c) if pid not in on_waivers]  # waiver players can't fill
+    fa = sorted(available, key=lambda pid: -float(ros.at[pid, "g_total"]))[:12]
     ids = [pid for t in league.teams for pid in t.player_ids()] + fa
     bank = DrawBank(c.models(ids, _conn(), horizon="season"), n_sims=n, seed=31)
     return LeagueSim(league, bank, ros), fa

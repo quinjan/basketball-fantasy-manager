@@ -467,9 +467,19 @@ _ALL = [
     Constant(
         "trade.max_their_value_loss",
         1.0,
-        "G points",
-        "Max overall ranking value a partner may lose for a suggested trade to count as realistic.",
-        "Managers judge offers largely by rankings.",
+        "G points above replacement",
+        "Max overall ranking value (above replacement level) a partner may lose for a suggested trade to count as "
+        "realistic.",
+        "Managers judge offers largely by rankings; a player they would cut anyway is worth ~0 to them.",
+        "heuristic",
+    ),
+    Constant(
+        "trade.expendable_pool",
+        3,
+        "players",
+        "Partner players considered as expendable add-ins (lowest value to their own build), so a 2-for-1 can be "
+        "offered as a roster-neutral 2-for-2.",
+        "The receiving side of a 2-for-1 must cut someone; asking for that player keeps their roster count even.",
         "heuristic",
     ),
     Constant(

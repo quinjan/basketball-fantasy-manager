@@ -3,7 +3,12 @@
 Season-level lens: each team's schedule-neutral typical week is simulated (common random numbers via DrawBank) and
 compared against every other team. A trade's value to a team = change in its average expected categories won per
 week vs the league. Rosters are kept legal: the side receiving more players drops its least valuable players; the
-side receiving fewer fills open spots with the best free agents.
+side receiving fewer fills open spots with the best free agents (true free agents only, never players on waivers).
+
+How a partner judges an offer by rankings uses value above replacement (the last rostered player in the league):
+a player they would cut anyway is worth ~0 to them, so a forced drop is never counted as a gain. The search also
+asks for a partner's expendable players (lowest value to their own build) so a 2-for-1 can be offered as a
+roster-neutral 2-for-2 that takes their likely cut off their hands.
 """
 
 from __future__ import annotations
@@ -40,6 +45,13 @@ class LeagueSim:
         self.active = {t.team_key: [p.player_id for p in t.players if p.selected not in IL_SLOTS] for t in league.teams}
         self.totals = {k: self.team_totals(ids) for k, ids in self.active.items()}
         self._base_profiles: dict[str, tuple[dict[str, float], float]] = {}
+        g = values["g_total"].astype(float) if "g_total" in values.columns else pd.Series(dtype=float)
+        pool = max(1, self.capacity * len(league.teams))
+        self.replacement = float(g.nlargest(pool).min()) if len(g) else 0.0
+
+    def above_replacement(self, pid: str) -> float:
+        """Overall value above the league's replacement level (0 for anyone a team would cut)."""
+        return max(_g(self.values, pid, "g_total") - self.replacement, 0.0) if pid in self.values.index else 0.0
 
     def team_totals(self, ids: Sequence[str]) -> np.ndarray:
         if not ids:
@@ -84,7 +96,7 @@ class TradeSide:
     cats_after: dict[str, float] = field(default_factory=dict)
     expected_before: float = 0.0
     expected_after: float = 0.0
-    value_delta: float = 0.0  # neutral G-score total (per game) in minus out, incl. drops/fills
+    value_delta: float = 0.0  # G-score value above replacement in minus out, incl. drops/fills (ranking lens)
     g_delta_by_cat: dict[str, float] = field(default_factory=dict)
 
     @property
@@ -168,11 +180,15 @@ def evaluate_trade(
 
     new_mine = [pid for pid in mine_ids if pid not in give] + list(get)
     new_theirs = [pid for pid in their_ids if pid not in get] + list(give)
+    # roster-balance add-ins we receive (below replacement) are cut for the best free agent right away
+    my_cuts = [pid for pid in get if len(get) > 1 and pid in sim.values.index and sim.above_replacement(pid) == 0.0]
+    new_mine = [pid for pid in new_mine if pid not in my_cuts]
     taken = {p.player_id for t in league.teams for p in t.players}
     fas = list(free_agents)
     new_mine, my_drops, my_adds = _rebalance(
         new_mine, set(get), sim.capacity, sim.values, my_punts, sim.categories, fas, taken
     )
+    my_drops = [*my_cuts, *my_drops]
     new_theirs, their_drops, their_adds = _rebalance(
         new_theirs, set(give), sim.capacity, sim.values, (), sim.categories, fas, taken
     )
@@ -207,8 +223,7 @@ def evaluate_trade(
                 before_exp,
                 after_exp,
                 round(
-                    sum(_g(sim.values, p, "g_total") for p in incoming)
-                    - sum(_g(sim.values, p, "g_total") for p in outgoing),
+                    sum(sim.above_replacement(p) for p in incoming) - sum(sim.above_replacement(p) for p in outgoing),
                     2,
                 ),
                 g_delta,
@@ -224,6 +239,15 @@ def evaluate_trade(
         notes.append(f"We must drop {len(my_drops)} player(s) to make room.")
     if my_adds:
         notes.append(f"Opens {len(my_adds)} roster spot(s) for us; filled with the best free agent(s).")
+    if len(give) > 1 and len(get) > 1:
+        for pid in get:
+            if sim.above_replacement(pid) == 0.0:
+                known = "name" in sim.values.columns and pid in sim.values.index
+                who = str(sim.values.at[pid, "name"]) if known else pid
+                notes.append(
+                    f"{who} is a roster-balance piece (below replacement; their likely cut): he keeps their roster "
+                    "count even; we cut him for the best free agent (already counted)."
+                )
     return TradeEval(me, them, verdict_for(me.expected_delta, them.expected_delta, them.value_delta), notes)
 
 
@@ -264,6 +288,15 @@ def screen_trades(
         worst = min(sim.active[team_key], key=lambda p: _rank_value(values, p, punts, sim.categories))
         return gmat[worst]
 
+    def expendable(team_key: str, weights: np.ndarray, exclude: Sequence[str]) -> list[str]:
+        """Players the partner would give up most easily: lowest need-weighted value to their own build."""
+        rest = [p for p in sim.active[team_key] if p not in exclude and p in values.index]  # unknown ≠ worthless
+        return sorted(rest, key=lambda p: float(weights @ gmat[p]))[:n_expendable]
+
+    def vorp(ids: Sequence[str]) -> float:
+        return sum(sim.above_replacement(p) for p in ids)
+
+    n_expendable = int(C("trade.expendable_pool"))
     out: list[TradeCandidate] = []
     partners = partners or [t.team_key for t in league.teams if t.team_key != my_key]
     mine_top = top(my_key, my_punts)
@@ -273,14 +306,21 @@ def screen_trades(
     for partner in partners:
         their_w = np.array([need_weights(sim.profile(partner)[0])[k] for k in keys])
         their_top = top(partner, ())
+        spare = expendable(partner, their_w, their_top)
         their_worst = worst_vec(partner, ())
         for ng in range(1, max_give + 1):
             for nr in range(1, max_get + 1):
                 for give in combinations(mine_top, ng):
                     give_vec = sum(gmat[p] for p in give)
-                    for get in combinations(their_top, nr):
+                    for get in combinations([*their_top, *spare], nr):
+                        if all(p in spare for p in get):
+                            continue  # asking only for their spare parts is not a trade worth proposing
                         get_vec = sum(gmat[p] for p in get)
-                        mine_delta = get_vec - give_vec
+                        # to us, a below-replacement add-in is worth the free agent we'd swap him for
+                        my_get_vec = sum(
+                            replacement if p in spare and sim.above_replacement(p) == 0.0 else gmat[p] for p in get
+                        )
+                        mine_delta = my_get_vec - give_vec
                         their_delta = give_vec - get_vec
                         if nr > ng:  # we receive more: we drop our worst; they fill with replacement
                             mine_delta = mine_delta - (nr - ng) * my_worst
@@ -290,7 +330,7 @@ def screen_trades(
                             their_delta = their_delta - (ng - nr) * their_worst
                         s_me = float(my_w @ mine_delta)
                         s_them = float(their_w @ their_delta)
-                        if max_their_value_loss is not None and their_delta.sum() < -max_their_value_loss - 0.5:
+                        if max_their_value_loss is not None and vorp(give) - vorp(get) < -max_their_value_loss - 0.5:
                             continue
                         if s_me > 0 and s_them > -1.0:
                             out.append(TradeCandidate(partner, give, get, s_me, s_them))

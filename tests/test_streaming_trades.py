@@ -150,6 +150,28 @@ def test_screen_and_find_trades():
     assert all(r.me.expected_delta > 0.02 and r.them.expected_delta >= -0.05 for r in results)
 
 
+def test_partner_value_is_above_replacement_without_drop_credit():
+    sim = trade_league()
+    assert sim.replacement == pytest.approx(-0.5)  # 6 rostered spots: the 6th best player
+    assert sim.above_replacement("b2") == 0.0 and sim.above_replacement("b1") == pytest.approx(4.0)
+    ev = evaluate_trade(sim, "t1", "t2", give=["a1", "a2"], get=["b1"], free_agents=["f1"])
+    assert ev.them.drops == ["b2"]
+    # cutting b2 (below replacement) is worth nothing to them, never a gain
+    expected = sim.above_replacement("a1") + sim.above_replacement("a2") - sim.above_replacement("b1")
+    assert ev.them.value_delta == pytest.approx(round(expected, 2))
+
+
+def test_screen_offers_roster_neutral_two_for_two_with_expendables():
+    sim = trade_league()
+    cands = screen_trades(sim, "t1", (), ["f1"], partners=["t2"], max_give=2, max_get=2, top_k=1)
+    gets = {c.get for c in cands}
+    assert ("b2",) not in gets  # never ask only for their spare parts
+    assert all("b1" in g for g in gets)  # top_k=1: b1 is their only core player, b2 only as an add-in
+    ev = evaluate_trade(sim, "t1", "t2", give=["a1", "a2"], get=["b1", "b2"], free_agents=["f1"])
+    assert ev.them.drops == [] and ev.me.drops == ["b2"] and ev.me.fa_adds == ["f1"]  # we cut the add-in for a FA
+    assert any("roster-balance" in n for n in ev.notes)
+
+
 def test_need_weights_and_verdicts():
     w = need_weights({"pts": 0.5, "reb": 0.95, "tov": 0.5}, punts=("tov",))
     assert w["pts"] == 1.0 and w["reb"] < 0.5 and w["tov"] == 0.0

@@ -90,9 +90,12 @@ otherwise pass.
 ## Trades
 
 Season-level evaluation: expected categories won in a typical week against every team, for both sides, with rosters
-rebalanced (forced drops, free-agent fills). The finder screens candidates by need-weighted G-scores, confirms them
-by simulation, and filters offers that cost the partner too much value to be realistic. Playoff-schedule value is
-added and weighted up as the playoffs approach.
+rebalanced (forced drops, free-agent fills from true free agents only, never players on waivers). The finder screens
+candidates by need-weighted G-scores, confirms them by simulation, and filters offers that cost the partner too much
+value to be realistic. That "ranking" value is measured above replacement level (the last rostered player), so a
+partner's forced drop is never counted as a gain for them. The finder also asks for the partner's expendable players
+(lowest value to their own build), turning a 2-for-1 into a roster-neutral 2-for-2 that takes their likely cut.
+Playoff-schedule value is added and weighted up as the playoffs approach.
 
 ## Punt scenarios
 
