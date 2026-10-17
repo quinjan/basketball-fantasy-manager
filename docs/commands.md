@@ -7,7 +7,7 @@ Dates are **US/Eastern** NBA game days (`YYYY-MM-DD`).
 
 | Command | Purpose |
 |---|---|
-| `fbm setup` | Set up or re-check FBM: settings, memory, NBA data, agent files, automation, health. Safe to re-run. Flags: `--agent`, `--gm-model`, `--reviewer-model`, `--routine-model`, `--timezone`, `--automation`, `--jobs`, `--league-source demo\|yahoo`, `--email/--no-email`, `--quiet-hours`, `--expiry-hours`, `--git-account`, `--yahoo-approved`, `--skip-data`, `--yes`/`-y` (non-interactive), `--check` (verify only, writes nothing) |
+| `fbm setup` | Set up or re-check FBM: settings, memory, NBA data, agent files, automation, health. Safe to re-run. Flags: `--agent`, `--gm-model`, `--reviewer-model`, `--routine-model`, `--timezone`, `--automation`, `--jobs`, `--league-source demo\|yahoo`, `--email/--no-email`, `--quiet-hours`, `--expiry-hours`, `--yahoo-approved`, `--skip-data`, `--yes`/`-y` (non-interactive), `--check` (verify only, writes nothing) |
 | `fbm status` | What is configured (never prints secrets) |
 | `fbm health` | Health checks (OK/WARN/FAIL): data freshness, Yahoo access/snapshot, stale proposals, missed runs, storage. Exits 1 on any FAIL |
 | `fbm constants` | Every tunable engine constant (value, kind, source); override in `config/constants.toml` |

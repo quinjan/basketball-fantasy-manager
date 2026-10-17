@@ -76,7 +76,6 @@ class SetupOptions:
     email: bool | None = None
     quiet_hours: str | None = None
     expiry_hours: float | None = None
-    git_account: str | None = None
     skip_data: bool = False
     yahoo_approved: bool = False
     yahoo_web_session: bool = False  # interactive setup: connect now via `fbm yahoo login`
@@ -94,7 +93,6 @@ class SetupOptions:
             ("notify", "email_enabled"): self.email,
             ("notify", "quiet_hours"): self.quiet_hours,
             ("proposals", "expiry_hours"): self.expiry_hours,
-            ("git", "account"): self.git_account,
         }
         return {k: v for k, v in mapping.items() if v is not None}
 

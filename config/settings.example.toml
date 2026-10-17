@@ -40,7 +40,3 @@ email_enabled = false
 recipients = []
 # Local-time window with no non-urgent email, e.g. "23:00-07:00". Empty = none.
 quiet_hours = ""
-
-[git]
-# Optional: GitHub account used when pushing changes to FBM's code (empty = your normal git credentials).
-account = ""

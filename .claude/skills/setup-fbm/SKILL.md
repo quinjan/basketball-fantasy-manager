@@ -62,7 +62,6 @@ what fails. Works the same in any agent (Copilot, Claude Code, Codex, Cursor, Ge
    - Notifications: none or email (`--email` / `--no-email`); quiet hours (`--quiet-hours 23:00-07:00`).
    - Risk appetite (conservative / balanced / aggressive): not a setup flag — journal it later with
      `journal_append` (kind `owner`) for the season-strategy run.
-   - Optional `--git-account` only if they will push FBM code changes with a non-default GitHub account.
 
 ## 2. Run setup
 

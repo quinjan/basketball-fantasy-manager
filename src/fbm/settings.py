@@ -32,7 +32,6 @@ class Settings:
     email_enabled: bool = False
     recipients: tuple[str, ...] = field(default_factory=tuple)
     quiet_hours: str = ""
-    git_account: str = ""  # optional GitHub account for pushing core changes (empty = normal git credentials)
 
 
 def load_settings(path: Path = SETTINGS_PATH) -> Settings:
@@ -60,5 +59,4 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
         email_enabled=notify.get("email_enabled", default.email_enabled),
         recipients=tuple(notify.get("recipients", ())),
         quiet_hours=notify.get("quiet_hours", ""),
-        git_account=raw.get("git", {}).get("account", default.git_account),
     )

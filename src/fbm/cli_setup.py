@@ -157,7 +157,6 @@ def setup_cmd(
     email: bool = typer.Option(None, "--email/--no-email", help="Gmail notifications."),
     quiet_hours: str = typer.Option(None, help='Local quiet hours, e.g. "23:00-07:00" ("" = none).'),
     expiry_hours: float = typer.Option(None, help="Hours before an unapproved proposal expires."),
-    git_account: str = typer.Option(None, help="Optional GitHub account for pushing FBM code changes."),
     yahoo_approved: bool = typer.Option(False, help="Yahoo API access is approved (show/run the connect steps)."),
     skip_data: bool = typer.Option(False, help="Skip the NBA data backfill/sync."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Non-interactive: use flags + existing/default values."),
@@ -180,7 +179,6 @@ def setup_cmd(
         email=email,
         quiet_hours=quiet_hours,
         expiry_hours=expiry_hours,
-        git_account=git_account,
         skip_data=skip_data,
         yahoo_approved=yahoo_approved,
     )
