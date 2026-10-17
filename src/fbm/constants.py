@@ -780,6 +780,14 @@ _ALL = [
         "heuristic",
     ),
     Constant(
+        "yahoo.session_min_interval_s",
+        0.4,
+        "seconds",
+        "Minimum gap between Yahoo reads when FBM uses your Yahoo web session (`fbm yahoo login`).",
+        "Keeps a full snapshot (~25 reads) at a person-like pace: about 10 seconds, far below any rate limit.",
+        "heuristic",
+    ),
+    Constant(
         "punt.fa_moves",
         3,
         "moves",

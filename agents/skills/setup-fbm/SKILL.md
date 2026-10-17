@@ -48,9 +48,12 @@ what fails. Works the same in any agent (Copilot, Claude Code, Codex, Cursor, Ge
    `data-sync,lineup-guard,daily-gm,weekly-retro` for AI modes and `data-sync,health` for engine-only.
 4. **Time zone** (`--timezone`, IANA like `America/Chicago`). Propose the detected one; explain Yahoo game days
    are always US/Eastern dates regardless.
-5. **Yahoo access.** Explain: Yahoo's Fantasy API needs an approved application at
-   https://sports.yahoo.com/developer/access/ (can take weeks; DocuSign). Until then FBM runs a **demo league**
-   (simulated draft over real NBA players), so everything works now. Ask: not applied / pending / approved.
+5. **Yahoo access.** Explain: Yahoo's official Fantasy API needs an approved application at
+   https://sports.yahoo.com/developer/access/ (can take weeks; DocuSign). Two ways to use a real league:
+   (a) **now**, with their own Yahoo sign-in: `uv run fbm yahoo login` opens a browser window once; FBM then reads
+   the league read-only the way Yahoo's website does (undocumented by Yahoo, may change; see docs/yahoo.md), or
+   (b) the official API once approved. Until either, FBM runs a **demo league** (simulated draft over real NBA
+   players), so everything works now. Ask: connect now with Yahoo sign-in / approved API / stay on demo for now.
    If approved: they create a NEW Yahoo app (Fantasy Sports Read; redirect URI `https://localhost:8080`), submit
    its Client ID at https://sports.yahoo.com/developer/application-confirmation/, then continue in step 3 below.
 6. **Preferences.**
@@ -77,6 +80,9 @@ NBA data (one-time prior-season backfill + sync; several minutes the first time)
 
 - For each FAIL: read the detail, fix it (or give the user the exact command), then `uv run fbm setup --check`.
 - Email chosen: ask the user to run `uv run fbm notify setup` in a terminal (they type the Gmail app password).
+- Yahoo sign-in chosen: the user runs `uv run fbm yahoo login` in a terminal (they sign in in the browser window
+  it opens; never ask for their Yahoo password), picks the league and accepts the switch. Then you run
+  `uv run fbm yahoo check` and show which feeds work.
 - Yahoo approved: the user runs `uv run fbm auth` (types Client ID/Secret into its prompts), then you run
   `uv run fbm league select`, `uv run fbm settings`, `uv run fbm setup --yes --league-source yahoo`,
   `uv run fbm snapshot`, `uv run fbm ids`.

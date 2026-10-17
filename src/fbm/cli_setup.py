@@ -85,9 +85,14 @@ def _interactive(opts: wiz.SetupOptions, current: dict) -> None:
     if opts.league_source is None:
         console.print(
             "\nYahoo's Fantasy API needs an approved application (https://sports.yahoo.com/developer/access/, "
-            "can take weeks). Until then FBM runs a demo league over real NBA players."
+            "can take weeks). Until then FBM runs a demo league over real NBA players, or it can read your league "
+            "now through your own Yahoo sign-in (`fbm yahoo login`, read-only)."
         )
         opts.yahoo_approved = typer.confirm("Has Yahoo approved your API access?", default=False)
+        if not opts.yahoo_approved:
+            opts.yahoo_web_session = typer.confirm(
+                "Connect now with your Yahoo sign-in instead (opens a browser window once)?", default=True
+            )
         opts.league_source = current.get("league", {}).get("source", "demo")
     notify = current.get("notify", {})
     if opts.email is None:
@@ -203,9 +208,13 @@ def setup_cmd(
         console.print(f"[{_COLORS[r.status]}]{r.status:>7}[/] {r.step}: {r.detail}")
 
     report = wiz.run_setup(opts, on_step=show)
-    if interactive and opts.yahoo_approved and report.settings.get("league", {}).get("source") != "yahoo":
-        _yahoo_interactive()
-        report = wiz.check()
+    if interactive and report.settings.get("league", {}).get("source") != "yahoo":
+        if opts.yahoo_approved:
+            _yahoo_interactive()
+            report = wiz.check()
+        elif opts.yahoo_web_session:
+            subprocess.run(wiz.fbm_command("yahoo", "login"), check=False)
+            report = wiz.check()
     console.print()
     _print_report(report)
     raise typer.Exit(1 if report.failed else 0)

@@ -65,7 +65,8 @@ def _run(fn, *args, **kwargs):
         _fail(str(err))
     except YahooAPIError as err:
         hint = (
-            " (the Yahoo app may lack Fantasy Sports Read permission or API access approval)"
+            " (the Yahoo app may lack Fantasy Sports Read permission or API access approval; "
+            "`fbm yahoo login` reads through your Yahoo web session instead)"
             if err.is_scope_error
             else ""
         )
@@ -247,6 +248,11 @@ def status() -> None:
         ("Gmail app password", credentials.GMAIL_APP_PASSWORD),
     ):
         console.print(f"{label}: {'[green]set[/]' if credentials.get(key) else '[yellow]missing[/]'}")
+    from fbm.yahoo import session as web_session
+
+    console.print(
+        f"Yahoo web session: {'[green]set[/] (active route)' if web_session.load() else 'none'} (`fbm yahoo status`)"
+    )
     try:
         cfg = load_league_config()
         console.print(

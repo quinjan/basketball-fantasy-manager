@@ -8,7 +8,8 @@
 timezone = "UTC"
 
 [league]
-# "demo" (simulated league over real players) until your Yahoo Fantasy API access is approved, then "yahoo".
+# "demo" (simulated league over real players) until you connect Yahoo (`fbm yahoo login`, or the official API once
+# approved), then "yahoo".
 source = "demo"
 
 [agent]

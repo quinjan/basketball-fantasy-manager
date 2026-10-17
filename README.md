@@ -53,7 +53,8 @@ Interfaces: an MCP server (54 tools), the `fbm` CLI, and a local Streamlit dashb
 - **FBM never changes your league.** It has no Yahoo write access by design. Lineups and approved moves come back as
   exact steps you perform in Yahoo yourself.
 - **Yahoo API access is gated.** Since mid-2026 every user must apply for access, which reportedly takes weeks.
-  Until then FBM runs on a realistic demo league (see [docs/yahoo.md](docs/yahoo.md)).
+  Meanwhile you can connect with your own Yahoo sign-in (`fbm yahoo login`, read-only; an undocumented route Yahoo
+  may change), or run on a realistic demo league (see [docs/yahoo.md](docs/yahoo.md)).
 - **Unofficial data sources.** NBA data comes from public, undocumented ESPN endpoints that may change or break.
 - **Platforms:** developed and tested on Windows. macOS and Linux run in CI but are less battle-tested.
 - **No guarantees.** Projections, simulations, and AI judgement can be wrong. You make the final call.
@@ -63,8 +64,8 @@ Interfaces: an MCP server (54 tools), the `fbm` CLI, and a local Streamlit dashb
 - Python 3.12+ and [uv](https://docs.astral.sh/uv/)
 - git
 - An MCP-capable AI agent (see [Supported agents](#supported-agents))
-- For your real league: a Yahoo Fantasy Basketball league **and** approved Yahoo Fantasy Sports API access
-  (the demo league needs neither)
+- For your real league: a Yahoo Fantasy Basketball league, plus either approved Yahoo Fantasy Sports API access or
+  your Yahoo sign-in via `fbm yahoo login` (the demo league needs neither)
 
 ## Quick start
 
@@ -81,8 +82,8 @@ Then either:
 - **Do it yourself:** `uv run fbm setup` (interactive; re-run any time, or `uv run fbm setup --check` to verify).
 
 Setup writes your local settings, seeds your memory folder, loads NBA data, generates your agent's files, and runs
-health checks. **The demo league works immediately.** Connect your Yahoo league later, once access is approved —
-see [docs/yahoo.md](docs/yahoo.md).
+health checks. **The demo league works immediately.** Connect your Yahoo league now with `uv run fbm yahoo login`
+(your Yahoo sign-in, read-only) or later once API access is approved — see [docs/yahoo.md](docs/yahoo.md).
 
 **Open the GM office:** start a session with your agent in this folder using the `gm` role and talk to it:
 "How's my matchup?", "Should I drop X for Y?", "What's pending?", "Approve P-12". Or browse the dashboard with

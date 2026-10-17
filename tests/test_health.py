@@ -58,6 +58,15 @@ def test_yahoo_live_checks():
     assert "3 unmatched" in _by(bad, "Yahoo ID matching")["detail"]
 
 
+def test_yahoo_web_session_replaces_api_credentials():
+    out = health.check_yahoo("yahoo", {"a": False}, True, False, 30.0, "", 0, web_session_age_days=2.0)
+    assert health.overall(out) == "OK"
+    assert "web session" in _by(out, "Yahoo access")["detail"]
+    assert not any(c["check"] == "Yahoo credentials" for c in out)
+    demo = health.check_yahoo("demo", {"a": False}, True, True, None, "", 0, web_session_age_days=0.0)
+    assert "web session ready" in _by(demo, "League source")["detail"]
+
+
 def test_proposals():
     future, past = _iso(NOW + timedelta(hours=5)), _iso(NOW - timedelta(hours=1))
     rows = [
@@ -129,6 +138,7 @@ def test_gather_with_temp_db(tmp_path, monkeypatch):
     conn.commit()
     monkeypatch.setattr(memory, "JOURNAL_DIR", tmp_path / "journal")
     monkeypatch.setattr(health, "_cred_presence", lambda: {"yahoo_client_id": True})
+    monkeypatch.setattr(health, "_web_session_age_days", lambda now: None)
     r = health.gather(conn=conn, db_path=path, now=datetime(2026, 10, 16, 10, tzinfo=UTC))
     conn.close()
     assert r["phase"] == "preseason"

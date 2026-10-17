@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
+import sys
+from datetime import UTC, datetime
+
 import typer
 from rich.table import Table
 
-from fbm.cli import _svc, app, console
+from fbm import credentials
+from fbm.cli import _clipboard, _fail, _printable, _run, _select_league, _svc, app, console
+from fbm.config import LEAGUE_CONFIG_PATH, NotConfiguredError, load_league_config
+from fbm.timeutil import nba_today, parse_date
+from fbm.yahoo import discovery
+from fbm.yahoo.client import YahooAPIError, YahooClient
+
+yahoo_app = typer.Typer(
+    no_args_is_help=True,
+    help="Yahoo access: sign in with your own Yahoo web session (no API approval needed), check every data feed.",
+)
+app.add_typer(yahoo_app, name="yahoo")
 
 
 def _demo(r: dict) -> bool:
@@ -202,3 +216,163 @@ def intel(
         )
     if r["note"]:
         console.print(f"[dim]{r['note']}[/]")
+
+
+# ---------------------------------------------------------------- Yahoo access (web session)
+
+_PASTE_STEPS = (
+    "In the browser where you're signed in to Yahoo, open:\n   {url}\n   (you should see XML listing your leagues)",
+    "Press F12 → Network tab → reload the page → click the request → Headers → Request Headers.",
+    "Copy the whole value of [bold]cookie[/], then press [bold]Enter[/] here: FBM reads it from your clipboard "
+    "(and clears it). You can also paste it into the hidden prompt.",
+)
+
+
+def _paste_session():
+    from fbm.yahoo import session as ws
+
+    for i, step in enumerate(_PASTE_STEPS, 1):
+        console.print(f"[bold]{i}.[/] {step.format(url=ws.SESSION_BASE_URL + ws.PROBE_PATH + '/leagues')}")
+    typed = _printable(typer.prompt("Cookie header", hide_input=True, default="", show_default=False))
+    value = typed or _printable(_clipboard("read"))
+    if not typed and value:
+        _clipboard("clear")
+    if not value:
+        _fail("No cookie header received.")
+    return ws.from_cookie_header(value)
+
+
+def _switch_to_yahoo() -> None:
+    import subprocess
+
+    from fbm import setup_wizard as wiz
+    from fbm.settings import load_settings
+
+    if load_settings().league_source == "yahoo":
+        console.print("Next: `fbm yahoo check` (verifies every data feed), then `fbm snapshot`.")
+        return
+    if not sys.stdin.isatty() or not typer.confirm(
+        "Switch FBM from the demo league to your Yahoo league now?", default=True
+    ):
+        console.print(
+            "When ready: `fbm setup --league-source yahoo --yes`, then `fbm settings`, `fbm snapshot`, `fbm ids`."
+        )
+        return
+    wiz.write_settings(wiz.SetupOptions(league_source="yahoo"))
+    console.print('[green]League source set to "yahoo".[/]')
+    for args in (["settings"], ["snapshot"], ["ids"]):
+        subprocess.run(wiz.fbm_command(*args), check=False)
+    console.print("Run `fbm yahoo check` any time to verify every data feed.")
+
+
+@yahoo_app.command("login")
+def yahoo_login(
+    paste: bool = typer.Option(
+        False, "--paste", help="Paste the Cookie header from your browser's DevTools instead of opening a browser."
+    ),
+    browser: str = typer.Option(None, "--browser", help="msedge | chrome | chromium (default: first that starts)."),
+    timeout: int = typer.Option(600, "--timeout", help="Seconds to wait for you to finish signing in."),
+    league_key: str = typer.Option(None, "--league-key", help="League to manage if you have several."),
+) -> None:
+    """Sign in to Yahoo once; FBM then reads your league through that web session (read-only, no API approval)."""
+    from fbm.yahoo import session as ws
+
+    console.print(
+        "FBM will read your league the way Yahoo's own website does, with your Yahoo sign-in. Read-only: FBM "
+        "never changes your league. The session is kept in your OS credential store, never in a file or the "
+        "AI chat. This route isn't documented by Yahoo and may stop working; the official API (`fbm auth`) "
+        "stays available once approved.\n"
+    )
+    try:
+        new = _paste_session() if paste else ws.browser_login(timeout, browser, echo=console.print)
+        with YahooClient(session=new) as client:
+            leagues = discovery.list_nba_leagues(client)
+    except ws.YahooSessionError as err:
+        _fail(str(err))
+    except YahooAPIError as err:
+        tip = "Copy the cookie header again while signed in." if paste else "Try `fbm yahoo login --paste`."
+        _fail(f"Yahoo didn't accept the session for reads ({err.status}: {err.description}). Nothing saved. {tip}")
+    ws.save(new)
+    console.print(
+        f"[green]Signed in.[/] Yahoo web session saved to your OS credential store ({len(new.cookies)} cookies)."
+    )
+    if not leagues:
+        _fail("No Yahoo NBA leagues found for this account this season.")
+    if league_key or not LEAGUE_CONFIG_PATH.exists():
+        _run(_select_league, league_key)
+    else:
+        cfg = load_league_config()
+        console.print(
+            f"Managing [bold]{cfg.team_name}[/] in [bold]{cfg.league_name}[/] (`fbm league select` to change)."
+        )
+    _switch_to_yahoo()
+
+
+@yahoo_app.command("logout")
+def yahoo_logout() -> None:
+    """Forget the Yahoo web session (FBM falls back to the official API from `fbm auth`, if set up)."""
+    from fbm.yahoo import session as ws
+
+    ws.clear()
+    console.print("Yahoo web session removed from your OS credential store.")
+
+
+@yahoo_app.command("status")
+def yahoo_status() -> None:
+    """Which Yahoo access route FBM uses (never prints secrets)."""
+    from fbm.yahoo import session as ws
+
+    s = ws.load()
+    has_api = bool(credentials.get(credentials.YAHOO_REFRESH_TOKEN))
+    if s:
+        age = s.age_days(datetime.now(UTC))
+        console.print(
+            f"Active route: [bold]Yahoo web session[/] (saved {age:.1f} days ago via {s.source}; "
+            f"{len(s.cookies)} cookies; host {ws.SESSION_HOST}, read-only)."
+        )
+    elif has_api:
+        console.print("Active route: [bold]official Yahoo API[/] (OAuth app from `fbm auth`).")
+    else:
+        console.print("[yellow]No Yahoo access yet.[/] Run `fbm yahoo login` (web session) or `fbm auth` (API).")
+    console.print(f"Official API credentials: {'[green]set[/]' if has_api else 'missing'}")
+
+
+@yahoo_app.command("check")
+def yahoo_check(
+    day: str = typer.Option(None, "--date", help="ET game day for the roster read (default: today ET)."),
+) -> None:
+    """Read every Yahoo feed FBM uses (plus extras) and report which work. Read-only."""
+    from fbm.yahoo import coverage
+    from fbm.yahoo import session as ws
+
+    if ws.load() is None and not credentials.get(credentials.YAHOO_REFRESH_TOKEN):
+        _fail("No Yahoo access configured: run `fbm yahoo login` (web session) or `fbm auth` (official API).")
+    try:
+        cfg = load_league_config()
+        league_key, team_key = cfg.league_key, cfg.team_key
+    except NotConfiguredError:
+        league_key = team_key = None
+    target = parse_date(day) if day else nba_today()
+    with YahooClient() as client:
+        route = "Yahoo web session" if client.auth_mode == "web_session" else "official API"
+        results = coverage.run(client, league_key, team_key, target)
+    table = Table(title=f"Yahoo data feeds via {route}")
+    for col in ("Feed", "", "Detail", "Used for"):
+        table.add_column(col)
+    for r in results:
+        if r.detail.startswith("skipped"):
+            mark = "[dim]skip[/]"
+        else:
+            mark = "[green]OK[/]" if r.ok else ("[red]FAIL[/]" if r.kind == coverage.CORE else "[yellow]n/a[/]")
+        table.add_row(r.name, mark, r.detail, r.used_for)
+    console.print(table)
+    core = [r for r in results if r.kind == coverage.CORE]
+    ok = sum(r.ok for r in core)
+    console.print(f"{ok}/{len(core)} feeds FBM uses are readable via the {route}.")
+    if route == "official API" and any("403" in r.detail for r in results):
+        console.print(
+            "[yellow]Your Yahoo API app isn't authorized (Yahoo's access program). Read your league now with "
+            "`fbm yahoo login` instead.[/]"
+        )
+    if ok < len(core):
+        raise typer.Exit(code=1)

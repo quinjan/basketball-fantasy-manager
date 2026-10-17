@@ -242,11 +242,22 @@ def league_overview() -> dict[str, Any]:
     conn = _conn()
     start, ws, we = _week_window()
     now = datetime.now().astimezone()
+    from fbm.yahoo import session as web_session
+
+    has_session = web_session.load() is not None
+    has_api = bool(credentials.get(credentials.YAHOO_REFRESH_TOKEN))
     yahoo = {
-        "credentials": bool(credentials.get(credentials.YAHOO_REFRESH_TOKEN)),
+        "credentials": has_session or has_api,
+        "access_route": "web session (`fbm yahoo login`)" if has_session else ("official API" if has_api else None),
         "league_configured": LEAGUE_CONFIG_PATH.exists(),
         "roster_changes": "you make them in Yahoo: FBM never changes your league (insights, lineup tips, proposals)",
-        "status": "pending Yahoo API approval" if load_settings().league_source == "demo" else "live (read-only)",
+        "status": (
+            "live (read-only)"
+            if load_settings().league_source != "demo"
+            else "demo league: Yahoo web session ready, switch the league source"
+            if has_session
+            else "demo league: pending Yahoo API approval, or connect now with `fbm yahoo login`"
+        ),
     }
     if LEAGUE_CONFIG_PATH.exists():
         yahoo["league"] = load_league_config().league_name

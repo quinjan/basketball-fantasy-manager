@@ -44,6 +44,13 @@ YAHOO_GUIDE = (
     "Run `fbm setup --league-source yahoo --yes`, then `fbm snapshot` and `fbm ids`.",
 )
 
+# No API approval needed: read the league through the owner's own Yahoo sign-in (fbm.yahoo.session).
+YAHOO_SESSION_GUIDE = (
+    "Connect now without API approval: `fbm yahoo login` (sign in to Yahoo once in a browser window; read-only), "
+    "pick your league, and let it switch FBM to your Yahoo league. Then `fbm yahoo check`. Or wait for API "
+    "approval:",
+)
+
 QUIET_HOURS_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$")
 
 
@@ -72,6 +79,7 @@ class SetupOptions:
     git_account: str | None = None
     skip_data: bool = False
     yahoo_approved: bool = False
+    yahoo_web_session: bool = False  # interactive setup: connect now via `fbm yahoo login`
 
     def updates(self) -> dict[tuple[str, str], Any]:
         mapping = {
@@ -411,7 +419,11 @@ def yahoo_status(source: str, approved: bool, league_toml: Path) -> list[StepRes
         return [StepResult("Yahoo league", PENDING, "source is yahoo but no league selected: run `fbm league select`")]
     if approved:
         return [StepResult("Yahoo league", PENDING, "access approved: follow the Yahoo steps below")]
-    return [StepResult("Yahoo league", PENDING, "using the demo league until Yahoo API access is approved")]
+    return [
+        StepResult(
+            "Yahoo league", PENDING, "using the demo league until Yahoo API access is approved or `fbm yahoo login`"
+        )
+    ]
 
 
 def run_health(runner: Runner) -> StepResult:
@@ -436,6 +448,7 @@ class SetupReport:
         if any(r.status == FAIL for r in self.results):
             steps.append("Fix the FAIL steps above, then re-run `fbm setup --check`.")
         if source != "yahoo" or any(r.step == "Yahoo league" and r.status == PENDING for r in self.results):
+            steps.extend(YAHOO_SESSION_GUIDE)
             steps.extend(YAHOO_GUIDE)
         if self.settings.get("notify", {}).get("email_enabled"):
             steps.append("Run `fbm notify setup` to store the Gmail app password (prompted, never shown).")

@@ -84,33 +84,48 @@ def check_yahoo(
     snapshot_age_min: float | None,
     refresh_error: str,
     unmatched_count: int,
+    web_session_age_days: float | None = None,
 ) -> list[dict[str, str]]:
+    """`web_session_age_days` is set when a Yahoo web session (`fbm yahoo login`) is saved: it is then the route."""
     out = []
     missing = [k for k, v in creds.items() if not v]
-    cred_status = OK if not missing else (FAIL if source == "yahoo" else WARN)
-    out.append(
-        result(
-            "Yahoo credentials",
-            cred_status,
-            "all present" if not missing else f"missing: {', '.join(missing)}",
-            "" if not missing else "Run `fbm auth` (stores them in your OS credential store).",
+    if web_session_age_days is not None:
+        out.append(
+            result(
+                "Yahoo access",
+                OK,
+                f"Yahoo web session (saved {web_session_age_days:.0f} days ago; read-only)",
+            )
         )
-    )
+    else:
+        cred_status = OK if not missing else (FAIL if source == "yahoo" else WARN)
+        out.append(
+            result(
+                "Yahoo credentials",
+                cred_status,
+                "all present" if not missing else f"missing: {', '.join(missing)}",
+                ""
+                if not missing
+                else "Run `fbm yahoo login` (your Yahoo web session, no API approval) or `fbm auth` (official API).",
+            )
+        )
     out.append(
         result(
             "League configured",
             OK if league_configured else (FAIL if source == "yahoo" else WARN),
             "config/league.toml present" if league_configured else "config/league.toml missing",
-            "" if league_configured else "After Yahoo access works: `fbm auth --reset`, then `fbm league select`.",
+            "" if league_configured else "`fbm yahoo login` (or `fbm auth --reset`), then `fbm league select`.",
         )
     )
     if source != "yahoo":
+        ready = web_session_age_days is not None
         out.append(
             result(
                 "League source",
                 WARN,
-                f"source={source}: Yahoo API approval pending",
-                'Switch the [league] source to "yahoo" in config/settings.toml once approved.',
+                f"source={source}: "
+                + ("Yahoo web session ready" if ready else "Yahoo API approval pending (or use `fbm yahoo login`)"),
+                'Switch with `fbm setup --league-source yahoo --yes` (sets [league] source = "yahoo").',
             )
         )
         out.append(
@@ -134,7 +149,12 @@ def check_yahoo(
         out.append(result("Yahoo snapshot", OK, f"{snapshot_age_min:.0f} min old (max {max_age})"))
     if refresh_error:
         out.append(
-            result("Yahoo refresh", FAIL, f"last refresh failed: {refresh_error[:200]}", "Check token / re-auth.")
+            result(
+                "Yahoo refresh",
+                FAIL,
+                f"last refresh failed: {refresh_error[:200]}",
+                "Web session: `fbm yahoo login`. API app: `fbm auth --reset`. Then `fbm yahoo check`.",
+            )
         )
     else:
         out.append(result("Yahoo refresh", OK, "no recent refresh error"))
@@ -254,6 +274,15 @@ def _cred_presence() -> dict[str, bool]:
     return {n: credentials.get(n) is not None for n in names}
 
 
+def _web_session_age_days(now: datetime) -> float | None:
+    from fbm.yahoo import session as web_session
+
+    saved = web_session.load()
+    if saved is None:
+        return None
+    return saved.age_days(now) or 0.0
+
+
 def _snapshot_age_min(path: Path, now: datetime) -> float | None:
     try:
         fetched = json.loads(path.read_text(encoding="utf-8")).get("fetched_at")
@@ -354,6 +383,7 @@ def gather(
         _snapshot_age_min(yahoo_league.SNAPSHOT_PATH, now),
         yahoo_league.last_refresh_error(),
         unmatched,
+        _web_session_age_days(now),
     )
     checks += check_proposals(prop_rows, now)
     lookback = C("health.journal_lookback_days")

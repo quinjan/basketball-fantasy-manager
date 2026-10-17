@@ -32,7 +32,7 @@ The engine is deterministic and tested; the AI layer reasons over its outputs an
 | `src/fbm/` | Engine package: `cli.py` and `cli_*.py` (CLI), `mcp_server.py`, `settings.py`/`config.py`, `constants.py` (constants registry), `credentials.py` (keyring), `timeutil.py` (ET game days), `automation.py`, `setup_wizard.py`, `backup.py` |
 | `src/fbm/analytics/` | Valuation (G/Z-scores), projections and players (ESPN baseline/blend, projection calibration), early signals, availability, simulation, lineup, streaming, waivers, trades, punts, playoffs, opponents, draft |
 | `src/fbm/data/` | ESPN and ESPN Fantasy clients, sync jobs, queries |
-| `src/fbm/yahoo/` | OAuth, API client, league reads, draft, id mapping (read-only; FBM has no Yahoo write access) |
+| `src/fbm/yahoo/` | Access (official-API OAuth or the owner's Yahoo web session, `session.py`), API client, league reads, draft, id mapping, feed check (`coverage.py`) (read-only; FBM has no Yahoo write access) |
 | `src/fbm/league/` | League model, demo league, Yahoo league views, transaction history |
 | `src/fbm/gm/` | Services behind MCP/CLI, proposals and approvals, owner steps (FBM never changes the league), memory, outcome grading, health |
 | `src/fbm/store/` | SQLite access |

@@ -19,7 +19,9 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
    proposal rules, data freshness, Yahoo status, the current ET game day + fantasy week, and `signals_new` (early
    signals FBM caught since the last run).
 2. If box scores/injuries are older than ~12h (or before any decision run), call `refresh_data`.
-3. If `source` is `demo`, remember the league is simulated until Yahoo approves API access — say so when relevant.
+3. If `source` is `demo`, remember the league is simulated until the owner connects Yahoo (`fbm yahoo login` with
+   their own sign-in, or the official API once approved) — say so when relevant. If a `snapshot` fails with "Yahoo
+   web session expired", ask the owner to run `fbm yahoo login`; never sign in for them.
 4. Yahoo league: Yahoo is **read-only** for us. Call `snapshot` when its `fetched_at` is stale or before any
    decision (rosters, live scoreboard, standings, waivers, ownership). `scoreboard` shows stats already banked this
    week (`simulate_matchup` includes them); `pending_offers` lists incoming trades, already evaluated. FBM has no write

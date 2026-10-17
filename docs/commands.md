@@ -39,7 +39,11 @@ Jobs: `data-sync`, `lineup-guard`, `daily-gm`, `weekly-retro`, `trade-scan`, `he
 
 | Command | Purpose |
 |---|---|
-| `fbm auth [--reset] [--league-key KEY]` | Connect to Yahoo (one-time browser consent), then pick your league. Also accepts `--code URL` and `--scope` |
+| `fbm yahoo login [--paste] [--browser B] [--league-key KEY]` | Connect with your own Yahoo sign-in (no API approval needed; read-only web session kept in the OS credential store), pick your league, optionally switch FBM to it. See [yahoo.md](yahoo.md) |
+| `fbm yahoo check [--date D]` | Read every Yahoo feed FBM uses (plus extras) and report which work, via the active route |
+| `fbm yahoo status` | Which Yahoo access route is active (web session or official API); never prints secrets |
+| `fbm yahoo logout` | Forget the web session (FBM falls back to the official API) |
+| `fbm auth [--reset] [--league-key KEY]` | Connect to the official Yahoo API (one-time browser consent), then pick your league. Also accepts `--code URL` and `--scope` |
 | `fbm league list` | Your Yahoo NBA leagues for the current season |
 | `fbm league select [--league-key KEY]` | Choose which league FBM manages |
 | `fbm settings` | Fetch and summarize your league settings from Yahoo |
