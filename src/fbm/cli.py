@@ -330,13 +330,40 @@ def _progress_bar(label: str):
 
 @data_app.command("sync")
 def data_sync() -> None:
-    """Daily sync: schedule status, new box scores, season averages, injuries, news."""
+    """Daily sync: schedule status, new box scores, season averages, injuries, news, ESPN projections; then log
+    forecasts for calibration and detect early signals."""
     conn = store.connect()
     progress, update = _progress_bar("box scores")
     with progress:
         results = sync.daily_sync(conn, EspnClient(), date.today(), progress=update)
     for r in results:
         console.print(f"[green]✓[/] {r}")
+    from fbm.gm import services as svc
+
+    try:
+        early = svc.post_sync()
+    except Exception as err:  # signals are additive; the data sync itself succeeded
+        console.print(f"[yellow]Signals skipped: {type(err).__name__}: {err}[/]")
+        return
+    console.print(
+        f"[green]✓[/] forecasts logged: {early['forecasts_logged']} · signals detected: {early['signals_detected']}"
+        f" · new: {len(early['signals_new'])}"
+    )
+    for s in early["signals_new"]:
+        console.print(
+            f"  [bold]{s['kind']}[/] {s['direction']} {s['player']} ({s['nba']}, {s['confidence']}): {s['note']}"
+        )
+
+
+@data_app.command("projections")
+def data_projections() -> None:
+    """Snapshot ESPN's season projections now (the daily sync does this too; the last snapshot before opening night
+    is the preseason baseline)."""
+    from fbm.timeutil import nba_today
+
+    conn = store.connect()
+    season = espn_current_season(date.today())
+    console.print(f"[green]✓[/] {sync.sync_espn_projections(conn, EspnClient(), season, nba_today())}")
 
 
 @data_app.command("backfill")
@@ -460,9 +487,7 @@ def rank(
         table = player_tables.projection_table(conn, current, current - 1)
         has_current = bool(table["gp_current"].sum())
         variance_season = current if has_current else current - 1
-        label = "ROS projection" + (
-            "" if has_current else f" (pre-season: {current - 2}-{(current - 1) % 100:02d} stats)"
-        )
+        label = "ROS projection" + ("" if has_current else " (pre-season: ESPN preseason projection, else last season)")
     if table.empty:
         _fail("No player stats stored. Run `fbm data sync` and `fbm data backfill`.")
     cfg = config_from_settings(_league_summary(), punts=punts, min_gp=min_gp if season else 5)
@@ -1157,6 +1182,81 @@ def learn_retro(week_start: str = typer.Option(None, help="Monday (ET) of the we
     from fbm.gm import services as svc
 
     console.print_json(json.dumps(_svc(svc.weekly_retro_data_tool, week_start), default=str))
+
+
+@learn_app.command("projections")
+def learn_projections() -> None:
+    """Projection calibration: FBM engine vs ESPN forecast error and the measured blend weight (JSON)."""
+    from fbm.gm import services as svc
+
+    console.print_json(json.dumps(_svc(svc.projection_calibration_tool), default=str))
+
+
+@learn_app.command("signals")
+def learn_signals() -> None:
+    """Grade finished early signals; hit rate by kind and the ownership move after each signal (JSON)."""
+    from fbm.gm import services as svc
+
+    console.print_json(json.dumps(_svc(svc.signal_grades_tool), default=str))
+
+
+@app.command("signals")
+def signals_cmd(
+    scope: str = typer.Option("all", help="all | mine | others | fa"),
+    kind: str = typer.Option(None, help="Comma-separated: buy_low,sell_high,role_change,opportunity,espn_revision"),
+    new: bool = typer.Option(False, "--new", help="Only signals first seen recently."),
+    top: int = typer.Option(30, min=1),
+    refresh: bool = typer.Option(False, help="Re-run detection first."),
+    min_confidence: str = typer.Option(None, help="high | medium | low (default: signals.feed_min_confidence)"),
+) -> None:
+    """Early-signal feed: who is about to gain or lose value before the market notices."""
+    from fbm.gm import services as svc
+
+    r = _svc(svc.signals_tool, scope, kind, new, top, refresh, min_confidence)
+    table = Table(title=f"Early signals ({r['count']} active)")
+    for col in ("New", "Kind", "Dir", "Player", "Team", "Conf", "Owner", "Note / action"):
+        table.add_column(col)
+    for s in r["signals"]:
+        table.add_row(
+            "★" if s["is_new"] else "",
+            s["kind"],
+            s["direction"],
+            str(s["player"]),
+            str(s["nba"]),
+            s["confidence"],
+            s["owner"],
+            f"{s['note']}\n[dim]{s['action_hint']}[/]",
+        )
+    console.print(table if r["signals"] else "No active signals.")
+
+
+@app.command("buysell")
+def buysell_cmd(
+    scope: str = typer.Option("all", help="all | mine | others | fa"),
+    top: int = typer.Option(15, min=1),
+) -> None:
+    """Buy-low / sell-high: season-to-date value vs FBM's rest-of-season projection."""
+    from fbm.gm import services as svc
+
+    r = _svc(svc.buy_sell_tool, scope, top)
+    for kind in ("buy_low", "sell_high"):
+        table = Table(title=kind.replace("_", "-"))
+        for col in ("Player", "Team", "Gap", "Season", "ROS", "Conf", "Reasons", "Owner / action"):
+            table.add_column(col)
+        for s in r[kind]:
+            ev = s["evidence"]
+            table.add_row(
+                str(s["player"]),
+                str(s["nba"]),
+                f"{ev['gap']:+.2f}",
+                f"{ev['season_value']:+.2f}",
+                f"{ev['ros_value']:+.2f}",
+                s["confidence"],
+                ", ".join(s["reasons"]),
+                f"{s['owner']}\n[dim]{s['action_hint']}[/]",
+            )
+        console.print(table if r[kind] else f"No {kind.replace('_', '-')} signals.")
+    console.print(f"[dim]{r['note']}[/]")
 
 
 draft_app = typer.Typer(no_args_is_help=True, help="Draft assistant (board, live draft, mock drafts).")

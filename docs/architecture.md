@@ -7,7 +7,7 @@
  ┌──────────────── AI agent (your choice) ────────────────┐
  │  roles: gm · reviewer · scout     skills: agents/skills │
  └───────────────┬───────────────────────────┬────────────┘
-                 │ MCP (stdio, 50 tools)     │ headless runs (optional automation)
+                 │ MCP (stdio, 54 tools)     │ headless runs (optional automation)
                  ▼                           ▼
  ┌──────────────────────────── FBM engine (Python) ───────────────────────────┐
  │ mcp_server.py · cli.py (fbm) · dashboard/ (Streamlit, 14 pages)            │
@@ -30,7 +30,7 @@ The engine is deterministic and tested; the AI layer reasons over its outputs an
 | Path | Contents |
 |---|---|
 | `src/fbm/` | Engine package: `cli.py` and `cli_*.py` (CLI), `mcp_server.py`, `settings.py`/`config.py`, `constants.py` (constants registry), `credentials.py` (keyring), `timeutil.py` (ET game days), `automation.py`, `setup_wizard.py`, `backup.py` |
-| `src/fbm/analytics/` | Valuation (G/Z-scores), projections and players, availability, simulation, lineup, streaming, waivers, trades, punts, playoffs, opponents, draft |
+| `src/fbm/analytics/` | Valuation (G/Z-scores), projections and players (ESPN baseline/blend, projection calibration), early signals, availability, simulation, lineup, streaming, waivers, trades, punts, playoffs, opponents, draft |
 | `src/fbm/data/` | ESPN and ESPN Fantasy clients, sync jobs, queries |
 | `src/fbm/yahoo/` | OAuth, API client, league reads, draft, id mapping (read-only; FBM has no Yahoo write access) |
 | `src/fbm/league/` | League model, demo league, Yahoo league views, transaction history |

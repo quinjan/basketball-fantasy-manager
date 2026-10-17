@@ -119,6 +119,14 @@ def _score(df: pd.DataFrame, stats: PoolStats, cfg: ValuationConfig) -> pd.DataF
     return out
 
 
+def score_table(table: pd.DataFrame, stats: PoolStats, cfg: ValuationConfig) -> pd.DataFrame:
+    """G/Z scores for any per-game table (season-to-date, ESPN, a grading window) against an existing pool, so values
+    from different sources are on the same scale."""
+    if table.empty:
+        return pd.DataFrame(index=table.index, columns=["z_total", "g_total"], dtype=float)
+    return _score(table.fillna(dict.fromkeys(table.select_dtypes("number").columns, 0.0)), stats, cfg)
+
+
 def value_players(
     table: pd.DataFrame, cfg: ValuationConfig | None = None, weekly: pd.DataFrame | None = None
 ) -> tuple[pd.DataFrame, PoolStats]:

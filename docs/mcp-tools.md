@@ -1,16 +1,16 @@
 # MCP tools
 
-The `fbm` MCP server (`fbm-mcp`, wired into your agent by `fbm agent install`) exposes **50 tools** over the engine.
+The `fbm` MCP server (`fbm-mcp`, wired into your agent by `fbm agent install`) exposes **54 tools** over the engine.
 Descriptions are summarized from each tool's docstring in `src/fbm/mcp_server.py`. Dates are US/Eastern game days.
 
 ## Context and league
 
 | Tool | Description |
 |---|---|
-| `context_pack` | Start here every session: league overview, approved strategy, playbook, recent journal, manager notes |
+| `context_pack` | Start here every session: league overview, approved strategy, playbook, recent journal, manager notes, new early signals |
 | `league_overview` | League, teams, categories, roster slots, current fantasy week, strategy, open proposals, data freshness |
 | `my_roster` | My roster with slots, status, games today / left this week, G-score value |
-| `player_card` | Everything about one player: projection, G/Z by category, rank, fantasy owner, injury |
+| `player_card` | Everything about one player: projection and its basis, ESPN preseason vs latest projection, active signals, G/Z by category, rank, fantasy owner, injury |
 | `rankings` | Player rankings by G-score over non-punted categories, optionally by position |
 | `free_agents` | Best unrostered players, by rest-of-season value or this week's value × games left |
 | `injuries` | Current ESPN injury report plus status changes in the last 48h |
@@ -18,7 +18,7 @@ Descriptions are summarized from each tool's docstring in `src/fbm/mcp_server.py
 | `schedule` | Upcoming game days, my players with games, NBA team game counts this fantasy week |
 | `constants` | Every tunable engine constant with value, default, unit, kind and source |
 | `health_check` | System health: data freshness, Yahoo access/snapshot, stale proposals, missed scheduled runs |
-| `refresh_data` | Run the daily ESPN sync; returns injury changes for rostered players |
+| `refresh_data` | Run the daily ESPN sync (incl. ESPN projection snapshot), log forecasts, detect early signals; returns injury changes for rostered players and new signals |
 
 ## Yahoo league reads
 
@@ -47,13 +47,22 @@ Descriptions are summarized from each tool's docstring in `src/fbm/mcp_server.py
 | `evaluate_trade` | Evaluate a trade for both sides (season-level expected categories before/after) |
 | `find_trades` | Search the league (or one partner) for trades that help us and are defensible for them |
 
+## Early signals
+
+| Tool | Description |
+|---|---|
+| `signals` | Early-signal feed: buy_low / sell_high, role_change, opportunity (key teammate out), espn_revision — with confidence, reasons, owner and action hint |
+| `buy_sell` | Buy-low / sell-high lists computed now: season-to-date value vs rest-of-season projection, with reasons and confidence |
+
 ## Learning loop
 
 | Tool | Description |
 |---|---|
 | `grade_decisions` | Grade completed (`done`) add/drop, waiver and trade proposals by realized production |
 | `prediction_calibration` | Grade finished matchup predictions: Brier score vs coin flip, reliability |
-| `weekly_retro_data` | Everything the weekly retro needs for a fantasy week (default: last completed) |
+| `projection_calibration` | Grade FBM engine vs ESPN forecasts on the next 14 days; measure and store the ESPN blend weight |
+| `signal_grades` | Grade finished signals: hit rate by kind and confidence, ownership move after the signal |
+| `weekly_retro_data` | Everything the weekly retro needs for a fantasy week (default: last completed), incl. projection calibration and signal grades |
 
 ## Draft
 

@@ -5,8 +5,8 @@ description: Draft help — build a draft board, compare draft slots or punt bui
 
 # Draft assistant
 
-Run as the `gm` agent. Values are punt-aware G-scores from projections (pre-season = last season's per-game
-stats); market expectations are ESPN ADP, or Yahoo ADP after `draft_adp_refresh` (CLI `fbm draft adp --refresh`;
+Run as the `gm` agent. Values are punt-aware G-scores from projections (pre-season = ESPN's preseason projection,
+else last season's per-game stats); market expectations are ESPN ADP, or Yahoo ADP after `draft_adp_refresh` (CLI `fbm draft adp --refresh`;
 Yahoo league only). In the Yahoo league, live picks sync with `draft_sync_yahoo` (CLI `fbm draft live` polls until
 the draft ends); otherwise the owner reports picks.
 

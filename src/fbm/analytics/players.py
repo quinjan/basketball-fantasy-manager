@@ -1,4 +1,4 @@
-"""Player stat tables (per-game means) and rest-of-season projections from the local store."""
+"""Player stat tables (per-game means), ESPN projection snapshots, and rest-of-season projections."""
 
 from __future__ import annotations
 
@@ -134,19 +134,76 @@ def apply_minutes_trend(proj: pd.DataFrame, current_mpg: pd.Series, recent: pd.D
     return out
 
 
-def projection_table(
+def espn_snapshot_table(
+    conn: sqlite3.Connection,
+    season: int,
+    on_or_before: str | None = None,
+    before: str | None = None,
+    earliest: bool = False,
+) -> pd.DataFrame:
+    """One ESPN projection per player: the latest snapshot (or the earliest), optionally limited by date."""
+    cond, params = "season = ?", [season]
+    if on_or_before:
+        cond += " AND snapshot_date <= ?"
+        params.append(on_or_before)
+    if before:
+        cond += " AND snapshot_date < ?"
+        params.append(before)
+    agg = "MIN" if earliest else "MAX"
+    df = pd.read_sql_query(
+        "SELECT p.espn_id, p.snapshot_date, p.name, p.team, p.position, p.gp, "
+        + ", ".join(f"p.{s}" for s in BASE_STATS)
+        + f" FROM espn_projections p JOIN (SELECT espn_id, {agg}(snapshot_date) AS d FROM espn_projections "
+        f"WHERE {cond} GROUP BY espn_id) m ON p.espn_id = m.espn_id AND p.snapshot_date = m.d WHERE p.season = ?",
+        conn,
+        params=(*params, season),
+    )
+    return df.set_index("espn_id")
+
+
+def opening_day(conn: sqlite3.Connection, season: int) -> str | None:
+    row = conn.execute("SELECT MIN(et_date) FROM games WHERE season = ? AND season_type = 2", (season,)).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def espn_baseline_table(conn: sqlite3.Connection, season: int) -> pd.DataFrame:
+    """Preseason baseline: each player's last ESPN snapshot before opening night. Players ESPN first projected after
+    opening night (or every player, when FBM was installed mid-season) use their earliest snapshot instead."""
+    opening = opening_day(conn, season)
+    pre = espn_snapshot_table(conn, season, before=opening)
+    if opening is None:
+        return pre
+    later = espn_snapshot_table(conn, season, earliest=True)
+    return pd.concat([pre, later[~later.index.isin(pre.index)]])
+
+
+def prior_table(conn: sqlite3.Connection, current: int, prior: int) -> pd.DataFrame:
+    """What we expected before this season's games: ESPN's preseason projection, else last season's per-game stats.
+    `prior_source` says which (gp is ESPN's projected games for the ESPN rows)."""
+    base = espn_baseline_table(conn, current).drop(columns=["snapshot_date"], errors="ignore")
+    last = season_table(conn, prior)
+    last = last[~last.index.isin(base.index)]
+    parts = [t for t in (base.assign(prior_source="espn_preseason"), last.assign(prior_source="last_season")) if len(t)]
+    if not parts:
+        return pd.DataFrame(columns=["name", "team", "position", "gp", *BASE_STATS, "prior_source"])
+    out = pd.concat(parts)
+    out.index.name = "espn_id"
+    return out
+
+
+def engine_projection_table(
     conn: sqlite3.Connection, current: int, prior: int, shrink_games: float | None = None
 ) -> pd.DataFrame:
-    """Rest-of-season per-game projection: current season shrunk toward the prior season by games played,
-    then adjusted for recent minutes trends (role changes).
+    """FBM's own rest-of-season per-game projection: current season shrunk toward the prior (ESPN preseason
+    projection, else last season) by games played, then adjusted for recent form and minutes trends (role changes).
 
     weight_current = gp_current / (gp_current + shrink_games). Recent per-minute form (apply_recent_form) is blended
-    in before the minutes trend. Players without prior data use current stats only;
-    players without current data use the prior (pre-season / injured).
+    in before the minutes trend. Players without a prior use current stats only; players without current data use
+    the prior (pre-season / injured / rookies).
     """
     shrink = float(C("projection.shrink_games")) if shrink_games is None else shrink_games
     cur = season_table(conn, current)
-    prev = season_table(conn, prior)
+    prev = prior_table(conn, current, prior)
     ids = cur.index.union(prev.index)
     cur = cur.reindex(ids)
     prev = prev.reindex(ids)
@@ -158,6 +215,7 @@ def projection_table(
         out[col] = cur[col].combine_first(prev[col])
     out["gp_current"] = gp_cur.astype(int)
     out["gp_prior"] = prev["gp"].fillna(0).astype(int)
+    out["prior_source"] = prev["prior_source"].fillna("none")
     out["weight_current"] = w.round(3)
     for stat in BASE_STATS:
         out[stat] = w * cur[stat].fillna(0.0) + (1 - w) * prev[stat].fillna(0.0)
@@ -171,3 +229,40 @@ def projection_table(
         out["role"] = ""
         return out
     return apply_minutes_trend(out, cur["minutes"], recent)
+
+
+def blend_espn(engine: pd.DataFrame, espn: pd.DataFrame, weight: float) -> pd.DataFrame:
+    """Final projection = (1 - weight) * engine + weight * ESPN's current projection, stat by stat, for players
+    both project (others keep the engine line). `espn_weight` records the weight each player got."""
+    out = engine.copy()
+    out["espn_weight"] = 0.0
+    if espn.empty or weight <= 0 or out.empty:
+        return out
+    both = out.index.intersection(espn.index[espn["minutes"].fillna(0) > 0])
+    both = both[out.loc[both, "minutes"] > 0]
+    if not len(both):
+        return out
+    w = min(1.0, float(weight))
+    for stat in BASE_STATS:
+        out.loc[both, stat] = (1 - w) * out.loc[both, stat] + w * espn.loc[both, stat].fillna(0.0).astype(float)
+    out.loc[both, "espn_weight"] = w
+    return out
+
+
+def projection_table(
+    conn: sqlite3.Connection,
+    current: int,
+    prior: int,
+    shrink_games: float | None = None,
+    espn_weight: float | None = None,
+) -> pd.DataFrame:
+    """Rest-of-season per-game projection used everywhere: FBM's engine blended with ESPN's current projection.
+
+    The ESPN weight is `espn_weight` if given, else the resolved weight (constants override > measured by
+    projection_calibration > projection.espn_weight default).
+    """
+    from fbm.analytics.projection_calibration import resolve_espn_weight
+
+    engine = engine_projection_table(conn, current, prior, shrink_games)
+    weight = resolve_espn_weight(conn)[0] if espn_weight is None else espn_weight
+    return blend_espn(engine, espn_snapshot_table(conn, current), weight)

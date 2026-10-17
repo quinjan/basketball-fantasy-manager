@@ -11,6 +11,8 @@ Run as the `gm` agent. Add/drops and claims are proposals — FBM never makes th
    ownership.
 2. Candidates: `free_agents(sort="value", punts=<approved punts>)` for rest-of-season (values are
    availability-adjusted for injuries); `free_agents(sort="week")` is this week only (see `stream-plan`).
+   Gems: `signals(scope="fa")` — next-man-up opportunities, new starters, buy-lows and ESPN revisions on free
+   agents, often before their season stats or rankings move.
 3. "Drop X for Y?" → `evaluate_add_drop(add=Y, drop=X)`; check `player_card` for both (injury, minutes trend).
 4. On waivers → `waiver_decision(player, drop)`: claim / wait / pass under rolling priority. Spend priority only on
    a clear multi-week upgrade, never on a one-day stream.

@@ -351,8 +351,12 @@ def player_card(query: str) -> dict[str, Any]:
         "projection_basis": {
             "gp_current": int(proj["gp_current"]),
             "gp_prior": int(proj["gp_prior"]),
+            "prior_source": str(proj.get("prior_source", "")),
             "weight_current": float(proj["weight_current"]),
+            "espn_weight": _r(proj.get("espn_weight", 0.0)),
         },
+        "espn_projection": _espn_lines(pid),
+        "signals": _player_signals(pid),
         "minutes_trend": _role(c, pid),
         "playoff_schedule": _player_playoff(pid),
         "per_game_projection": _per_game(c, pid),
@@ -1063,10 +1067,15 @@ def refresh_data() -> dict[str, Any]:
         if r["espn_id"] in rostered
     ]
     _CTX_CACHE.clear()
+    try:
+        early = post_sync()
+    except Exception as err:  # signals are additive; never fail the refresh over them
+        early = {"error": f"{type(err).__name__}: {err}"}
     return {
         "jobs": [str(r) for r in results],
         **({"yahoo_snapshot": yahoo_summary} if yahoo_summary else {}),
         "rostered_injury_changes": [{**ch, "fantasy_team": rostered[ch["espn_id"]]} for ch in changes],
+        "early_signals": early,
     }
 
 
@@ -1080,6 +1089,14 @@ def context_pack() -> dict[str, Any]:
     pack["recent_journal"] = memory.recent_journal()
     pack["manager_notes"] = memory.manager_notes()
     pack["open_proposals_detail"] = [p.as_dict() for p in props.list_proposals(conn, "open")]
+    try:
+        new = signals_tool(new_only=True, top=12)["signals"]
+        pack["signals_new"] = [
+            {k: s.get(k) for k in ("kind", "direction", "player", "nba", "confidence", "owner", "action_hint", "note")}
+            for s in new
+        ]
+    except Exception as err:  # context must load even if the signal feed can't
+        pack["signals_new"] = {"error": f"{type(err).__name__}: {err}"}
     settings = load_settings()
     pack["decision_policy"] = {
         "league_changes": "none: FBM gives insights, lineup recommendations and proposals; the owner makes every move",
@@ -1436,7 +1453,7 @@ def weekly_retro_data_tool(week_start: str | None = None) -> dict[str, Any]:
 
     c = ctx()
     start = parse_date(week_start) if week_start else fantasy_week(nba_today() - timedelta(days=7))[0]
-    return outcomes.weekly_retro_data(
+    data = outcomes.weekly_retro_data(
         _conn(),
         c.pool,
         c.cfg.categories,
@@ -1445,6 +1462,156 @@ def weekly_retro_data_tool(week_start: str | None = None) -> dict[str, Any]:
         _strategy_punts(None),
         names=c.projections["name"].to_dict(),
     )
+    for key, fn in (("projection_calibration", projection_calibration_tool), ("signal_grades", signal_grades_tool)):
+        try:
+            data[key] = fn()
+        except Exception as err:  # retro data must still come back if one learning input fails
+            data[key] = {"error": f"{type(err).__name__}: {err}"}
+    return data
+
+
+# ------------------------------------------------------------------ early signals & projection calibration
+
+
+def _ownership() -> dict[str, list[float | None]]:
+    try:
+        return dict(active_league().ownership)
+    except Exception:  # demo league not built / Yahoo unavailable: ownership is optional context
+        return {}
+
+
+def _owner_kind(pid: str, owners: dict[str, FantasyTeam], my_key: str) -> tuple[str, str]:
+    if pid not in owners:
+        return "fa", "free agent"
+    team = owners[pid]
+    return ("mine" if team.team_key == my_key else "other"), team.name
+
+
+def post_sync() -> dict[str, Any]:
+    """After every data sync: log today's engine and ESPN forecasts (calibration) and detect/persist early signals.
+    Runs from `refresh_data` (daily-gm, hourly lineup-guard) and `fbm data sync` (scheduled, no AI)."""
+    from fbm.analytics import players as player_tables
+    from fbm.analytics.projection_calibration import log_forecasts
+    from fbm.analytics.signals import detect_all
+    from fbm.gm import signals as signal_feed
+
+    _CTX_CACHE.clear()
+    c, conn, today = ctx(), _conn(), nba_today()
+    espn_now = player_tables.espn_snapshot_table(conn, c.season)
+    opening = player_tables.opening_day(conn, c.season)
+    in_season = opening is not None and today.isoformat() >= opening
+    logged = 0
+    if in_season and c.engine_projections is not None:  # before opening night the engine forecast is ESPN's
+        logged = log_forecasts(conn, c.season, today, c.engine_projections, espn_now)
+    found = detect_all(conn, c.season, c.prior, c.projections, c.pool, c.cfg, c.statuses(conn), today)
+    new_ids = signal_feed.record(conn, c.season, found, ownership=_ownership())
+    new = [s for s in signal_feed.active(conn) if s["signal_id"] in set(new_ids)]
+    return {
+        "forecasts_logged": logged,
+        "signals_detected": len(found),
+        "signals_new": [
+            {k: s[k] for k in ("kind", "direction", "player", "nba", "confidence", "note")} for s in new[:15]
+        ],
+    }
+
+
+def _annotate(rows: list[dict[str, Any]], league: LeagueState) -> list[dict[str, Any]]:
+    from fbm.analytics.signals import action_hint
+
+    owners = _owners(league)
+    for r in rows:
+        owner, owner_name = _owner_kind(r["id"], owners, league.my_team_key)
+        r["owner"] = owner_name
+        r["action_hint"] = action_hint(r["kind"], r["direction"], owner)
+        r["_scope"] = owner
+        if own := league.ownership.get(r["id"]):
+            r["pct_owned"], r["pct_owned_delta"] = own[0], own[1]
+    return rows
+
+
+def _scoped(rows: list[dict[str, Any]], scope: str) -> list[dict[str, Any]]:
+    wanted = {"all": None, "mine": "mine", "my_roster": "mine", "others": "other", "fa": "fa", "free_agents": "fa"}
+    if scope not in wanted:
+        raise GMError("scope must be one of: all, mine, others, fa")
+    keep = [r for r in rows if wanted[scope] is None or r["_scope"] == wanted[scope]]
+    for r in keep:
+        r.pop("_scope", None)
+    return keep
+
+
+def signals_tool(
+    scope: str = "all",
+    kind: str | None = None,
+    new_only: bool = False,
+    top: int = 30,
+    refresh: bool = False,
+    min_confidence: str | None = None,
+) -> dict[str, Any]:
+    """The early-signal feed (persisted by every sync). refresh=True re-runs detection first."""
+    from fbm.gm import signals as signal_feed
+
+    detection = post_sync() if refresh else None
+    kinds = [k.strip() for k in kind.split(",")] if kind else None
+    feed = signal_feed.active(_conn(), kinds=kinds, new_only=new_only, min_confidence=min_confidence)
+    rows = _scoped(_annotate(feed, active_league()), scope)
+    return {
+        **({"detection": detection} if detection else {}),
+        "signals": rows[:top],
+        "count": len(rows),
+        "kinds": "buy_low / sell_high (season line vs projection), role_change (starts/minutes), opportunity "
+        "(key teammate out), espn_revision (ESPN projection moved)",
+        "direction": "up = value expected to rise vs what the market sees; down = expected to fall",
+        "min_confidence": min_confidence or str(C("signals.feed_min_confidence")),
+    }
+
+
+def buy_sell_tool(scope: str = "all", top: int = 15) -> dict[str, Any]:
+    """Fresh buy-low / sell-high lists (not limited to the persisted feed)."""
+    from fbm.analytics.signals import detect_all
+
+    c, conn, league = ctx(), _conn(), active_league()
+    found = detect_all(
+        conn, c.season, c.prior, c.projections, c.pool, c.cfg, c.statuses(conn), nba_today(), ("buy_low", "sell_high")
+    )
+    rows = _scoped(_annotate([s.as_dict() for s in found], league), scope)
+    order = {"high": 0, "medium": 1, "low": 2}
+    rows.sort(key=lambda r: (order.get(r["confidence"], 3), -r["strength"]))
+    if not rows and not int(c.projections["gp_current"].max() or 0):
+        note = "No games played yet this season: buy/sell needs a season line to compare with."
+    else:
+        note = (
+            "gap = season-to-date value minus rest-of-season projection value (G points per game, all categories). "
+            "Confidence is high when the gap is luck-driven (shooting, temporary role) and low when the role itself "
+            "changed or the sample is small."
+        )
+    return {
+        "buy_low": [r for r in rows if r["kind"] == "buy_low"][:top],
+        "sell_high": [r for r in rows if r["kind"] == "sell_high"][:top],
+        "min_gap": float(C("signals.buy_sell_min_gap")),
+        "note": note,
+    }
+
+
+def projection_calibration_tool() -> dict[str, Any]:
+    """Grade logged engine vs ESPN forecasts and measure the blend weight (stored once the sample is big enough)."""
+    from fbm.analytics.projection_calibration import measure_and_store
+
+    c = ctx()
+    report = measure_and_store(_conn(), c.season, nba_today())
+    _CTX_CACHE.clear()
+    report["how_to_read"] = (
+        "best_weight = weight on ESPN that minimised forecast error over the graded windows (0 = FBM engine only, "
+        "1 = ESPN only). normalized_error: lower is better (1.0 = no better than guessing the average player)."
+    )
+    return report
+
+
+def signal_grades_tool() -> dict[str, Any]:
+    from fbm.gm import signals as signal_feed
+
+    c, conn = ctx(), _conn()
+    newly = signal_feed.grade_pending(conn, c.pool, c.cfg, nba_today(), _ownership())
+    return {"newly_graded": newly[:40], "newly_graded_count": len(newly), **signal_feed.summary(conn, c.season)}
 
 
 # ------------------------------------------------------------------ draft assistant
@@ -1513,7 +1680,8 @@ def draft_board(
         "punts": list(pun),
         "adp_source": source,
         "players": _board_rows(board, top),
-        "notes": "value = punt-aware G-score (pre-season: last season per-game); value_vs_adp > 0 means the "
+        "notes": "value = punt-aware G-score (pre-season: ESPN's preseason projection, else last season per-game); "
+        "value_vs_adp > 0 means the "
         f"market drafts him later than his value rank (potential bargain). ADP source: {source}.",
     }
 
@@ -1920,6 +2088,47 @@ def constants_table() -> dict[str, Any]:
         "unknown_overrides": unknown_overrides(),
         "how_to_change": 'Edit config/constants.toml, e.g. "stream.min_gain" = 0.08 (journal why).',
     }
+
+
+def _espn_lines(pid: str) -> dict[str, Any] | None:
+    """ESPN's preseason baseline and latest projection (per game) for one player."""
+    from fbm.analytics import players as player_tables
+
+    c, conn = ctx(), _conn()
+    out = {}
+    for label, table in (
+        ("preseason", player_tables.espn_baseline_table(conn, c.season)),
+        ("latest", player_tables.espn_snapshot_table(conn, c.season)),
+    ):
+        if pid in table.index:
+            r = table.loc[pid]
+            out[label] = {
+                "snapshot_et": str(r["snapshot_date"]),
+                **{
+                    k: _r(r[s], 1)
+                    for k, s in (
+                        ("min", "minutes"),
+                        ("pts", "pts"),
+                        ("reb", "reb"),
+                        ("ast", "ast"),
+                        ("stl", "stl"),
+                        ("blk", "blk"),
+                        ("tov", "tov"),
+                        ("3pm", "tpm"),
+                    )
+                },
+                "fg%": _r(r["fgm"] / r["fga"], 3) if r["fga"] else None,
+                "ft%": _r(r["ftm"] / r["fta"], 3) if r["fta"] else None,
+                "gp": _r(r["gp"], 0),
+            }
+    return out or None
+
+
+def _player_signals(pid: str) -> list[dict[str, Any]]:
+    from fbm.gm import signals as signal_feed
+
+    keep = ("kind", "direction", "confidence", "reasons", "note", "first_seen_et")
+    return [{k: s[k] for k in keep} for s in signal_feed.active(_conn(), player=pid, min_confidence="low")]
 
 
 def _role(c: AnalyticsContext, pid: str) -> dict[str, Any] | None:

@@ -16,7 +16,8 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
 ## 1. Start of every session
 
 1. Call `context_pack`. Read the approved strategy, playbook, recent journal, manager notes, open proposals,
-   proposal rules, data freshness, Yahoo status, and the current ET game day + fantasy week.
+   proposal rules, data freshness, Yahoo status, the current ET game day + fantasy week, and `signals_new` (early
+   signals FBM caught since the last run).
 2. If box scores/injuries are older than ~12h (or before any decision run), call `refresh_data`.
 3. If `source` is `demo`, remember the league is simulated until Yahoo approves API access — say so when relevant.
 4. Yahoo league: Yahoo is **read-only** for us. Call `snapshot` when its `fetched_at` is stale or before any
@@ -33,8 +34,17 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
   `evaluate_add_drop` before any pickup. Cite the numbers you used. Rest-of-season values (rankings, free agents,
   waivers, trades, punts) are already scaled by injury availability (ESPN status/return dates); projections blend
   recent per-minute form and the minutes trend.
-- **Learn from results.** `grade_decisions` and `prediction_calibration` tell you how past moves and predictions
-  turned out. If calibration is weak, hedge close calls; if a type of move keeps grading badly, stop making it.
+- **Act early, on evidence.** The edge comes from moving before other managers react to season stats and rankings.
+  Every data sync detects early signals (`signals`, `buy_sell`): `opportunity` (a key player is out — who gains
+  minutes), `role_change` (new starter, lost job, minutes spike), `buy_low` / `sell_high` (season line vs our
+  projection, with luck-vs-role reasons) and `espn_revision`. `direction` is where value should go vs what the
+  market sees; `action_hint` depends on who owns him. Act on medium/high confidence only (low-confidence signals
+  backtested no better than the naive view), confirm with `evaluate_add_drop` / `waiver_decision` / `evaluate_trade`,
+  and check the cause in `news` (or the `scout` agent). Minutes and starts are fast, reliable signals; shooting
+  swings are mostly luck; a role grown because a teammate is out shrinks when he returns.
+- **Learn from results.** `grade_decisions`, `prediction_calibration`, `projection_calibration` (FBM engine vs ESPN
+  forecasts; sets the ESPN blend weight) and `signal_grades` (hit rate per signal kind) tell you how past moves,
+  predictions, projections and signals turned out. If calibration is weak, hedge close calls; if a type of move keeps grading badly, stop making it.
 - **Waivers are rolling.** Before any waiver claim, run `waiver_decision`: claim only when the rest-of-season gain
   clears the value of our priority; otherwise wait for the player to clear waivers (if no other team, ahead of or
   behind us, is likely to claim) or pass.
@@ -62,7 +72,8 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
   `propose_switch` (a build beats the approved one by the switch margin). Its `lens_conflicts` list moves the
   strategy's rankings would get wrong (e.g. dropping a guard we still need for AST/PTS) — check those before
   following punt-aware rankings for a drop.
-- **Know your uncertainty.** Projections early in the season lean on last season. Synthetic player models
+- **Know your uncertainty.** Projections early in the season lean on ESPN's preseason projection (else last season;
+  `player_card.projection_basis.prior_source`), blended with ESPN's latest projection at the measured weight. Synthetic player models
   (listed by `simulate_matchup`) are less reliable. Say when a call is close.
 
 ## 3. Recommendations (no approval loop — the owner sets them in Yahoo)
@@ -118,7 +129,7 @@ Daily report (email kind `report`) — concise markdown:
 - Headline: matchup status (expected cats, P(win week), swing cats) and the one thing that matters most today.
 - Recommended lineup steps, injuries affecting the roster.
 - Proposals awaiting approval with refs, expiry (local time), reviewer verdict, and how to approve.
-- Watchlist (2–5 players) with one-line reasons.
+- Watchlist (2–5 players) with one-line reasons — start from new medium/high-confidence `signals`.
 Approval requests use kind `approval` (bypasses quiet hours). Never put secrets in email.
 If email is disabled (`[notify] email_enabled = false`), `send_email` returns `disabled` and logs to the outbox.
 That's expected — the report file in `reports/`, the journal, and the agent session are the channels.

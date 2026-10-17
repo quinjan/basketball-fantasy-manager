@@ -205,6 +205,60 @@ CREATE TABLE IF NOT EXISTS league_transaction_players (
     destination_team_key TEXT,
     PRIMARY KEY (tx_key, seq)
 );
+
+CREATE TABLE IF NOT EXISTS espn_projections (
+    season INTEGER NOT NULL,
+    snapshot_date TEXT NOT NULL,
+    espn_id TEXT NOT NULL,
+    name TEXT, team TEXT, position TEXT,
+    gp REAL, minutes REAL, pts REAL, fgm REAL, fga REAL, tpm REAL, tpa REAL,
+    ftm REAL, fta REAL, reb REAL, ast REAL, tov REAL, stl REAL, blk REAL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (season, snapshot_date, espn_id)
+);
+CREATE INDEX IF NOT EXISTS ix_espn_proj_player ON espn_projections(espn_id, snapshot_date);
+
+CREATE TABLE IF NOT EXISTS projection_log (
+    season INTEGER NOT NULL,
+    as_of TEXT NOT NULL,
+    source TEXT NOT NULL,
+    espn_id TEXT NOT NULL,
+    minutes REAL, pts REAL, fgm REAL, fga REAL, tpm REAL, tpa REAL,
+    ftm REAL, fta REAL, reb REAL, ast REAL, tov REAL, stl REAL, blk REAL,
+    PRIMARY KEY (as_of, source, espn_id)
+);
+
+CREATE TABLE IF NOT EXISTS signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    season INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    espn_id TEXT NOT NULL,
+    name TEXT,
+    team TEXT,
+    strength REAL,
+    confidence TEXT,
+    reasons TEXT,
+    note TEXT,
+    evidence TEXT,
+    first_seen TEXT NOT NULL,
+    first_seen_et TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    pct_owned_at REAL,
+    graded_at TEXT,
+    result TEXT,
+    basis TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_signals_key ON signals(key, last_seen);
+CREATE INDEX IF NOT EXISTS ix_signals_seen ON signals(last_seen);
+
+CREATE TABLE IF NOT EXISTS model_params (
+    key TEXT PRIMARY KEY,
+    value REAL NOT NULL,
+    detail TEXT,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -226,6 +280,9 @@ def connect(path: Path | str = DB_PATH) -> sqlite3.Connection:
 
 def migrate(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(signals)")}
+    if "basis" not in cols:  # grading basis frozen at first sight (added after the signals table shipped)
+        conn.execute("ALTER TABLE signals ADD COLUMN basis TEXT")
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
 

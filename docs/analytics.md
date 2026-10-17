@@ -18,10 +18,44 @@ week-to-week standard deviation, and κ = 2N/(2N−1).
 
 ## Projections
 
-- Current-season per-game stats are shrunk toward last season's, weighted by games played.
-- Recent per-minute form is blended in.
-- Counting stats are scaled by the recent-minutes trend (recent games vs season, damped and capped) so role changes
-  show up early.
+- **Preseason baseline.** Every data sync snapshots ESPN's season projections (`espn_projections`, one snapshot per
+  ET day). Each player's last snapshot before opening night is his preseason baseline (players ESPN first projects
+  later use their first snapshot). Players ESPN doesn't project fall back to last season's per-game stats. This is
+  the prior: rookies and players who missed last season get real values.
+- **FBM engine.** Current-season per-game stats are shrunk toward that prior, weighted by games played
+  (`gp / (gp + 15)`). Recent per-minute form is blended in. Counting stats are scaled by the recent-minutes trend
+  (recent games vs season, damped and capped) so role changes show up early.
+- **ESPN blend.** The final projection is `(1 − w) × engine + w × ESPN's latest projection`. `w` starts at
+  `projection.espn_weight` (0.5) and is replaced by a measured weight once enough forecasts are graded (below);
+  an override in `config/constants.toml` always wins.
+
+## Projection calibration
+
+Every sync logs both forecasts (`projection_log`). After `projection.calibration_horizon_days` (14) each forecast is
+graded against what the player actually averaged (≥ 3 games). Per stat the best blend weight has a closed form
+(least squares on `(1 − w)·engine + w·ESPN − actual`); the overall weight minimises the sum of per-stat errors, each
+normalised by that stat's spread across players. `projection_calibration` reports RMSE per stat, engine-only vs
+ESPN-only vs blend error, and stores the measured weight once `projection.calibration_min_dates` forecast dates are
+graded.
+
+## Early signals
+
+Detected after every sync (scheduled `fbm data sync`, `refresh_data` in the daily run and the hourly lineup guard),
+stored once per episode with the time FBM first caught it, and graded 14 days later. `direction` is where the
+player's value should go relative to what the market (season stats, rankings) sees.
+
+| Kind | Trigger | Why it's early |
+|---|---|---|
+| `buy_low` / `sell_high` | Season-to-date value vs FBM's rest-of-season value differs by ≥ 1.5 G/game | Reason tags separate luck (FG%/FT%/3P% vs expectation, a key teammate out) from role (minutes, usage). Confidence is high when the gap is luck-driven, low when the role changed or the sample is small. |
+| `role_change` | A bench player starts (or a starter is benched) at ≥ 24 min, or last-3-game minutes move ≥ 6 | Starts and minutes stabilise in a few games; the box score shows them days before averages move. |
+| `opportunity` | A key player (≥ 24 projected min) is ruled out | Teammates' minutes with vs without him (this season's games first; last season's split is at most medium confidence), floor of 20 min without him. Flagged the moment the injury is posted, before any game is played. |
+| `espn_revision` | ESPN's projection value moved ≥ 0.5 G/game in a week | ESPN's (and then the market's) view changes before season stats do. |
+
+Grading: buy/sell is a hit when production over the window was closer to our projection than to the season line;
+other kinds when the value or minutes moved in the predicted direction. In the Yahoo league the change in % owned
+after the signal shows whether the market followed (our lead). Backtest on 2025-26 (7 cutoffs): role changes at
+medium/high confidence hit ~70%, high-confidence buy-low ~87% (small sample), sell-high ~55%, low-confidence
+signals ~45–55% — so the feed shows medium and high confidence by default (`signals.feed_min_confidence`).
 
 ## Availability
 
@@ -84,6 +118,9 @@ apparent category build, plus the best trade partners by complementary needs.
   completion (acquired minus given up), in team-week standard-deviation units.
 - **Calibration:** finished matchup predictions are graded by Brier score against a coin-flip baseline, with
   reliability buckets.
+- **Projections:** engine vs ESPN forecasts graded on the following 14 days; the measured blend weight feeds back
+  into every projection (see Projection calibration).
+- **Signals:** hit rate by kind and confidence, and the ownership move after each signal (see Early signals).
 
 ## Draft assistant
 

@@ -17,6 +17,12 @@ Run as the `gm` agent.
    Note rejected/expired proposals and the owner's stated reasons.
 3. **Calibration:** `prediction_calibration`. If Brier is not clearly better than the coin-flip baseline, or
    reliability buckets are off (e.g. our 80% calls win 60%), say so and be more cautious with close calls.
+   **Projections:** `projection_calibration` (also in `weekly_retro_data`): FBM engine vs ESPN forecast error and
+   the measured ESPN blend weight (stored automatically once enough forecast dates are graded). Report which
+   forecaster is winning and the weight in use.
+   **Signals:** `signal_grades` (also in `weekly_retro_data`): hit rate per kind and confidence, and whether
+   ownership rose after we flagged players (our lead). If a kind keeps hitting below 50% over ≥ 20 graded signals,
+   propose raising its threshold (or `signals.feed_min_confidence`) in `config/constants.toml` with the numbers.
 4. **Playbook:** add or revise lessons in `memory/playbook.md` only with evidence (cite refs and counts). Remove
    lessons contradicted by evidence. Keep it under ~60 lines. If evidence says a registry constant is mis-set
    (e.g. our 60% calls win 40%, or streams keep grading badly), propose a `config/constants.toml` change to the owner

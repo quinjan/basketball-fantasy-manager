@@ -57,7 +57,8 @@ def tool(annotations: ToolAnnotations = READ):
 @tool()
 def context_pack() -> dict:
     """START HERE every session. League overview, approved strategy, playbook, recent journal, manager notes,
-    open proposals, decision policy (FBM never changes the league), data freshness, and Yahoo access status."""
+    open proposals, new early signals (signals_new), decision policy (FBM never changes the league), data freshness,
+    and Yahoo access status."""
     return svc.context_pack()
 
 
@@ -77,8 +78,9 @@ def my_roster(day: str | None = None, punts: str | None = None) -> dict:
 
 @tool()
 def player_card(query: str) -> dict:
-    """Everything about one player (name or ESPN id): projection, G/Z by category, rank, fantasy owner, injury,
-    games left this week, last-10 averages, recent news."""
+    """Everything about one player (name or ESPN id): projection (and its basis: ESPN preseason / last season, ESPN
+    blend weight), ESPN preseason vs latest projection, active early signals, G/Z by category, rank, fantasy owner,
+    injury, games left this week, last-10 averages, recent news."""
     return svc.player_card(query)
 
 
@@ -283,8 +285,53 @@ def prediction_calibration() -> dict:
 @tool()
 def weekly_retro_data(week_start: str | None = None) -> dict:
     """Everything the weekly retro needs for a fantasy week (default: last completed week): graded decisions,
-    proposals and owner decisions, graded predictions, season calibration."""
+    proposals and owner decisions, graded predictions, season calibration, projection calibration (engine vs ESPN)
+    and signal grades."""
     return svc.weekly_retro_data_tool(week_start)
+
+
+@tool()
+def projection_calibration() -> dict:
+    """Grade logged forecasts (FBM engine vs ESPN projection) against the next 14 days of box scores: per-stat RMSE,
+    normalized error for engine-only / ESPN-only / blend, and the best ESPN blend weight. Stores the measured weight
+    (used by every projection) once enough forecast dates are graded; a config/constants.toml override wins."""
+    return svc.projection_calibration_tool()
+
+
+# ---------------------------------------------------------------- early signals
+
+
+@tool()
+def signals(
+    scope: str = "all",
+    kind: str | None = None,
+    new_only: bool = False,
+    top: int = 30,
+    refresh: bool = False,
+    min_confidence: str | None = None,
+) -> dict:
+    """Early-signal feed, refreshed by every data sync: buy_low / sell_high, role_change (new starter, lost job,
+    minutes spike/drop), opportunity (key teammate out; with/without minutes split), espn_revision. Each has
+    direction (up/down vs what the market sees), confidence, reasons, evidence, first_seen_et, is_new, owner and an
+    action hint. scope: all | mine | others | fa. kind: comma-separated kinds. refresh=True re-runs detection.
+    min_confidence: high | medium | low (default signals.feed_min_confidence; low-confidence signals backtested no
+    better than the naive view)."""
+    return svc.signals_tool(scope, kind, new_only, top, refresh, min_confidence)
+
+
+@tool()
+def buy_sell(scope: str = "all", top: int = 15) -> dict:
+    """Buy-low / sell-high lists computed now: season-to-date value vs FBM's rest-of-season projection (G points per
+    game), with reasons vs the preseason expectation (minutes, usage, hot/cold FG%/FT%/3P%, teammate out, small
+    sample), confidence, owner and action hint. scope: all | mine | others | fa."""
+    return svc.buy_sell_tool(scope, top)
+
+
+@tool()
+def signal_grades() -> dict:
+    """Grade signals whose 14-day window has finished (hit = production moved as the signal said) and report hit
+    rate by kind and confidence, plus how Yahoo ownership moved after we flagged the player (our lead)."""
+    return svc.signal_grades_tool()
 
 
 # ---------------------------------------------------------------- draft assistant
@@ -358,7 +405,8 @@ def lineup_steps(day: str | None = None, confirm: bool = False) -> dict:
 
 @tool(WRITE)
 def refresh_data() -> dict:
-    """Run the daily ESPN sync (schedule, box scores, averages, injuries, news). Returns rostered injury changes."""
+    """Run the daily ESPN sync (schedule, box scores, averages, injuries, news, ESPN projection snapshot), log today's
+    forecasts and detect early signals. Returns rostered injury changes and newly caught signals."""
     return svc.refresh_data()
 
 

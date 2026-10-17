@@ -26,18 +26,22 @@ make every move in Yahoo yourself. Everything runs on your machine.
 ## What it does
 
 - **Values players** with G-scores (a variance-aware improvement on Z-scores) and punt-aware rankings.
-- **Projects players** from this season, last season, recent form, minutes trends, and injury status.
+- **Projects players** from this season, ESPN's preseason projection (else last season), recent form, minutes
+  trends, and injury status, blended with ESPN's current projection at a weight measured from graded forecasts.
+- **Catches early signals**: buy-low / sell-high, new starters and minutes spikes, next-man-up opportunities when a
+  key player is out, and ESPN projection revisions — refreshed by every data sync and graded afterwards.
 - **Simulates your matchup** (Monte Carlo, including stats already banked this week) for per-category win odds.
 - **Recommends the daily lineup** and IL moves with exact steps, respecting tip-off locks.
 - **Plans streaming** adds/drops within your weekly add limit.
 - **Decides rolling waivers**: claim now, wait for free agency, or pass.
 - **Evaluates and finds trades** for both sides; compares punt builds; looks ahead to the fantasy playoffs.
 - **Scouts opponents** from league transactions.
-- **Learns**: grades past decisions and checks how well-calibrated its simulations are.
+- **Learns**: grades past decisions and signals, checks how well-calibrated its simulations are, and measures
+  whether FBM's engine or ESPN projects better.
 - **Drafts**: board, live recommendations (with live Yahoo draft sync), and mock drafts.
 - **Runs on a schedule** (optional) and keeps a local memory of strategy, playbook, and journal.
 
-Interfaces: an MCP server (50 tools), the `fbm` CLI, and a local Streamlit dashboard (14 pages).
+Interfaces: an MCP server (54 tools), the `fbm` CLI, and a local Streamlit dashboard (14 pages).
 
 ## What it doesn't do (limitations)
 

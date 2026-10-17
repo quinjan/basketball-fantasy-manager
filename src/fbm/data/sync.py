@@ -135,6 +135,21 @@ def sync_fantasy_meta(conn: sqlite3.Connection, espn: EspnClient, season: int) -
     return SyncResult(f"fantasy meta {season}", n)
 
 
+def sync_espn_projections(conn: sqlite3.Connection, espn: EspnClient, season: int, snapshot_date: date) -> SyncResult:
+    """Daily snapshot of ESPN's season projections (the last pre-opening-night snapshot is the preseason baseline)."""
+    from fbm.constants import C
+    from fbm.data import espn_fantasy
+
+    team_abbr = {r["espn_id"]: r["abbr"] for r in conn.execute("SELECT espn_id, abbr FROM nba_teams")}
+    if not team_abbr:
+        sync_teams(conn, espn)
+        team_abbr = {r["espn_id"]: r["abbr"] for r in conn.execute("SELECT espn_id, abbr FROM nba_teams")}
+    ttl = float(C("projection.espn_snapshot_hours")) * 3600
+    lines = espn_fantasy.fetch_projections(espn.fetcher, season, team_abbr, ttl=ttl)
+    n = espn_fantasy.store_projections(conn, season, snapshot_date.isoformat(), lines)
+    return SyncResult(f"espn projections {season}", n, notes=[f"snapshot {snapshot_date}"])
+
+
 def daily_sync(
     conn: sqlite3.Connection, espn: EspnClient, today: date, progress: Progress | None = None
 ) -> list[SyncResult]:
@@ -153,6 +168,12 @@ def daily_sync(
             results.append(sync_fantasy_meta(conn, espn, season))
         except Exception as err:  # optional enrichment; never block the daily sync
             results.append(SyncResult(f"fantasy meta {season}", failures=1, notes=[str(err)[:80]]))
+        try:
+            from fbm.timeutil import nba_today
+
+            results.append(sync_espn_projections(conn, espn, season, nba_today()))
+        except Exception as err:  # optional enrichment; never block the daily sync
+            results.append(SyncResult(f"espn projections {season}", failures=1, notes=[str(err)[:80]]))
     return results
 
 

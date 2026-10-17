@@ -29,6 +29,8 @@ class AnalyticsContext:
     cfg: ValuationConfig
     availability: pd.DataFrame | None = None
     ros_values: pd.DataFrame | None = None
+    engine_projections: pd.DataFrame | None = None  # FBM's engine before the ESPN blend (for calibration logs)
+    espn_weight: tuple[float, str] = (0.0, "none")  # weight on ESPN in `projections` and where it came from
 
     def availability_of(self, pid: str) -> tuple[float, str]:
         """Rest-of-season availability share and reason (healthy players = 1.0)."""
@@ -77,9 +79,13 @@ class AnalyticsContext:
 
 
 def build_context(conn: sqlite3.Connection, today: date, cfg: ValuationConfig | None = None) -> AnalyticsContext:
+    from fbm.analytics.projection_calibration import resolve_espn_weight
+
     season = current_season(today)
     prior = season - 1
-    projections = player_tables.projection_table(conn, season, prior)
+    engine = player_tables.engine_projection_table(conn, season, prior)
+    weight = resolve_espn_weight(conn)
+    projections = player_tables.blend_espn(engine, player_tables.espn_snapshot_table(conn, season), weight[0])
     if projections.empty:
         raise RuntimeError("No player stats stored. Run `fbm data sync` and `fbm data backfill`.")
     has_current = bool(projections["gp_current"].sum())
@@ -88,4 +94,16 @@ def build_context(conn: sqlite3.Connection, today: date, cfg: ValuationConfig | 
     cfg = cfg or ValuationConfig()
     availability = load_availability(conn, projections["team"].astype(str).to_dict(), today)
     ros = ros_adjust(values, availability["availability_ros"].to_dict(), cfg.pool_size)
-    return AnalyticsContext(conn, season, prior, projections, values, pool, cfg, availability, ros)
+    return AnalyticsContext(
+        conn,
+        season,
+        prior,
+        projections,
+        values,
+        pool,
+        cfg,
+        availability,
+        ros,
+        engine_projections=engine,
+        espn_weight=weight,
+    )
