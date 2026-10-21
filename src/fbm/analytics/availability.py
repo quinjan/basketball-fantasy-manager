@@ -97,6 +97,20 @@ def ros_adjust(values: pd.DataFrame, share: Mapping[str, float], pool_size: int)
     return out
 
 
+NO_TEAM_REASON = "no NBA team: not on any current NBA roster (waived/unsigned)"
+
+
+def with_no_team(availability: pd.DataFrame, teamless: frozenset[str] | set[str]) -> pd.DataFrame:
+    """Players on no NBA roster play no games: availability 0 (overrides any injury entry)."""
+    if not teamless:
+        return availability
+    rows = pd.DataFrame(
+        {"availability_ros": 0.0, "availability_reason": NO_TEAM_REASON}, index=pd.Index(sorted(teamless))
+    )
+    kept = availability[~availability.index.isin(rows.index)]
+    return rows if kept.empty else pd.concat([kept, rows])
+
+
 def load_availability(conn: sqlite3.Connection, team_of: Mapping[str, str], today: date) -> pd.DataFrame:
     """Availability share + reason for every injured player in injuries_current (others are implicitly 1.0)."""
     games = pd.read_sql_query(

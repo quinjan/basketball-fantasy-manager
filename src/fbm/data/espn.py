@@ -137,6 +137,15 @@ def parse_teams(payload: dict[str, Any]) -> list[Team]:
     return [Team(t["team"]["id"], t["team"]["abbreviation"], t["team"]["displayName"]) for t in teams]
 
 
+def parse_roster(payload: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """A team's current roster (incl. two-way players) as (espn_id, name, position abbreviation)."""
+    return [
+        (str(a["id"]), a.get("fullName") or a.get("displayName", ""), (a.get("position") or {}).get("abbreviation", ""))
+        for a in payload.get("athletes", [])
+        if a.get("id")
+    ]
+
+
 def parse_schedule_events(payload: dict[str, Any]) -> list[Game]:
     games: list[Game] = []
     for ev in payload.get("events", []):
@@ -308,6 +317,13 @@ def _num(value: Any) -> float:
         return 0.0
 
 
+def served_season(payload: dict[str, Any]) -> int | None:
+    """The season ESPN actually returned (`requestedSeason.year`); it silently falls back to the previous season
+    when the requested one has no stats yet."""
+    year = (payload.get("requestedSeason") or {}).get("year")
+    return int(year) if year else None
+
+
 def parse_byathlete(payload: dict[str, Any], season: int) -> list[SeasonAverage]:
     names = {cat["name"]: cat.get("names", []) for cat in payload.get("categories", [])}
     out: list[SeasonAverage] = []
@@ -351,6 +367,9 @@ class EspnClient:
         )
         return parse_schedule_events(payload)
 
+    def team_roster(self, team_id: str, ttl: float = 3 * 3600) -> list[tuple[str, str, str]]:
+        return parse_roster(self.fetcher.get_json(f"{SITE}/teams/{team_id}/roster", ttl=ttl))
+
     def summary(self, event_id: str) -> dict[str, Any]:
         return self.fetcher.get_json(f"{SITE}/summary", params={"event": event_id}, cache=False)
 
@@ -382,6 +401,9 @@ class EspnClient:
                 ttl=ttl,
             )
             pages = int((payload.get("pagination") or {}).get("pages", 1))
+            served = served_season(payload)
+            if served is not None and served != season:
+                return []  # ESPN fell back to another season (e.g. before it has stats for this one)
             out.extend(parse_byathlete(payload, season))
             page += 1
         return out

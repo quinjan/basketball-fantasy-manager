@@ -10,10 +10,11 @@ from datetime import date
 import pandas as pd
 
 from fbm.analytics import players as player_tables
-from fbm.analytics.availability import load_availability, ros_adjust
+from fbm.analytics.availability import load_availability, ros_adjust, with_no_team
 from fbm.analytics.simulation import PlayerModel, build_player_models
 from fbm.analytics.valuation import PoolStats, ValuationConfig, value_players
 from fbm.data.espn import current_season
+from fbm.store.db import NO_NBA_TEAM
 
 ESPN_STATUS_TO_YAHOO = {"OUT": "O", "DAY-TO-DAY": "DTD", "SUSPENSION": "SUSP"}
 
@@ -31,6 +32,10 @@ class AnalyticsContext:
     ros_values: pd.DataFrame | None = None
     engine_projections: pd.DataFrame | None = None  # FBM's engine before the ESPN blend (for calibration logs)
     espn_weight: tuple[float, str] = (0.0, "none")  # weight on ESPN in `projections` and where it came from
+    teamless: frozenset[str] = frozenset()  # players on no current NBA roster (waived/unsigned): no games, no value
+
+    def has_nba_team(self, pid: str) -> bool:
+        return pid not in self.teamless
 
     def availability_of(self, pid: str) -> tuple[float, str]:
         """Rest-of-season availability share and reason (healthy players = 1.0)."""
@@ -89,10 +94,14 @@ def build_context(conn: sqlite3.Connection, today: date, cfg: ValuationConfig | 
     if projections.empty:
         raise RuntimeError("No player stats stored. Run `fbm data sync` and `fbm data backfill`.")
     has_current = bool(projections["gp_current"].sum())
+    current = player_tables.current_teams(conn, f"{season - 1}-07-01")
+    if current:
+        projections["team"] = [current.get(str(pid), team) for pid, team in projections["team"].items()]
+    teamless = frozenset(projections.index[projections["team"].astype(str) == NO_NBA_TEAM])
     weekly = player_tables.weekly_table(conn, season if has_current else prior)
     values, pool = value_players(projections, cfg, weekly=None if weekly.empty else weekly)
     cfg = cfg or ValuationConfig()
-    availability = load_availability(conn, projections["team"].astype(str).to_dict(), today)
+    availability = with_no_team(load_availability(conn, projections["team"].astype(str).to_dict(), today), teamless)
     ros = ros_adjust(values, availability["availability_ros"].to_dict(), cfg.pool_size)
     return AnalyticsContext(
         conn,
@@ -106,4 +115,5 @@ def build_context(conn: sqlite3.Connection, today: date, cfg: ValuationConfig | 
         ros,
         engine_projections=engine,
         espn_weight=weight,
+        teamless=teamless,
     )

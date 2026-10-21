@@ -3,6 +3,8 @@
 pending_review --record_review--> pending_approval --owner decision--> approved | rejected
 approved --proposal_steps (re-validated)--> awaiting_owner (steps handed to the owner) | failed
 awaiting_owner --owner confirms (confirm_done)--> done
+(a move the league already shows is not a failure: proposal_steps -> awaiting_owner; a proposal that `failed` only
+ because the owner made the move first can still be confirmed done once the league shows it)
 awaiting_owner --owner changes their mind before making the move (owner decision, reject)--> rejected
 strategy proposals change only FBM's memory: approved --proposal_steps--> done
 any open state past expires_at --> expired   (no steps after expiry)
@@ -220,10 +222,17 @@ def record_outcome(conn: sqlite3.Connection, ref: str | int, status: str, result
     return get(conn, p.id)
 
 
-def confirm_done(conn: sqlite3.Connection, ref: str | int, note: str, extra: dict[str, Any] | None = None) -> Proposal:
-    """The OWNER says they made the move in their league."""
+def confirm_done(
+    conn: sqlite3.Connection,
+    ref: str | int,
+    note: str,
+    extra: dict[str, Any] | None = None,
+    move_on_roster: bool = False,
+) -> Proposal:
+    """The OWNER says they made the move in their league. `move_on_roster`: the league already shows the move, which
+    also recovers a proposal that `failed` re-validation only because the owner made the move first."""
     p = get(conn, ref)
-    if p.status != "awaiting_owner":
+    if not (p.status == "awaiting_owner" or (p.status == "failed" and move_on_roster)):
         raise ProposalError(f"{p.ref} is {p.status}, not awaiting_owner.")
     result = {**(p.execution or {}), **(extra or {}), "owner_confirmation": note}
     return record_outcome(conn, p.id, "done", result)

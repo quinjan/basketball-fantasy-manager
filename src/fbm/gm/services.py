@@ -357,6 +357,7 @@ def player_card(query: str) -> dict[str, Any]:
         "player": str(proj["name"]),
         "id": pid,
         "nba": str(proj["team"]),
+        "has_nba_team": pid not in _teamless(c),
         "position": str(proj["position"]),
         "fantasy_owner": owners[pid].name if pid in owners else "free agent",
         "projection_basis": {
@@ -399,7 +400,7 @@ def rankings(
     df = c.values.assign(value=value).sort_values("value", ascending=False)
     owners = _owners(league)
     if available_only:
-        df = df[~df.index.isin(list(owners))]
+        df = df[~df.index.isin([*owners, *_teamless(c)])]
     if position:
         wanted = position.upper()
         df = df[df["position"].map(lambda pos: wanted in eligibility_from_espn_position(str(pos)))]
@@ -973,6 +974,7 @@ def evaluate_add_drop(add: str, drop: str | None = None, opponent: str | None = 
     owners = _owners(league)
     if add_id in owners:
         raise GMError(f"{c.projections.loc[add_id, 'name']} is rostered by {owners[add_id].name}.")
+    _require_nba_team(c, add_id)
     drop_id = _resolve(drop) if drop else None
     if drop_id and owners.get(drop_id) is not league.my_team:
         raise GMError(f"{drop} is not on your roster.")
@@ -1126,6 +1128,12 @@ def create_proposal(
     expires_in_hours: float | None = None,
 ) -> dict[str, Any]:
     settings = load_settings()
+    if kind in ("add_drop", "waiver_claim", "trade"):
+        c = ctx()
+        incoming = [payload.get("add")] if kind != "trade" else list(payload.get("get") or [])
+        for pid in incoming:
+            if pid:
+                _require_nba_team(c, str(pid))
     p = props.create(
         _conn(), kind, title, summary, payload, rationale, evidence, expires_in_hours or settings.default_expiry_hours
     )
@@ -1152,7 +1160,8 @@ def proposal_steps(ref: str) -> dict[str, Any]:
     FBM never makes the move. Strategy proposals only update FBM memory and are recorded directly."""
     conn = _conn()
     p = props.ready_for_steps(conn, ref)
-    result = steps.owner_steps(p, active_league())
+    teamless = _teamless(ctx()) if p.kind in ("add_drop", "waiver_claim", "trade") else frozenset()
+    result = steps.owner_steps(p, active_league(), teamless)
     p = props.record_outcome(conn, p.id, result.status, result.detail)
     memory.journal_append("proposal", f"{p.ref} {result.status}", json.dumps(result.detail, indent=1))
     return p.as_dict()
@@ -1162,10 +1171,12 @@ def confirm_done(ref: str, note: str) -> dict[str, Any]:
     """The owner says they made the move in Yahoo (demo league: the demo roster is updated to match)."""
     conn = _conn()
     p = props.get(conn, ref)
+    league = active_league()
+    on_roster = steps.already_made(p, league)
     extra = {}
-    if p.status == "awaiting_owner":
-        extra = steps.simulate_in_demo(p, active_league(), ctx().values, _eligibility())
-    p = props.confirm_done(conn, ref, note, extra)
+    if p.status == "awaiting_owner" and not on_roster:
+        extra = steps.simulate_in_demo(p, league, ctx().values, _eligibility())
+    p = props.confirm_done(conn, ref, note, extra, move_on_roster=on_roster)
     memory.journal_append("owner", f"{p.ref} done by owner", note)
     _CTX_CACHE.clear()
     return p.as_dict()
@@ -1215,7 +1226,23 @@ def _available_ids(league: LeagueState, c: AnalyticsContext) -> list[str]:
 
     owners = _owners(league)
     statuses = c.statuses(_conn())
-    return [pid for pid in c.values.index if pid not in owners and play_probability(statuses.get(pid)) > 0]
+    teamless = _teamless(c)
+    return [
+        pid
+        for pid in c.values.index
+        if pid not in owners and pid not in teamless and play_probability(statuses.get(pid)) > 0
+    ]
+
+
+def _teamless(c: AnalyticsContext) -> frozenset[str]:
+    return getattr(c, "teamless", frozenset())
+
+
+def _require_nba_team(c: AnalyticsContext, pid: str) -> None:
+    """Never recommend acquiring a player who is on no NBA roster: he plays no games."""
+    if pid in _teamless(c):
+        name = _names(c, [pid])[0]
+        raise GMError(f"{name} has no NBA team (not on any current NBA roster): no games, no fantasy value.")
 
 
 def _names(c: AnalyticsContext, ids) -> list[str]:
@@ -1524,10 +1551,13 @@ def post_sync() -> dict[str, Any]:
     }
 
 
-def _annotate(rows: list[dict[str, Any]], league: LeagueState) -> list[dict[str, Any]]:
+def _annotate(
+    rows: list[dict[str, Any]], league: LeagueState, teamless: frozenset[str] = frozenset()
+) -> list[dict[str, Any]]:
     from fbm.analytics.signals import action_hint
 
     owners = _owners(league)
+    rows = [r for r in rows if not (r["id"] in teamless and r["id"] not in owners)]  # unsigned: not a pickup
     for r in rows:
         owner, owner_name = _owner_kind(r["id"], owners, league.my_team_key)
         r["owner"] = owner_name
@@ -1562,7 +1592,7 @@ def signals_tool(
     detection = post_sync() if refresh else None
     kinds = [k.strip() for k in kind.split(",")] if kind else None
     feed = signal_feed.active(_conn(), kinds=kinds, new_only=new_only, min_confidence=min_confidence)
-    rows = _scoped(_annotate(feed, active_league()), scope)
+    rows = _scoped(_annotate(feed, active_league(), _teamless(ctx())), scope)
     return {
         **({"detection": detection} if detection else {}),
         "signals": rows[:top],
@@ -1582,7 +1612,7 @@ def buy_sell_tool(scope: str = "all", top: int = 15) -> dict[str, Any]:
     found = detect_all(
         conn, c.season, c.prior, c.projections, c.pool, c.cfg, c.statuses(conn), nba_today(), ("buy_low", "sell_high")
     )
-    rows = _scoped(_annotate([s.as_dict() for s in found], league), scope)
+    rows = _scoped(_annotate([s.as_dict() for s in found], league, _teamless(c)), scope)
     order = {"high": 0, "medium": 1, "low": 2}
     rows.sort(key=lambda r: (order.get(r["confidence"], 3), -r["strength"]))
     if not rows and not int(c.projections["gp_current"].max() or 0):
@@ -2015,6 +2045,7 @@ def waiver_decision(player: str, drop: str | None = None, on_waivers: bool | Non
     owners = _owners(league)
     if pid in owners:
         raise GMError(f"{_names(c, [pid])[0]} is rostered by {owners[pid].name}.")
+    _require_nba_team(c, pid)
     if on_waivers is None:  # Yahoo knows; the demo league assumes waivers (the cautious case)
         on_waivers = pid in league.on_waivers if league.source == "yahoo" else True
     pun = _strategy_punts(None)

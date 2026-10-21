@@ -134,6 +134,14 @@ def apply_minutes_trend(proj: pd.DataFrame, current_mpg: pd.Series, recent: pd.D
     return out
 
 
+def current_teams(conn: sqlite3.Connection, since: str) -> dict[str, str]:
+    """Latest known NBA team per player (rosters + box scores), only if observed on/after `since` (ET date)."""
+    return {
+        r["espn_id"]: r["team"]
+        for r in conn.execute("SELECT espn_id, team FROM players WHERE team_as_of >= ? AND team != ''", (since,))
+    }
+
+
 def espn_snapshot_table(
     conn: sqlite3.Connection,
     season: int,

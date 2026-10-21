@@ -25,8 +25,26 @@ def _rostered(league: LeagueState) -> dict[str, str]:
     return {p.player_id: t.team_key for t in league.teams for p in t.players}
 
 
-def revalidate(p: Proposal, league: LeagueState) -> list[str]:
-    """Re-check a proposal against the CURRENT league state right before handing the owner the steps."""
+def already_made(p: Proposal, league: LeagueState) -> bool:
+    """True when the current league already reflects the move: the owner made it in Yahoo before asking for steps
+    (or before the next sync). Such a proposal must not "fail" re-validation for its own success."""
+    owners = _rostered(league)
+    mine = league.my_team_key
+    pay = p.payload
+    if p.kind in ("add_drop", "waiver_claim"):
+        add, drop = pay.get("add"), pay.get("drop")
+        return bool(add) and owners.get(add) == mine and (not drop or owners.get(drop) != mine)
+    if p.kind == "trade":
+        give, get = list(pay.get("give", [])), list(pay.get("get", []))
+        return (
+            bool(give or get) and all(owners.get(x) != mine for x in give) and all(owners.get(x) == mine for x in get)
+        )
+    return False
+
+
+def revalidate(p: Proposal, league: LeagueState, teamless: frozenset[str] = frozenset()) -> list[str]:
+    """Re-check a proposal against the CURRENT league state right before handing the owner the steps.
+    `teamless`: players on no current NBA roster (never acquire them)."""
     problems: list[str] = []
     owners = _rostered(league)
     mine = league.my_team_key
@@ -37,6 +55,8 @@ def revalidate(p: Proposal, league: LeagueState) -> list[str]:
             problems.append("payload.add is required")
         elif add in owners:
             problems.append(f"{pay.get('add_name', add)} is no longer available (rostered by {owners[add]})")
+        elif add in teamless:
+            problems.append(f"{pay.get('add_name', add)} has no NBA team (not on any current NBA roster)")
         if drop and owners.get(drop) != mine:
             problems.append(f"{pay.get('drop_name', drop)} is not on your roster")
         active = [x for x in league.my_team.players if x.selected not in IL_SLOTS]
@@ -50,6 +70,8 @@ def revalidate(p: Proposal, league: LeagueState) -> list[str]:
         for pid in pay.get("get", []):
             if owners.get(pid) != partner:
                 problems.append(f"{partner} no longer owns {pid}")
+            elif pid in teamless:
+                problems.append(f"{pid} has no NBA team (not on any current NBA roster)")
     return problems
 
 
@@ -79,9 +101,18 @@ def roster_player_from_values(pid: str, values, eligibility=None) -> RosterPlaye
     return roster_player(pid, values, eligibility)
 
 
-def owner_steps(p: Proposal, league: LeagueState) -> StepsResult:
+def owner_steps(p: Proposal, league: LeagueState, teamless: frozenset[str] = frozenset()) -> StepsResult:
     """Approved proposal -> exact steps for the owner. Strategy changes are FBM memory only, recorded directly."""
-    problems = revalidate(p, league)
+    if already_made(p, league):
+        return StepsResult(
+            "awaiting_owner",
+            {
+                "already_made": True,
+                "manual_steps": [],
+                "note": "Your roster already reflects this move: ask the owner to confirm it's done (confirm_done).",
+            },
+        )
+    problems = revalidate(p, league, teamless)
     if problems:
         return StepsResult("failed", {"revalidation": problems})
     pay = p.payload

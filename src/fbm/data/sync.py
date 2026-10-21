@@ -106,6 +106,11 @@ def sync_boxscores(
 
 def sync_season_averages(conn: sqlite3.Connection, espn: EspnClient, season: int, today: date) -> SyncResult:
     avgs = espn.season_averages(season)
+    if not avgs:  # ESPN has no stats for this season yet: anything stored for it came from a season fallback
+        conn.execute("DELETE FROM season_averages WHERE season = ?", (season,))
+        db.log_sync(conn, f"averages:{season}", "0 players (ESPN has no stats for this season yet)")
+        conn.commit()
+        return SyncResult(f"season averages {season}", 0, notes=["ESPN has no stats for this season yet"])
     as_of = min(today, date(season, 6, 30))
     n = db.upsert_season_averages(conn, avgs, as_of)
     db.log_sync(conn, f"averages:{season}", f"{n} players")
@@ -150,10 +155,37 @@ def sync_espn_projections(conn: sqlite3.Connection, espn: EspnClient, season: in
     return SyncResult(f"espn projections {season}", n, notes=[f"snapshot {snapshot_date}"])
 
 
+MIN_LEAGUE_ROSTER_PLAYERS = 360  # 30 teams x 12; fewer means a partial/odd ESPN response: don't mark anyone teamless
+
+
+def sync_rosters(conn: sqlite3.Connection, espn: EspnClient, today: date) -> SyncResult:
+    """Current NBA team rosters: each player's team now, and who has no NBA team (waived/unsigned)."""
+    result = SyncResult("rosters")
+    teams = {r["espn_id"]: r["abbr"] for r in conn.execute("SELECT espn_id, abbr FROM nba_teams")}
+    if not teams:
+        sync_teams(conn, espn)
+        teams = {r["espn_id"]: r["abbr"] for r in conn.execute("SELECT espn_id, abbr FROM nba_teams")}
+    rosters: dict[str, list[tuple[str, str, str]]] = {}
+    for team_id, abbr in teams.items():
+        try:
+            rosters[abbr] = espn.team_roster(team_id)
+        except FetchError as err:
+            result.failures += 1
+            result.notes.append(f"{abbr}: {str(err)[:60]}")
+    total = sum(len(v) for v in rosters.values())
+    complete = not result.failures and total >= MIN_LEAGUE_ROSTER_PLAYERS
+    rostered, marked = db.apply_rosters(conn, rosters, today, complete)
+    result.count = rostered
+    result.notes.append(f"{marked} without an NBA team" if complete else "incomplete: no-team marking skipped")
+    db.log_sync(conn, "rosters", str(result))
+    conn.commit()
+    return result
+
+
 def daily_sync(
     conn: sqlite3.Connection, espn: EspnClient, today: date, progress: Progress | None = None
 ) -> list[SyncResult]:
-    """Everything an in-season run needs: schedule, box scores, averages, injuries, news, ADP/eligibility."""
+    """Everything an in-season run needs: schedule, box scores, averages, injuries, news, rosters, ADP/eligibility."""
     season = current_season(today)
     results = [sync_schedule(conn, espn, season, ttl=1800)]
     results.append(sync_boxscores(conn, espn, season, through=today, progress=progress))
@@ -163,6 +195,11 @@ def daily_sync(
     inj, _changes = sync_injuries(conn, espn)
     results.append(inj)
     results.append(sync_news(conn, espn))
+    if hasattr(espn, "team_roster"):
+        try:
+            results.append(sync_rosters(conn, espn, today))
+        except Exception as err:  # never block the daily sync; the last roster sync stays in effect
+            results.append(SyncResult("rosters", failures=1, notes=[str(err)[:80]]))
     if getattr(espn, "fetcher", None) is not None:
         try:
             results.append(sync_fantasy_meta(conn, espn, season))

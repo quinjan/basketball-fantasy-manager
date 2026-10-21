@@ -95,6 +95,13 @@ def test_steps_never_change_the_league_until_owner_confirms(conn, tmp_path, monk
     assert len(steps.revalidate(p, league)) == 2  # x rostered, a gone
 
 
+def test_revalidate_rejects_players_without_an_nba_team(conn, tmp_path, monkeypatch):
+    league = _league(tmp_path, monkeypatch)
+    p = _proposal(conn, payload={"add": "x", "add_name": "X Free", "drop": "a", "drop_name": "A"})
+    assert steps.revalidate(p, league, frozenset({"x"})) == ["X Free has no NBA team (not on any current NBA roster)"]
+    assert steps.owner_steps(p, league, frozenset({"x"})).status == "failed"
+
+
 def test_no_drop_claim_counts_only_non_il_players(conn, tmp_path, monkeypatch):
     league = _league(tmp_path, monkeypatch)
     league.slots = (SlotSpec("PG", 1, True), SlotSpec("BN", 1, False), SlotSpec("IL", 1, False))
@@ -144,6 +151,46 @@ def test_owner_can_reject_awaiting_owner_but_not_reapprove(conn):
         props.confirm_done(conn, p.ref, "did it")
     with pytest.raises(props.ProposalError):
         props.record_owner_decision(conn, p.ref, False, "again")
+
+
+def test_move_already_made_is_not_a_failure(conn, tmp_path, monkeypatch):
+    league = _league(tmp_path, monkeypatch)
+    league.source = "yahoo"
+    league.slots = (SlotSpec("PG", 1, True), SlotSpec("BN", 1, False), SlotSpec("IL", 1, False))
+    p = _proposal(conn, payload={"add": "x", "add_name": "X Free", "drop": None})
+    props.record_review(conn, p.ref, "AGREE", "ok", "gpt-5.6-sol")
+    p = props.record_owner_decision(conn, p.ref, True, "yes")
+    assert not steps.already_made(p, league)
+    # The owner made the move in Yahoo before asking for steps: X is on our roster, which is now full.
+    league.my_team.players.append(RosterPlayer("x", "X Free", "MIA", ("F", "UTIL"), "BN"))
+    assert steps.already_made(p, league)
+    assert len(steps.revalidate(p, league)) == 2  # the old path wrongly called this a failure
+    result = steps.owner_steps(p, league)
+    assert result.status == "awaiting_owner" and result.detail["already_made"] is True
+    # An add/drop with the drop still on our roster is not made yet.
+    p2 = _proposal(conn, payload={"add": "x", "drop": "a"})
+    assert not steps.already_made(p2, league)
+
+
+def test_failed_proposal_can_be_confirmed_only_when_the_move_is_on_the_roster(conn):
+    p = _proposal(conn)
+    props.record_review(conn, p.ref, "AGREE", "ok", "gpt-5.6-sol")
+    props.record_owner_decision(conn, p.ref, True, "yes")
+    props.record_outcome(conn, p.ref, "failed", {"revalidation": ["X Free is no longer available (rostered by t1)"]})
+    with pytest.raises(props.ProposalError, match="failed"):
+        props.confirm_done(conn, p.ref, "did it")
+    done = props.confirm_done(conn, p.ref, "did it", move_on_roster=True)
+    assert done.status == "done" and done.execution["owner_confirmation"] == "did it"
+
+
+def test_trade_already_made(conn, tmp_path, monkeypatch):
+    league = _league(tmp_path, monkeypatch)
+    p = _proposal(conn, kind="trade", payload={"partner": "t2", "give": ["a"], "get": ["b"]})
+    assert not steps.already_made(p, league)
+    a, b = league.my_team.players.pop(), league.team("t2").players.pop()
+    league.my_team.players.append(b)
+    league.team("t2").players.append(a)
+    assert steps.already_made(p, league)
 
 
 def test_strategy_proposal_writes_strategy(conn, tmp_path, monkeypatch):

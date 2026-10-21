@@ -3,7 +3,13 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from fbm.analytics.availability import availability_share, load_availability, ros_adjust
+from fbm.analytics.availability import (
+    NO_TEAM_REASON,
+    availability_share,
+    load_availability,
+    ros_adjust,
+    with_no_team,
+)
 from fbm.analytics.simulation import build_player_models
 from fbm.store import db
 
@@ -13,6 +19,17 @@ def conn():
     c = db.connect(":memory:")
     yield c
     c.close()
+
+
+def test_players_without_nba_team_have_zero_availability():
+    av = pd.DataFrame({"availability_ros": [0.5, 0.8], "availability_reason": ["hurt", "dtd"]}, index=["a", "b"])
+    out = with_no_team(av, frozenset({"b", "c"}))
+    assert out.loc["a", "availability_ros"] == 0.5
+    assert out.loc["b", "availability_ros"] == 0.0 and out.loc["b", "availability_reason"] == NO_TEAM_REASON
+    assert out.loc["c", "availability_ros"] == 0.0
+    empty = av.iloc[0:0]
+    assert list(with_no_team(empty, frozenset({"z"})).index) == ["z"]
+    assert with_no_team(av, frozenset()) is av
 
 
 def test_healthy_and_season_out():

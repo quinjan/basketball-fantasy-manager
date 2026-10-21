@@ -246,3 +246,30 @@ def test_current_season():
     assert espn.current_season(date(2026, 10, 16)) == 2027
     assert espn.current_season(date(2027, 4, 1)) == 2027
     assert espn.current_season(date(2027, 8, 1)) == 2027
+
+
+def test_parse_roster():
+    payload = {
+        "athletes": [
+            {"id": "4066261", "fullName": "Bam Adebayo", "position": {"abbreviation": "C"}},
+            {"id": "4431772", "displayName": "Myron Gardner"},
+            {"fullName": "No Id"},
+        ]
+    }
+    assert espn.parse_roster(payload) == [("4066261", "Bam Adebayo", "C"), ("4431772", "Myron Gardner", "")]
+
+
+class _OneShotFetcher:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def get_json(self, url, params=None, ttl=0, **kw):
+        return self.payload
+
+
+def test_season_averages_ignore_espn_season_fallback():
+    fallback = {**BYATHLETE, "requestedSeason": {"year": 2026}}
+    assert espn.served_season(fallback) == 2026
+    assert espn.EspnClient(_OneShotFetcher(fallback)).season_averages(2027) == []
+    served = {**BYATHLETE, "requestedSeason": {"year": 2027}}
+    assert espn.EspnClient(_OneShotFetcher(served)).season_averages(2027)

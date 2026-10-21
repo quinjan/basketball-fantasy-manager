@@ -333,12 +333,42 @@ def upsert_games(conn: sqlite3.Connection, games: Iterable[Game]) -> int:
 _PLAYER_UPSERT = """
 INSERT INTO players(espn_id, name, team, team_as_of, position, updated_at) VALUES (?,?,?,?,?,?)
 ON CONFLICT(espn_id) DO UPDATE SET
-  name = excluded.name,
+  name = COALESCE(NULLIF(excluded.name, ''), players.name),
   team = CASE WHEN excluded.team_as_of >= players.team_as_of THEN excluded.team ELSE players.team END,
   team_as_of = MAX(excluded.team_as_of, players.team_as_of),
   position = COALESCE(NULLIF(excluded.position, ''), players.position),
   updated_at = excluded.updated_at
 """
+
+
+NO_NBA_TEAM = "FA"
+
+
+def apply_rosters(
+    conn: sqlite3.Connection, rosters: dict[str, list[tuple[str, str, str]]], as_of: date, complete: bool
+) -> tuple[int, int]:
+    """Current NBA rosters (team abbr -> players) become each player's team as of `as_of`. When `complete` (every
+    team fetched), every other known player is marked as having no NBA team (NO_NBA_TEAM). Later box scores still
+    win (a newly signed player's first game updates his team). Returns (rostered, marked without a team)."""
+    stamp, day = now_iso(), as_of.isoformat()
+    rows = [(pid, name, team, day, pos, stamp) for team, players in rosters.items() for pid, name, pos in players]
+    conn.executemany(_PLAYER_UPSERT, rows)
+    marked = 0
+    if complete:
+        rostered = {r[0] for r in rows}
+        known = conn.execute(
+            "SELECT espn_id, name FROM players UNION SELECT espn_id, name FROM season_averages "
+            "UNION SELECT espn_id, name FROM espn_projections"
+        ).fetchall()
+        seen: set[str] = set()
+        others = []
+        for pid, name in known:
+            if pid not in rostered and pid not in seen:
+                seen.add(pid)
+                others.append((pid, name or "", NO_NBA_TEAM, day, "", stamp))
+        conn.executemany(_PLAYER_UPSERT, others)
+        marked = len(others)
+    return len(rows), marked
 
 
 def store_boxscore(conn: sqlite3.Connection, game_row: sqlite3.Row, lines: list[BoxLine]) -> int:
