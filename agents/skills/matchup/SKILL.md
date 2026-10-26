@@ -12,7 +12,8 @@ Run as the `gm` agent. Every number comes from tool output.
    (my team and the opponent, per player: totals, FG/FT makes/attempts, G-score sum).
 2. `weekly_plan(trigger="owner-ask")` and/or `simulate_matchup` (current opponent; banked stats included in the
    Yahoo league). Report expected categories won, P(win week), per-category win odds, chase/hold/lock/concede status,
-   swing categories, and `if_opponent_streams`. **Official odds** (Hashtag mode) = HT's projected weekly totals
+   swing categories, and `if_opponent_streams` (in Hashtag mode quote its `official_if_opponent_streams` — same
+   basis as the official odds; the FBM-sim stand_pat/streaming numbers are not). **Official odds** (Hashtag mode) = HT's projected weekly totals
    (policy view `policy.view.weekly_odds`, default STREAM7) + FBM's simulator spread × `policy.odds_spread_scale`.
    HT's displayed "probability" is a share formula (mine/(mine+opp)), not a win probability: quote it only as a
    reference, labelled as such. `odds_reliability` says how well the official odds have held up vs Yahoo finals.

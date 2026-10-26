@@ -1062,7 +1062,11 @@ def _simulate_matchup_ht(
     banked, skip = _live_week(league, _week_window()[1])
     day0, we = w["day0"], w["we"]
     streaming = (
-        _opponent_streaming(league, opp, w["my_plans"], date_range(day0, we), adds, banked, skip) if adds > 0 else None
+        _opponent_streaming(
+            league, opp, w["my_plans"], date_range(day0, we), adds, banked, skip, ht=(means, w["sd"], w["scale"])
+        )
+        if adds > 0
+        else None
     )
     ht_cats = w["ht"]["categories"]
     pct = {k.key for k in league.categories if k.kind == "pct"}
@@ -1225,8 +1229,11 @@ def _opponent_streaming(
     adds: int,
     banked: dict[str, dict[str, float]] | None = None,
     skip: dict[date, set[str]] | None = None,
+    ht: tuple[dict[str, tuple[float, float]], dict[str, float], float] | None = None,
 ) -> dict[str, Any] | None:
-    """Re-score the week assuming the opponent streams `adds` times optimally (greedy, against our planned week)."""
+    """Re-score the week assuming the opponent streams `adds` times optimally (greedy, against our planned week).
+    With `ht` = (HT means, sd, spread scale) also re-prices the official odds: the opponent's simulated total change
+    from the streams is added to HT's opponent totals (display only; the recorded forecast is unchanged)."""
     from fbm.analytics.bank import DrawBank
     from fbm.analytics.streaming import StreamContext, plan_streams
 
@@ -1274,7 +1281,7 @@ def _opponent_streaming(
     def mine(o) -> dict[str, Any]:
         return {"expected_cats": _r(n_cats - o.expected_score), "p_win_majority": _r(o.p_majority_loss)}
 
-    return {
+    out: dict[str, Any] = {
         "opponent_adds_assumed": adds,
         "stand_pat": mine(plan.baseline),
         "streaming": mine(plan.final),
@@ -1285,6 +1292,27 @@ def _opponent_streaming(
             "P(win majority) can move either way. Real managers stream less precisely."
         ),
     }
+    if ht is not None:
+        from fbm.analytics import ht_odds
+
+        means, sd, scale = ht
+        # the planner simulates the opponent as side a: their total change from the streams, per category
+        pairs = zip(plan.baseline.categories, plan.final.categories, strict=True)
+        delta = {f.category.key: f.mean_a - b.mean_a for b, f in pairs}
+        p_win = ht_odds.odds_from_totals(ht_odds.shift_opponent(means, delta), sd, scale, league.categories)
+        summ = ht_odds.summary(p_win)
+        pct = {k.key for k in league.categories if k.kind == "pct"}
+        out["official_if_opponent_streams"] = {
+            "expected_cats_won": _r(summ["expected"]),
+            "p_win_majority": _r(summ["p_majority"]),
+            "p_win_by_cat": {_CAT_LABEL.get(k, k): _r(p) for k, p in p_win.items()},
+            "opponent_total_change": {
+                _CAT_LABEL.get(k, k): _r(delta[k], 4 if k in pct else 1) for k in p_win if k in delta
+            },
+            "method": "official odds (HT totals + FBM spread) with the opponent's HT totals shifted by the simulated "
+            "change from the streams above; same upper-bound caveat. Display only: not recorded or graded.",
+        }
+    return out
 
 
 def league_profile_tool(n: int = 4000) -> dict[str, Any]:

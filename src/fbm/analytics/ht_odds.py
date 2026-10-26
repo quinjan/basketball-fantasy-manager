@@ -52,6 +52,13 @@ def odds_from_totals(
     return out
 
 
+def shift_opponent(
+    means: Mapping[str, tuple[float, float]], opp_delta: Mapping[str, float]
+) -> dict[str, tuple[float, float]]:
+    """Projected week totals with the opponent's totals moved by `opp_delta` (e.g. their modeled streams)."""
+    return {k: (float(me), float(opp) + float(opp_delta.get(k, 0.0))) for k, (me, opp) in means.items()}
+
+
 def win_distribution(p_win: Mapping[str, float]) -> list[float]:
     """P(exactly k categories won), k = 0..n, for independent categories (no ties)."""
     dist = [1.0]

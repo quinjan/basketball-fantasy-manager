@@ -76,6 +76,16 @@ def test_odds_from_totals_normal_and_turnovers():
     assert s["expected"] == 2.0 and s["p_majority"] == 1.0
 
 
+def test_shift_opponent_reprices_official_odds():
+    means = {"pts": (500.0, 480.0), "tov": (60.0, 60.0)}
+    shifted = ht_odds.shift_opponent(means, {"pts": 20.0, "tov": 10.0})
+    assert shifted == {"pts": (500.0, 500.0), "tov": (60.0, 70.0)}
+    assert ht_odds.shift_opponent(means, {}) == means
+    p = ht_odds.odds_from_totals(shifted, {"pts": 20.0, "tov": 10.0}, 1.0, ["pts", "tov"])
+    assert p["pts"] == pytest.approx(0.5)
+    assert p["tov"] == pytest.approx(0.8413, abs=1e-3)  # their extra turnovers help me
+
+
 def test_payload_keeps_unscaled_sd():
     pl = ht_odds.payload({"pts": 0.6}, {"pts": (1.0, 0.5)}, {"pts": 3.0}, 1.3, "STREAM7")
     assert pl["sd"] == {"pts": 3.0} and pl["spread_scale"] == 1.3 and pl["method"] == "ht_totals+sim_spread"

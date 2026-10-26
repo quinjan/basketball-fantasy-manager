@@ -157,7 +157,26 @@ def page_matchup() -> None:
     m1.metric("Expected categories won", f"{sim['expected_cats_won']:.2f}")
     m2.metric("P(win the week)", f"{sim['p_win_majority']:.0%}")
     streams = sim.get("if_opponent_streams")
-    if streams:
+    official = (streams or {}).get("official_if_opponent_streams")
+    if official:
+        s1, s2, s3 = st.columns(3)
+        s1.metric(
+            f"If they stream (up to {streams['opponent_adds_assumed']} adds): expected cats",
+            f"{official['expected_cats_won']:.2f}",
+            f"{official['expected_cats_won'] - sim['expected_cats_won']:+.2f}",
+        )
+        s2.metric(
+            "P(win) if they stream",
+            f"{official['p_win_majority']:.0%}",
+            f"{official['p_win_majority'] - sim['p_win_majority']:+.0%}",
+        )
+        s3.caption(
+            "Their likely moves: "
+            + ("; ".join(streams["opponent_moves"]) or "none")
+            + " — official odds with their HT totals shifted by the streams; deltas vs. the official odds above. "
+            + streams["note"]
+        )
+    elif streams:
         s1, s2, s3 = st.columns(3)
         s1.metric(
             f"If they stream (up to {streams['opponent_adds_assumed']} adds): expected cats",

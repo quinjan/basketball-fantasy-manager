@@ -102,7 +102,9 @@ role/form multiplier (`sim.form_sd`, measured from week-to-week variance), and p
 leg of back-to-backs carry that rest risk on their team's back-to-back dates (`sim.b2b_rest_*`). In the Yahoo league
 the stats already banked this week (live scoreboard) are added to the simulated remainder. Output includes
 per-category win/tie/loss odds and an "if the opponent streams" upper bound (the streaming planner run from their
-side).
+side). In Hashtag mode that block also carries `official_if_opponent_streams`: the official odds re-priced with the
+opponent's HT totals shifted by the simulated change from those streams (display only; the recorded forecast and
+calibration use the stand-pat official odds).
 
 ## Decision rule (choosers) and decision log
 
