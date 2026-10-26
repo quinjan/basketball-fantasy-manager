@@ -7,7 +7,7 @@ Dates are **US/Eastern** NBA game days (`YYYY-MM-DD`).
 
 | Command | Purpose |
 |---|---|
-| `fbm setup` | Set up or re-check FBM: settings, memory, NBA data, agent files, automation, health. Safe to re-run. Flags: `--agent`, `--gm-model`, `--reviewer-model`, `--routine-model`, `--timezone`, `--automation`, `--jobs`, `--league-source demo\|yahoo`, `--email/--no-email`, `--quiet-hours`, `--expiry-hours`, `--yahoo-approved`, `--skip-data`, `--yes`/`-y` (non-interactive), `--check` (verify only, writes nothing) |
+| `fbm setup` | Set up or re-check FBM: settings, memory, NBA data, agent files, automation, Yahoo league, Hashtag, health. Safe to re-run. Interactive setup asks about Hashtag once your Yahoo league is connected and can run `fbm hashtag login`/`check`/`import`. Flags: `--agent`, `--gm-model`, `--reviewer-model`, `--routine-model`, `--timezone`, `--automation`, `--jobs`, `--league-source demo\|yahoo`, `--email/--no-email`, `--quiet-hours`, `--expiry-hours`, `--yahoo-approved`, `--hashtag/--no-hashtag` (Hashtag Basketball Premium, required for a real league), `--hashtag-league-id` (default: the Yahoo league id), `--skip-data`, `--yes`/`-y` (non-interactive), `--check` (verify only, writes nothing) |
 | `fbm status` | What is configured (never prints secrets) |
 | `fbm health` | Health checks (OK/WARN/FAIL): data freshness, Yahoo access/snapshot, Hashtag Basketball gate, stale proposals, missed runs, storage. Exits 1 on any FAIL |
 | `fbm constants` | Every tunable engine constant (value, kind, source); override in `config/constants.toml` |
@@ -60,7 +60,8 @@ Jobs: `data-sync`, `lineup-guard`, `daily-gm`, `weekly-retro`, `trade-scan`, `he
 ## Hashtag Basketball Premium (`fbm hashtag`)
 
 FBM's data layer for a real league (required: a Hashtag Basketball Premium subscription with the Yahoo league
-imported into its premium league tools), active when `[hashtag] enabled = true` in `config/settings.toml`
+imported into its premium league tools), active when `[hashtag] enabled = true` in `config/settings.toml` (set by
+`fbm setup --hashtag`)
 (`league_id` = the Yahoo league id; environment variable `FBM_HASHTAG_ENABLED=0|1` overrides `enabled`). The demo
 league runs on FBM's built-in ESPN engine instead. While HT is enabled but unhealthy, FBM makes no suggestions (no
 fallback). HT content is personal-use only.

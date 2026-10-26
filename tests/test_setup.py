@@ -163,3 +163,52 @@ def test_backup_contents(tmp_path):
     assert zpath.parent == tmp_path / "data" / "backups"
     names = set(zipfile.ZipFile(zpath).namelist())
     assert names == {"memory/playbook.md", "memory/journal/d.md", "config/settings.toml", "data/fbm.db"}
+
+
+class _Health:
+    def __init__(self, healthy, reasons=()):
+        self.healthy, self.reasons = healthy, list(reasons)
+
+
+def _league(tmp_path, key="478.l.30273"):
+    path = tmp_path / "config" / "league.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'[league]\nleague_key = "{key}"\n', encoding="utf-8")
+    return path
+
+
+def test_hashtag_flags_validated():
+    assert wiz.validate(wiz.SetupOptions(hashtag=True, hashtag_league_id="30273", league_source="yahoo")) == []
+    errors = wiz.validate(wiz.SetupOptions(hashtag=True, hashtag_league_id="abc", league_source="demo"))
+    assert len(errors) == 2
+
+
+def test_hashtag_setup_writes_settings_with_yahoo_league_id(tmp_path):
+    _league(tmp_path)
+    opts = wiz.SetupOptions(league_source="yahoo", hashtag=True, skip_data=True)
+    report = wiz.run_setup(
+        opts, runner=FakeRunner(), settings_path=tmp_path / "config" / "settings.toml", example_path=EXAMPLE,
+        memory_dir=tmp_path / "memory", template_dir=TEMPLATES, league_toml=tmp_path / "config" / "league.toml",
+        demo_file=tmp_path / "demo.json", backfilled=lambda: True, which=_which,
+        hashtag_health=lambda: _Health(False, ["No Hashtag sign-in stored."]),
+    )  # fmt: skip
+    s = load_settings(tmp_path / "config" / "settings.toml")
+    assert s.hashtag_enabled and s.hashtag_league_id == "30273"
+    step = next(r for r in report.results if r.step == "Hashtag")
+    assert step.status == wiz.PENDING and "sign-in" in step.detail
+    assert any("fbm hashtag login" in n for n in report.next_steps())
+
+
+def test_hashtag_status_cases(tmp_path):
+    league = _league(tmp_path)
+    demo = wiz.hashtag_status({"league": {"source": "demo"}, "hashtag": {"enabled": False}}, league)
+    assert demo.status == wiz.SKIP
+    bad = wiz.hashtag_status({"league": {"source": "demo"}, "hashtag": {"enabled": True}}, league)
+    assert bad.status == wiz.FAIL
+    off = {"league": {"source": "yahoo"}, "hashtag": {"enabled": False}}
+    assert wiz.hashtag_status(off, league).status == wiz.PENDING
+    assert any("Hashtag Basketball Premium is required" in n for n in wiz.SetupReport(settings=off).next_steps())
+    no_id = wiz.hashtag_status({"league": {"source": "yahoo"}, "hashtag": {"enabled": True}}, league)
+    assert no_id.status == wiz.FAIL and "30273" in no_id.detail
+    on = {"league": {"source": "yahoo"}, "hashtag": {"enabled": True, "league_id": "30273"}}
+    assert wiz.hashtag_status(on, league, lambda: _Health(True)).status == wiz.OK

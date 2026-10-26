@@ -109,14 +109,14 @@ health checks. **The demo league works immediately.** Then connect your real lea
 
 1. **Yahoo:** `uv run fbm yahoo login` (your Yahoo sign-in, read-only), or the official API once approved — see
    [docs/yahoo.md](docs/yahoo.md).
-2. **Hashtag Basketball:** in Hashtag's Premium area, import your Yahoo league. In `config/settings.toml` set
-   `[hashtag] enabled = true` and `league_id = "<your Yahoo league id>"` (the agent's "set up FBM" flow does this
-   for you). Then:
+2. **Hashtag Basketball:** in Hashtag's Premium area, import your Yahoo league. Then re-run `uv run fbm setup`: it
+   asks about Hashtag, enables it (league id = your Yahoo league id) and offers to sign you in. Or do it by hand:
 
    ```sh
-   uv run fbm hashtag login    # sign in to Hashtag in the browser window it opens
-   uv run fbm hashtag check    # signed in, league visible, every page readable
-   uv run fbm hashtag import   # first import; afterwards the daily data sync does it
+   uv run fbm setup --yes --hashtag   # enable Hashtag in config/settings.toml
+   uv run fbm hashtag login           # sign in to Hashtag in the browser window it opens
+   uv run fbm hashtag check           # signed in, league visible, every page readable
+   uv run fbm hashtag import          # first import; afterwards the daily data sync does it
    ```
 
    See [docs/commands.md](docs/commands.md#hashtag-basketball-premium-fbm-hashtag).

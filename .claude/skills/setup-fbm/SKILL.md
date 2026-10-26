@@ -79,7 +79,7 @@ uv run fbm setup --yes --agent <agent> --gm-model "<m>" --reviewer-model "<m>" -
 
 It reports each step OK / SKIP / FAIL / PENDING: prerequisites → config/settings.toml → memory/ from templates →
 NBA data (one-time prior-season backfill + sync; several minutes the first time) → demo league → `fbm agent install`
-→ `fbm automation install` → Yahoo status → `fbm health`. Show the report table to the user.
+→ `fbm automation install` → Yahoo status → Hashtag status (SKIP on the demo league) → `fbm health`. Show the report table to the user.
 
 ## 3. Fix and finish
 
@@ -88,8 +88,8 @@ NBA data (one-time prior-season backfill + sync; several minutes the first time)
 - Yahoo sign-in chosen: the user runs `uv run fbm yahoo login` in a terminal (they sign in in the browser window
   it opens; never ask for their Yahoo password), picks the league and accepts the switch. Then you run
   `uv run fbm yahoo check` and show which feeds work.
-- Hashtag (after Yahoo is connected): set `[hashtag] enabled = true` and `league_id = "<Yahoo league id>"`
-  in `config/settings.toml` (no setup flag). The user runs `uv run fbm hashtag login` in a terminal (they sign in to
+- Hashtag (after Yahoo is connected): run `uv run fbm setup --yes --hashtag` (league id defaults to the Yahoo
+  league id; `--hashtag-league-id <id>` to override). The user runs `uv run fbm hashtag login` in a terminal (they sign in to
   Hashtag in the browser window it opens; FBM never sees the password; the session goes to the OS credential
   store). Then you run `uv run fbm hashtag check` (signed in, league visible, every page parses, unmatched ids) and
   `uv run fbm hashtag import`; show the result. Unmatched players → `config/hashtag_id_overrides.toml` (see

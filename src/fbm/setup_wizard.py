@@ -52,6 +52,19 @@ YAHOO_SESSION_GUIDE = (
 )
 
 QUIET_HOURS_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$")
+LEAGUE_ID_RE = re.compile(r"^\d+$")
+
+# Hashtag Basketball Premium is required for a real (Yahoo) league: it is FBM's data layer there.
+HASHTAG_GUIDE = (
+    "Hashtag Basketball Premium is required for your real league (FBM's projections and weekly totals). Subscribe "
+    "at https://hashtagbasketball.com/premium/ (Patreon) and import your Yahoo league in Hashtag's Premium area.",
+    "Run `fbm setup --hashtag --yes` (league id defaults to your Yahoo league's), or answer yes to the Hashtag "
+    "question in `fbm setup`.",
+)
+HASHTAG_CONNECT_GUIDE = (
+    "Connect Hashtag: `fbm hashtag login` (sign in once in the browser window it opens), then `fbm hashtag check` "
+    "and `fbm hashtag import`. FBM makes no suggestions until Hashtag is healthy.",
+)
 
 
 @dataclass
@@ -79,6 +92,9 @@ class SetupOptions:
     skip_data: bool = False
     yahoo_approved: bool = False
     yahoo_web_session: bool = False  # interactive setup: connect now via `fbm yahoo login`
+    hashtag: bool | None = None  # [hashtag] enabled (Hashtag Basketball Premium data layer; real league only)
+    hashtag_league_id: str | None = None  # [hashtag] league_id (default: the Yahoo league id)
+    hashtag_login: bool = False  # interactive setup: run `fbm hashtag login` + check + import after setup
 
     def updates(self) -> dict[tuple[str, str], Any]:
         mapping = {
@@ -93,6 +109,8 @@ class SetupOptions:
             ("notify", "email_enabled"): self.email,
             ("notify", "quiet_hours"): self.quiet_hours,
             ("proposals", "expiry_hours"): self.expiry_hours,
+            ("hashtag", "enabled"): self.hashtag,
+            ("hashtag", "league_id"): self.hashtag_league_id,
         }
         return {k: v for k, v in mapping.items() if v is not None}
 
@@ -165,6 +183,10 @@ def validate(opts: SetupOptions) -> list[str]:
         errors.append("--quiet-hours must look like 23:00-07:00 (or be empty)")
     if opts.expiry_hours is not None and not 1 <= opts.expiry_hours <= 168:
         errors.append("--expiry-hours must be between 1 and 168")
+    if opts.hashtag_league_id and not LEAGUE_ID_RE.match(opts.hashtag_league_id):
+        errors.append("--hashtag-league-id must be the numeric league id (e.g. 30273)")
+    if opts.hashtag and opts.league_source == "demo":
+        errors.append("--hashtag needs your real Yahoo league (the demo league runs on FBM's ESPN engine)")
     return errors
 
 
@@ -431,6 +453,52 @@ def run_health(runner: Runner) -> StepResult:
     return StepResult("Health", FAIL, "some checks FAIL: run `fbm health` for fixes")
 
 
+def default_hashtag_league_id(league_toml: Path) -> str:
+    """The Yahoo league id from config/league.toml (`<game>.l.<id>`), which is also Hashtag's league id."""
+    try:
+        data = tomllib.loads(league_toml.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return ""
+    key = str(data.get("league", {}).get("league_key", ""))
+    return key.split(".l.")[-1] if ".l." in key else ""
+
+
+def _hashtag_health() -> Any:
+    from fbm.hashtag import health
+    from fbm.store import db
+
+    return health.status(db.connect(), enabled=True)
+
+
+def hashtag_status(
+    values: dict[str, dict[str, Any]], league_toml: Path, health: Callable[[], Any] | None = None
+) -> StepResult:
+    """Hashtag Basketball Premium: required data layer for a real league (SKIP for the demo league)."""
+    source = values.get("league", {}).get("source", "demo")
+    ht = values.get("hashtag", {})
+    enabled = bool(ht.get("enabled"))
+    if source != "yahoo":
+        if enabled:
+            return StepResult("Hashtag", FAIL, "enabled but the league is the demo: set `[hashtag] enabled = false`")
+        return StepResult("Hashtag", SKIP, "demo league runs on FBM's ESPN engine; required once you connect Yahoo")
+    if not enabled:
+        return StepResult("Hashtag", PENDING, "required for your real league: `fbm setup --hashtag` (see below)")
+    league_id = str(ht.get("league_id") or "")
+    if not league_id:
+        guess = default_hashtag_league_id(league_toml)
+        return StepResult(
+            "Hashtag", FAIL, f"enabled without league_id: `fbm setup --hashtag-league-id {guess or 'ID'}`"
+        )
+    try:
+        st = (health or _hashtag_health)()
+    except Exception as err:  # noqa: BLE001 - report, don't crash setup
+        return StepResult("Hashtag", PENDING, f"league {league_id}: health unknown ({type(err).__name__})")
+    if st.healthy:
+        return StepResult("Hashtag", OK, f"league {league_id}: healthy (suggestions on)")
+    first = st.reasons[0] if st.reasons else "not healthy"
+    return StepResult("Hashtag", PENDING, f"league {league_id}: {first} — suggestions paused until healthy")
+
+
 @dataclass
 class SetupReport:
     results: list[StepResult] = field(default_factory=list)
@@ -448,6 +516,11 @@ class SetupReport:
         if source != "yahoo" or any(r.step == "Yahoo league" and r.status == PENDING for r in self.results):
             steps.extend(YAHOO_SESSION_GUIDE)
             steps.extend(YAHOO_GUIDE)
+        hashtag = next((r for r in self.results if r.step == "Hashtag"), None)
+        if source == "yahoo" and not self.settings.get("hashtag", {}).get("enabled"):
+            steps.extend(HASHTAG_GUIDE)
+        elif hashtag is not None and hashtag.status == PENDING:
+            steps.extend(HASHTAG_CONNECT_GUIDE)
         if self.settings.get("notify", {}).get("email_enabled"):
             steps.append("Run `fbm notify setup` to store the Gmail app password (prompted, never shown).")
         steps.append(
@@ -463,6 +536,7 @@ def check(
     memory_dir: Path = MEMORY_DIR,
     league_toml: Path | None = None,
     which: Callable[[str], str | None] = shutil.which,
+    hashtag_health: Callable[[], Any] | None = None,
 ) -> SetupReport:
     """Verification only: no files written, no installs."""
     from fbm.config import LEAGUE_CONFIG_PATH
@@ -484,6 +558,7 @@ def check(
     report.results.append(run_optional(runner, "Agent files", ["agent", "status"], "see `fbm agent status`"))
     source = values.get("league", {}).get("source", "demo")
     report.results.extend(yahoo_status(source, False, league_toml or LEAGUE_CONFIG_PATH))
+    report.results.append(hashtag_status(values, league_toml or LEAGUE_CONFIG_PATH, hashtag_health))
     report.results.append(run_health(runner))
     return report
 
@@ -500,11 +575,17 @@ def run_setup(
     backfilled: Callable[[], bool] = prior_season_loaded,
     which: Callable[[str], str | None] = shutil.which,
     on_step: Callable[[StepResult], None] | None = None,
+    hashtag_health: Callable[[], Any] | None = None,
 ) -> SetupReport:
     """Run every setup step in order. Each step is idempotent and reported OK/SKIP/FAIL/PENDING."""
     from fbm.config import LEAGUE_CONFIG_PATH
 
     report = SetupReport()
+    league_toml = league_toml or LEAGUE_CONFIG_PATH
+    if opts.hashtag and not opts.hashtag_league_id:
+        existing = current_values(settings_path, example_path).get("hashtag", {}).get("league_id")
+        if not existing:
+            opts.hashtag_league_id = default_hashtag_league_id(league_toml) or None
 
     def add(*results: StepResult) -> None:
         for r in results:
@@ -524,6 +605,7 @@ def run_setup(
     add(run_agent_install(runner, agent))
     automation = report.settings.get("automation", {})
     add(run_automation_install(runner, automation.get("mode", "none"), automation.get("jobs", [])))
-    add(*yahoo_status(source, opts.yahoo_approved, league_toml or LEAGUE_CONFIG_PATH))
+    add(*yahoo_status(source, opts.yahoo_approved, league_toml))
+    add(hashtag_status(report.settings, league_toml, hashtag_health))
     add(run_health(runner))
     return report

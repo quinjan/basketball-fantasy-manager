@@ -124,6 +124,45 @@ def _yahoo_interactive() -> None:
         subprocess.run(wiz.fbm_command(*args), check=False)
 
 
+def _hashtag_interactive(opts: wiz.SetupOptions, current: dict) -> None:
+    """Real (Yahoo) league only: Hashtag Basketball Premium is required. Ask, write [hashtag], then offer sign-in."""
+    from fbm.config import LEAGUE_CONFIG_PATH
+
+    ht = current.get("hashtag", {})
+    if opts.hashtag is None:
+        console.print(
+            "\n[bold]Hashtag Basketball Premium[/] is required for your real league: it supplies FBM's projections "
+            "and weekly totals (https://hashtagbasketball.com/premium/, Patreon). Your Yahoo league must be imported "
+            "in Hashtag's Premium area. FBM makes no suggestions until Hashtag is connected and healthy."
+        )
+        opts.hashtag = typer.confirm(
+            "Do you have Hashtag Premium with this league imported?", default=bool(ht.get("enabled", True))
+        )
+    if not opts.hashtag:
+        console.print("[yellow]Hashtag not enabled: FBM can't make suggestions for your real league yet.[/]")
+        return
+    if opts.hashtag_league_id is None:
+        default = str(ht.get("league_id") or wiz.default_hashtag_league_id(LEAGUE_CONFIG_PATH))
+        while True:
+            league_id = typer.prompt("Hashtag league id (your Yahoo league id)", default=default).strip()
+            if wiz.LEAGUE_ID_RE.match(league_id):
+                opts.hashtag_league_id = league_id
+                break
+            console.print("[red]Numbers only, e.g. 30273.[/]")
+    wiz.write_settings(wiz.SetupOptions(hashtag=True, hashtag_league_id=opts.hashtag_league_id))
+    status = wiz.hashtag_status(wiz.current_values(), LEAGUE_CONFIG_PATH)
+    if status.status == wiz.OK:
+        console.print(f"[green]Hashtag: {status.detail}[/]")
+        return
+    opts.hashtag_login = typer.confirm("Sign in to Hashtag now (opens a browser window once)?", default=True)
+    if not opts.hashtag_login:
+        return
+    for args in (["hashtag", "login"], ["hashtag", "check"], ["hashtag", "import"]):
+        if subprocess.run(wiz.fbm_command(*args), check=False).returncode != 0:
+            console.print(f"[red]`fbm {' '.join(args)}` failed; fix it, then run it again.[/]")
+            return
+
+
 def _print_report(report: wiz.SetupReport) -> None:
     table = Table(title="FBM setup report")
     for col in ("Step", "Status", "Detail"):
@@ -137,6 +176,7 @@ def _print_report(report: wiz.SetupReport) -> None:
         f"Agent [bold]{agent.get('name', 'generic')}[/] · models GM={agent.get('gm_model') or 'default'} "
         f"reviewer={agent.get('reviewer_model') or 'default'} routine={agent.get('routine_model') or 'default'} · "
         f"time zone {s.get('owner', {}).get('timezone', 'UTC')} · league {s.get('league', {}).get('source', 'demo')}"
+        f" · hashtag {'on' if s.get('hashtag', {}).get('enabled') else 'off'}"
         f" · automation {auto.get('mode', 'none')} {', '.join(auto.get('jobs', []))}"
     )
     console.print("\n[bold]Next steps[/]")
@@ -158,6 +198,12 @@ def setup_cmd(
     quiet_hours: str = typer.Option(None, help='Local quiet hours, e.g. "23:00-07:00" ("" = none).'),
     expiry_hours: float = typer.Option(None, help="Hours before an unapproved proposal expires."),
     yahoo_approved: bool = typer.Option(False, help="Yahoo API access is approved (show/run the connect steps)."),
+    hashtag: bool = typer.Option(
+        None,
+        "--hashtag/--no-hashtag",
+        help="Hashtag Basketball Premium data layer (required for a real Yahoo league; not for the demo).",
+    ),
+    hashtag_league_id: str = typer.Option(None, help="Hashtag league id (default: your Yahoo league id)."),
     skip_data: bool = typer.Option(False, help="Skip the NBA data backfill/sync."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Non-interactive: use flags + existing/default values."),
     check: bool = typer.Option(False, "--check", help="Only re-run verification (writes nothing)."),
@@ -181,6 +227,8 @@ def setup_cmd(
         expiry_hours=expiry_hours,
         skip_data=skip_data,
         yahoo_approved=yahoo_approved,
+        hashtag=hashtag,
+        hashtag_league_id=hashtag_league_id,
     )
     interactive = not yes and sys.stdin.isatty()
     current = wiz.current_values()
@@ -213,6 +261,9 @@ def setup_cmd(
         elif opts.yahoo_web_session:
             subprocess.run(wiz.fbm_command("yahoo", "login"), check=False)
             report = wiz.check()
+    if interactive and report.settings.get("league", {}).get("source") == "yahoo" and opts.hashtag is not False:
+        _hashtag_interactive(opts, wiz.current_values())
+        report = wiz.check()
     console.print()
     _print_report(report)
     raise typer.Exit(1 if report.failed else 0)
