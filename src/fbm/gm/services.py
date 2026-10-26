@@ -740,10 +740,55 @@ def _week_odds(
     return _ht.odds_map(_matchup(league, league.my_team, opp, start_day, n)[0]), "fbm_sim"
 
 
+def _ht_injury_adjustment(
+    league: LeagueState, opp: FantasyTeam, day0: date, models: dict, categories: list
+) -> dict[str, Any]:
+    """Per-side adjustment that takes injured players out of HT's grid totals (ht_odds.injury_adjustment): the
+    rest of the week planned as HT counts it (everyone healthy, IL players active) vs with injuries respected (the
+    same plan the simulator uses). Banked games are not touched."""
+    from dataclasses import replace
+
+    from fbm.analytics import ht_odds
+
+    c, conn = ctx(), _conn()
+    _, ws, we = _week_window()
+    days = date_range(day0, we)
+    playing = teams_playing(conn, ws, we)
+    value = _value(c, _strategy_punts(None)).to_dict()
+    back = c.return_dates(conn)
+    slots = league.starting_slots()
+    _, skip = _live_week(league, ws)
+    out: dict[str, Any] = {"players": []}
+    for side, team in (("me", league.my_team), ("opp", opp)):
+        active = [replace(p, status="", selected="BN" if p.selected in IL_SLOTS else p.selected) for p in team.players]
+        healthy = replace(team, players=active)
+        _, as_ht = plan_team_week(healthy, days, playing, slots, value)
+        _, real = plan_team_week(team, days, playing, slots, value, back)
+        out[side] = ht_odds.injury_adjustment(
+            ht_odds.expected_line(_remaining_games(healthy, as_ht, skip), models, available=False),
+            ht_odds.expected_line(_remaining_games(team, real, skip), models, available=True),
+            categories,
+        )
+        out["players"] += [
+            {
+                "team": side,
+                "name": p.name,
+                "status": p.status,
+                "slot": p.selected,
+                "play_prob": _r(m.play_prob),
+                "return_et": back[p.player_id].isoformat() if p.player_id in back else None,
+            }
+            for p in team.players
+            if (m := models.get(p.player_id)) is not None and (p.selected in IL_SLOTS or m.play_prob < 1.0)
+        ]
+    return out
+
+
 def _ht_week_odds(league: LeagueState, opp: FantasyTeam, n: int) -> dict[str, Any]:
-    """Official weekly odds (contract B): HT H2H Planner me_after/opp_after as the means, sd of (me - opp) per
-    category from FBM's simulator on HT projections (view policy.view.weekly_odds) for the remaining days (banked
-    stats a fixed offset), scaled by policy.odds_spread_scale."""
+    """Official weekly odds (contract B): HT H2H Planner me_after/opp_after as the means, less the injured players
+    HT's grid counts (`_ht_injury_adjustment`), sd of (me - opp) per category from FBM's simulator on HT projections
+    (view policy.view.weekly_odds) for the remaining days (banked stats a fixed offset), scaled by
+    policy.odds_spread_scale."""
     from fbm.analytics import ht_odds
     from fbm.hashtag import store as ht_store
 
@@ -761,18 +806,23 @@ def _ht_week_odds(league: LeagueState, opp: FantasyTeam, n: int) -> dict[str, An
         league, league.my_team, opp, None, n, view=view, totals=totals
     )
     keys = {k.key for k in league.categories}
-    means = {
+    ht_means = {
         k: (float(v["me_after"]), float(v["opp_after"]))
         for k, v in row["categories"].items()
         if k in keys and v.get("me_after") is not None and v.get("opp_after") is not None
     }
-    sd = ht_odds.spread(totals["me"], totals["opp"], [k for k in league.categories if k.key in means])
+    cats = [k for k in league.categories if k.key in ht_means]
+    injury = _ht_injury_adjustment(league, opp, day0, models, cats)
+    means = ht_odds.apply_adjustment(ht_means, injury["me"], injury["opp"])
+    sd = ht_odds.spread(totals["me"], totals["opp"], cats)
     scale = float(params["policy.odds_spread_scale"])
     p_win = ht_odds.odds_from_totals(means, sd, scale, league.categories)
     return {
         "p_win": p_win,
         "summary": ht_odds.summary(p_win),
         "means": means,
+        "ht_means": ht_means,
+        "injury": injury,
         "sd": sd,
         "scale": scale,
         "view": view,
@@ -1047,7 +1097,18 @@ def _simulate_matchup_ht(
         from fbm.analytics import ht_odds
 
         payload = ht_odds.payload(
-            p_win, means, w["sd"], w["scale"], w["view"], league.fetched_at or None, plan_me, plan_opp
+            p_win,
+            means,
+            w["sd"],
+            w["scale"],
+            w["view"],
+            league.fetched_at or None,
+            plan_me,
+            plan_opp,
+            extra={
+                "ht_grid_means": {k: {"me": m[0], "opp": m[1]} for k, m in w["ht_means"].items()},
+                "injury_adjustment": {"me": w["injury"]["me"], "opp": w["injury"]["opp"]},
+            },
         )
         prediction_id = _ht.record_ht_prediction(
             _conn(), payload, (w["day0"], w["we"]), league.my_team_key, opp.team_key
@@ -1076,10 +1137,12 @@ def _simulate_matchup_ht(
         "opponent": opp.name,
         "opponent_key": opp.team_key,
         "window_et": f"{day0}..{we}",
-        "odds_source": "ht_spread: Hashtag projected week totals (means) + FBM simulator spread",
+        "odds_source": "ht_spread: Hashtag projected week totals (means, injured players removed) + FBM simulator "
+        "spread",
         "ht_view": w["view"],
         "ht_pulled_at": w["ht"]["pulled_at"],
         "spread_scale": w["scale"],
+        "injured_excluded": w["injury"]["players"],
         "banked_this_week": (
             {"as_of_utc": league.fetched_at, "me": mw.banked, "opp": ow.banked} if mw.banked or ow.banked else None
         ),
@@ -1089,6 +1152,8 @@ def _simulate_matchup_ht(
                 "cat": _CAT_LABEL.get(k, k),
                 "me_total_ht": _r(means[k][0], 3 if k in pct else 1),
                 "opp_total_ht": _r(means[k][1], 3 if k in pct else 1),
+                "me_ht_grid": _r(w["ht_means"][k][0], 3 if k in pct else 1),
+                "opp_ht_grid": _r(w["ht_means"][k][1], 3 if k in pct else 1),
                 "sd_diff_sim": _r(w["sd"].get(k, 0.0), 4 if k in pct else 2),
                 "p_win": _r(p),
                 "p_tie": 0.0,
@@ -1112,8 +1177,9 @@ def _simulate_matchup_ht(
         "weekly_plan": plan,
         "prediction_id": prediction_id,
         "method": "p_win = Phi((HT me - HT opp) / (spread_scale x sd of the simulated difference)); categories "
-        "treated as independent for expected/p_majority. ht_share_reference is HT's displayed share formula, "
-        "not a probability.",
+        "treated as independent for expected/p_majority. *_total_ht = HT's grid totals (*_ht_grid) less the injured "
+        "players the grid counts (Out until their return date, GTD/Q/D at their play probability; healthy bench "
+        "players fill the spots). ht_share_reference is HT's displayed share formula, not a probability.",
     }
 
 

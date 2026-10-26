@@ -86,6 +86,35 @@ def test_shift_opponent_reprices_official_odds():
     assert p["tov"] == pytest.approx(0.8413, abs=1e-3)  # their extra turnovers help me
 
 
+def _model(pid, pts, fgm, fga, play_prob=1.0, return_date=None, rest_prob=0.0, b2b=()):
+    import numpy as np
+
+    from fbm.analytics.simulation import COL, STATS, PlayerModel
+
+    line = np.zeros(len(STATS))
+    line[COL["pts"]], line[COL["fgm"]], line[COL["fga"]] = pts, fgm, fga
+    return PlayerModel(pid, np.array([line]), play_prob, return_date=return_date,
+                       return_play_prob=0.5 if return_date else 0.0, rest_prob=rest_prob,
+                       b2b_dates=frozenset(b2b))  # fmt: skip
+
+
+def test_injury_adjustment_removes_out_players_from_ht_grid():
+    d1, d2 = date(2026, 10, 27), date(2026, 10, 28)
+    models = {
+        "star": _model("star", 30.0, 10.0, 20.0, play_prob=0.0, return_date=d2),  # Out, back on d2 (GTD 0.5)
+        "bench": _model("bench", 10.0, 4.0, 10.0, rest_prob=0.5, b2b=[d1]),  # healthy; rest risk is not injury
+    }
+    as_ht = ht_odds.expected_line([("star", d1), ("star", d2)], models, available=False)
+    real = ht_odds.expected_line([("bench", d1), ("star", d2)], models, available=True)
+    adj = ht_odds.injury_adjustment(as_ht, real, ["pts", "fg_pct"])
+    assert adj["pts"] == pytest.approx((10.0 + 15.0) - 60.0)
+    assert adj["fg_pct"] == pytest.approx((4.0 + 5.0) / (10.0 + 10.0) - 20.0 / 40.0)
+    means = ht_odds.apply_adjustment({"pts": (100.0, 90.0), "fg_pct": (0.5, 0.45)}, adj, {})
+    assert means["pts"] == pytest.approx((65.0, 90.0))
+    assert means["fg_pct"][1] == 0.45
+    assert ht_odds.apply_adjustment({"pts": (10.0, 5.0)}, {"pts": -50.0}, {})["pts"] == (0.0, 5.0)
+
+
 def test_payload_keeps_unscaled_sd():
     pl = ht_odds.payload({"pts": 0.6}, {"pts": (1.0, 0.5)}, {"pts": 3.0}, 1.3, "STREAM7")
     assert pl["sd"] == {"pts": 3.0} and pl["spread_scale"] == 1.3 and pl["method"] == "ht_totals+sim_spread"

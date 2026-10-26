@@ -8,6 +8,12 @@ fixed offset, so they add no spread), scaled by `policy.odds_spread_scale`:
     p_win(cat) = Phi(sign * (me - opp) / (scale * sd))      sign = -1 for TO (lower is better)
 
 P(tie) ~ 0 for these continuous totals. Matchup-level numbers treat categories as independent.
+
+Injured players (owner request, 2026-10-26): HT's grid counts every rostered player on each of his game days (Out and
+IL players included), capped at the active spots. FBM removes that by adding `injury_adjustment` to HT's totals: the
+change in expected totals (HT per-game means) between the week planned as HT counts it (everyone healthy) and the
+week planned with injuries respected (Out players can't start until their return date, GTD/Q/D at their play
+probability, healthy bench players fill the freed spots).
 """
 
 from __future__ import annotations
@@ -59,6 +65,56 @@ def shift_opponent(
     return {k: (float(me), float(opp) + float(opp_delta.get(k, 0.0))) for k, (me, opp) in means.items()}
 
 
+def expected_line(games: Iterable[tuple[str, Any]], models: Mapping[str, Any], available: bool) -> np.ndarray:
+    """Expected stat totals (simulation.STATS columns) of started games [(player_id, ET day)] at each player's per-game
+    mean; `available` weights each game by injury/status availability (Out = 0 until the return date, GTD/Q/D
+    their play probability; no back-to-back rest risk), else every game counts in full (as HT's grid does)."""
+    from fbm.analytics.simulation import STATS
+
+    out = np.zeros(len(STATS))
+    for pid, day in games:
+        m = models.get(pid)
+        if m is None:
+            continue
+        out += m.mean * (m.game_play_prob(day, rest=False) if available else 1.0)
+    return out
+
+
+def injury_adjustment(
+    as_ht: np.ndarray, available: np.ndarray, categories: Iterable[Category | str]
+) -> dict[str, float]:
+    """Per-category change to HT's week total from not counting injured players: `as_ht` = expected line of the week
+    planned the way HT's grid counts it (every rostered player active and healthy), `available` = the week planned
+    with injuries respected (out players can't start, healthy bench players take their spots). Percent categories
+    move by the change in made/attempted."""
+    from fbm.analytics.simulation import COL
+
+    out: dict[str, float] = {}
+    for c in map(_cat, categories):
+        if c.kind == "pct":
+            a = (as_ht[COL[c.made]], as_ht[COL[c.att]])
+            b = (available[COL[c.made]], available[COL[c.att]])
+            out[c.key] = (b[0] / b[1] if b[1] > 0 else 0.0) - (a[0] / a[1] if a[1] > 0 else 0.0)
+        else:
+            out[c.key] = float(available[COL[c.stat]] - as_ht[COL[c.stat]])
+    return out
+
+
+def apply_adjustment(
+    means: Mapping[str, tuple[float, float]], me: Mapping[str, float], opp: Mapping[str, float]
+) -> dict[str, tuple[float, float]]:
+    """HT totals with each side's per-category adjustment added (counting totals floored at 0, pct clipped 0..1)."""
+    out = {}
+    for k, (m, o) in means.items():
+        m2, o2 = float(m) + float(me.get(k, 0.0)), float(o) + float(opp.get(k, 0.0))
+        if _cat(k).kind == "pct":
+            m2, o2 = min(max(m2, 0.0), 1.0), min(max(o2, 0.0), 1.0)
+        else:
+            m2, o2 = max(m2, 0.0), max(o2, 0.0)
+        out[k] = (m2, o2)
+    return out
+
+
 def win_distribution(p_win: Mapping[str, float]) -> list[float]:
     """P(exactly k categories won), k = 0..n, for independent categories (no ties)."""
     dist = [1.0]
@@ -104,8 +160,10 @@ def payload(
     banked_at: str | None = None,
     plan_me: list | None = None,
     plan_opp: list | None = None,
+    extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The `predictions.payload` of a `ht_spread` forecast (contract B)."""
+    """The `predictions.payload` of a `ht_spread` forecast (contract B); `extra` adds audit fields (e.g. the raw HT
+    grid totals before the injury adjustment)."""
     s = summary(p_win)
     return {
         "categories": {k: {"p_win": round(float(p), 4), "p_tie": 0.0} for k, p in p_win.items()},
@@ -119,4 +177,5 @@ def payload(
         "banked_at": banked_at,
         "plan_me": plan_me or [],
         "plan_opp": plan_opp or [],
+        **(extra or {}),
     }

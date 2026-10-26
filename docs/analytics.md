@@ -90,8 +90,17 @@ odds use HT's projected weekly totals (view `policy.view.weekly_odds`) as the me
 
 where sd is the simulator's per-category standard deviation of (me − opp) over the rest of the week (HT per-game means,
 real game-to-game variation; banked stats add no spread). P(tie) ≈ 0; matchup-level numbers treat categories as
-independent. Each daily forecast is stored (`source = ht_spread`, with means and sd) so `odds_reliability` can grade
-it against Yahoo's FINAL result and recompute it for other spread scales and views.
+independent.
+
+HT's H2H grid counts every rostered player on each of his game days (Out and IL players included), capped at the
+active spots. FBM takes the injured players out of HT's totals before using them: it adds the change in expected
+totals (HT per-game means) between the rest of the week planned as HT counts it (everyone healthy and active) and
+planned with injuries respected (Out players can't start until their ESPN return date, GTD/Q/D count at their play
+probability, healthy bench players fill the freed spots; no back-to-back rest risk). `simulate_matchup` shows both
+(`*_ht_grid` and the adjusted `*_total_ht`) and lists `injured_excluded`.
+
+Each daily forecast is stored (`source = ht_spread`, with the adjusted means, the raw grid means and sd) so
+`odds_reliability` can grade it against Yahoo's FINAL result and recompute it for other spread scales and views.
 
 ## Matchup simulation
 

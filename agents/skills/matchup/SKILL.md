@@ -14,7 +14,8 @@ Run as the `gm` agent. Every number comes from tool output.
    Yahoo league). Report expected categories won, P(win week), per-category win odds, chase/hold/lock/concede status,
    swing categories, and `if_opponent_streams` (in Hashtag mode quote its `official_if_opponent_streams` — same
    basis as the official odds; the FBM-sim stand_pat/streaming numbers are not). **Official odds** (Hashtag mode) = HT's projected weekly totals
-   (policy view `policy.view.weekly_odds`, default STREAM7) + FBM's simulator spread × `policy.odds_spread_scale`.
+   (policy view `policy.view.weekly_odds`, default STREAM7) with injured players removed (HT's grid counts them;
+   see `injured_excluded`, `*_ht_grid` vs `*_total_ht`) + FBM's simulator spread × `policy.odds_spread_scale`.
    HT's displayed "probability" is a share formula (mine/(mine+opp)), not a win probability: quote it only as a
    reference, labelled as such. `odds_reliability` says how well the official odds have held up vs Yahoo finals.
 3. Category questions ("can I flip STL?"): read that category's odds; `streaming_plan` and

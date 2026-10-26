@@ -66,13 +66,13 @@ class PlayerModel:
     def mean(self) -> np.ndarray:
         return self.samples.mean(axis=0)
 
-    def game_play_prob(self, day: object = None) -> float:
+    def game_play_prob(self, day: object = None, rest: bool = True) -> float:
         """Play probability for one game: from the return date on, an Out player's return probability; back-to-back
-        legs carry the player's rest risk."""
+        legs carry the player's rest risk (unless `rest=False`: injury/status availability only)."""
         p = self.play_prob
         if self.return_date is not None and isinstance(day, date) and day >= self.return_date:
             p = self.return_play_prob
-        if self.rest_prob > 0 and day is not None and day in self.b2b_dates:
+        if rest and self.rest_prob > 0 and day is not None and day in self.b2b_dates:
             return p * (1.0 - self.rest_prob)
         return p
 

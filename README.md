@@ -38,7 +38,7 @@ every move in Yahoo yourself. Everything runs on your machine.
   key player is out (Hashtag's Next Man Up), and Hashtag projection revisions — refreshed by every data sync and
   graded by how early they fired and how the moves they led to turned out.
 - **Gives per-category win odds for your matchup:** Hashtag's projected weekly totals (including stats already
-  banked) plus FBM's simulated game-to-game spread.
+  banked, with injured players taken out) plus FBM's simulated game-to-game spread.
 - **Recommends the daily lineup** and IL moves with exact steps, respecting tip-off locks.
 - **Plans streaming** adds/drops from Hashtag's waiver wire within your weekly add limit.
 - **Decides rolling waivers**: claim now, wait for free agency, or pass.

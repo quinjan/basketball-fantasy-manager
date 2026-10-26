@@ -44,7 +44,8 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
   contested/concede/lock bands, stream thresholds, add reserve, IL hold days, odds spread scale, ...) and logs the
   decision (situation + options + recommendation) to `decisions_log`. The weekly retro replays every option on
   real box scores and Yahoo final results (`replay_grade`) — that is how FBM learns which decisions win.
-- **Official weekly odds** = HT projected weekly totals + FBM simulator spread × `policy.odds_spread_scale`
+- **Official weekly odds** = HT projected weekly totals (injured players removed: HT's grid counts them) + FBM
+  simulator spread × `policy.odds_spread_scale`
   (`weekly_plan`, `simulate_matchup`). HT's own displayed "probability" is a share formula: quote it only as a
   reference, never as the odds.
 - Pass `trigger` on `optimize_lineup` / `lineup_steps` / `weekly_plan` (`daily-gm` | `lineup-guard` | `owner-ask`)
