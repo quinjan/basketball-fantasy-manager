@@ -21,10 +21,11 @@
  └──────┬──────────────────┬────────────────────┬───────────────┬────────────┘
         ▼                  ▼                    ▼               ▼
   Hashtag Basketball   ESPN public JSON    Yahoo Fantasy     local state (gitignored)
-  Premium (optional;   (schedule, box      (league data,     memory/ reports/ data/ config/
-  projections, H2H     scores, injuries,   daily lineups,    secrets → OS credential store
-  totals, waiver wire, news)               final results;
-  trade ideas, notes)                      read-only)
+  Premium (required    (schedule, box      (league data,     memory/ reports/ data/ config/
+  for a real league;   scores, injuries,   daily lineups,    secrets → OS credential store
+  projections, H2H     news)               final results;
+  totals, waiver wire,                     read-only)
+  trade ideas, notes)
 ```
 
 The engine is deterministic and tested; the AI layer reasons over its outputs and never computes numbers itself.

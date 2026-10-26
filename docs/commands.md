@@ -59,9 +59,11 @@ Jobs: `data-sync`, `lineup-guard`, `daily-gm`, `weekly-retro`, `trade-scan`, `he
 
 ## Hashtag Basketball Premium (`fbm hashtag`)
 
-Optional data layer, active when `[hashtag] enabled = true` in `config/settings.toml` (`league_id` = the Yahoo league
-id; environment variable `FBM_HASHTAG_ENABLED=0|1` overrides `enabled`). While HT is enabled but unhealthy, FBM makes
-no suggestions (no fallback). HT content is personal-use only.
+FBM's data layer for a real league (required: a Hashtag Basketball Premium subscription with the Yahoo league
+imported into its premium league tools), active when `[hashtag] enabled = true` in `config/settings.toml`
+(`league_id` = the Yahoo league id; environment variable `FBM_HASHTAG_ENABLED=0|1` overrides `enabled`). The demo
+league runs on FBM's built-in ESPN engine instead. While HT is enabled but unhealthy, FBM makes no suggestions (no
+fallback). HT content is personal-use only.
 
 | Command | Purpose |
 |---|---|
