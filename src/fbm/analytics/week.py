@@ -50,6 +50,7 @@ def plan_team_week(
 ) -> tuple[TeamWeek, list[DayPlan]]:
     starting = set(starting_slots)
     games: list[str] = []
+    game_dates: list[date] = []
     plans: list[DayPlan] = []
     for d in days:
         nba_teams = playing_by_date.get(d, set())
@@ -57,8 +58,9 @@ def plan_team_week(
         res = optimize_day(team.players, starting_slots, playing, value)
         started = tuple(pid for pid, slot in res.assignments.items() if slot in starting and pid in playing)
         games.extend(started)
+        game_dates.extend([d] * len(started))
         plans.append(DayPlan(d, res, started))
-    return TeamWeek(team.team_key, games), plans
+    return TeamWeek(team.team_key, games, game_dates=game_dates), plans
 
 
 def generic_week(team: FantasyTeam, n_starting: int, games_per_player: float | None = None) -> TeamWeek:

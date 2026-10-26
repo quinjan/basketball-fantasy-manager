@@ -43,7 +43,8 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
   market sees; `action_hint` depends on who owns him. Act on medium/high confidence only (low-confidence signals
   backtested no better than the naive view), confirm with `evaluate_add_drop` / `waiver_decision` / `evaluate_trade`,
   and check the cause in `news` (or the `scout` agent). Minutes and starts are fast, reliable signals; shooting
-  swings are mostly luck; a role grown because a teammate is out shrinks when he returns.
+  swings are mostly luck; a role grown because a teammate is out shrinks when he returns. `fa_radar` applies this to
+  every free agent (not just a watch list) and `ownership_trends` shows what the league is grabbing.
 - **Learn from results.** `grade_decisions`, `prediction_calibration`, `projection_calibration` (FBM engine vs ESPN
   forecasts; sets the ESPN blend weight) and `signal_grades` (hit rate per signal kind) tell you how past moves,
   predictions, projections and signals turned out. If calibration is weak, hedge close calls; if a type of move keeps grading badly, stop making it.
@@ -85,17 +86,23 @@ FBM has no Yahoo write access and never changes the league. Lineups and IL moves
   (IL moves first: stash injured players, activate healthy ones when there is room). Maximize games started, then
   value; ties are broken by this week's swing categories. Players whose games have started are locked. Re-run near
   tip-off when news changes (late scratches). Give the owner the steps with tip-off times in local time.
-- An activation blocked by a full roster needs a drop: that is a proposal (section 4).
+- An activation blocked by a full roster needs a drop: that is an `il_activation` proposal (section 4). Quantify it
+  first with `evaluate_il_activation(activate, drop, effective=<ET date>)` (or `evaluate_add_drop(activate=...)`) and
+  put the week impact in the evidence.
 - When the owner says the lineup is set, call `lineup_steps(day, confirm=true)` (demo league: this updates the demo
   roster).
 - Journal entries, data refresh, reports, and emails are yours to do.
 
 ## 4. Proposals (add/drop, waiver claims, trades, strategy changes)
 
-1. **Analyze** with tools (`evaluate_add_drop`, `simulate_matchup`, `player_card`, `league_profile`, ...).
-2. **Create** with `create_proposal`: clear title (e.g. "Add Jalen Smith, drop Bez Mbeng"), summary, payload with
+1. **Analyze** with tools (`evaluate_add_drop`, `evaluate_il_activation`, `simulate_matchup`, `player_card`,
+   `league_profile`, ...).
+2. **Create** with `create_proposal`: kind `add_drop` | `waiver_claim` | `trade` | `strategy` | `il_activation`
+   (payload `{activate, activate_name, drop, drop_name, effective_et?}`; never use `other` for a move that has a kind).
+   Clear title (e.g. "Add Jalen Smith, drop Bez Mbeng"), summary, payload with
    ids AND names, rationale citing tool numbers, `evidence_json` with the key numbers, and an expiry that matches the
    decision window (e.g. before the relevant tip-off or waiver run). Max ~3 proposals per run; quality over volume.
+   `create_proposal` refuses a duplicate of a live proposal and names the existing ref: reuse or reject that one.
 3. **Independent review:** invoke the `reviewer` agent with the proposal ref (as a subagent/custom agent if your AI agent supports
    them — ideally a different model family; otherwise a fresh-context session that follows `reviewer` instructions).
    It re-derives the numbers itself and records its verdict with `record_review`. **You never call
@@ -104,7 +111,8 @@ FBM has no Yahoo write access and never changes the league. Lineups and IL moves
    `Approve P-12`, `Reject P-12`, `Discuss P-12`. Then call `record_owner_decision` with the owner's **exact** reply as
    `owner_quote`. If you cannot ask (unattended run), email the approval request (`send_email`, kind `approval`) and
    end — the owner approves later in an interactive session or with `uv run fbm proposals approve P-12`.
-5. **Steps:** call `proposal_steps(ref)`. It re-validates against the current league (`failed` if no longer valid)
+5. **Steps:** call `proposal_steps(ref)`. It re-validates against the current league (`failed` only if the move is no
+   longer valid; a kind without a step template returns generic steps and a `warning`, never `failed`)
    and returns the exact manual steps (status `awaiting_owner`). Give them to the owner; when they say it's done,
    call `confirm_done(ref, note)` (status `done`; demo league: this applies the change). The next snapshot
    verifies it. Strategy proposals are recorded and marked `done` directly by `proposal_steps`.

@@ -92,11 +92,11 @@ def test_opponent_adds_feed(monkeypatch):
     monkeypatch.setattr(svc, "_tx_history", history)
     monkeypatch.setattr(svc, "datetime", SimpleNamespace(now=lambda tz=None: NOW))
     adds, source = svc._opponent_adds(league, league.teams[0], None)
-    assert adds == 2 and source.startswith("manager profile")
-    adds, source = svc._opponent_adds(league, league.teams[1], None)  # Bravo: too little history
-    assert source.startswith("constant")
-    league.max_weekly_adds, league.adds_used = 4, {A: 3}
-    assert svc._opponent_adds(league, league.teams[0], None)[0] == 1  # capped by adds left
+    assert adds >= 1 and source.startswith("manager model")
+    adds_b, source_b = svc._opponent_adds(league, league.teams[1], None)  # Bravo: little history, mostly prior
+    assert source_b.startswith("manager model") and adds_b <= adds
+    league.max_weekly_adds, league.adds_used = 4, {A: 4}
+    assert svc._opponent_adds(league, league.teams[0], None)[0] == 0  # capped by adds left
     assert svc._opponent_adds(league, league.teams[0], 5)[1] == "caller"
 
 

@@ -2,7 +2,7 @@
 name: reviewer
 description: Independent adversarial reviewer (ideally a different model family from the GM) for FBM proposals. Re-derives the numbers with fbm tools and records AGREE / DISAGREE / SPLIT. Invoke with a proposal ref, e.g. "Review P-12".
 model_role: reviewer
-tools: [context_pack, get_proposal, list_proposals, my_roster, player_card, rankings, free_agents, injuries, news, schedule, optimize_lineup, simulate_matchup, league_profile, punt_scenarios, evaluate_add_drop, streaming_plan, evaluate_trade, find_trades, grade_decisions, prediction_calibration, projection_calibration, signals, buy_sell, signal_grades, waiver_decision, playoff_outlook, constants, health_check, standings, scoreboard, transactions, pending_offers, manager_profile, league_intel, record_review]
+tools: [context_pack, get_proposal, list_proposals, my_roster, player_card, game_log, week_box, rankings, free_agents, injuries, news, schedule, optimize_lineup, simulate_matchup, league_profile, punt_scenarios, evaluate_add_drop, evaluate_il_activation, streaming_plan, evaluate_trade, find_trades, grade_decisions, prediction_calibration, projection_calibration, signals, buy_sell, fa_radar, ownership_trends, signal_grades, waiver_decision, playoff_outlook, constants, health_check, standings, scoreboard, transactions, pending_offers, manager_profile, league_intel, record_review]
 capabilities: [read, search]
 ---
 

@@ -179,15 +179,23 @@ def validate(agent: str, mode: str, jobs: Sequence[str]) -> list[str]:
 # ---------------------------------------------------------------- agent commands
 
 
+MCP_FALLBACK = (
+    "If fbm MCP tool calls fail because the server is unreachable (e.g. 'connection was cancelled'), call the same "
+    "tools through the CLI bridge instead: `uv run fbm tool <tool_name> key=value ...` (or pipe a JSON object of "
+    "arguments to `uv run fbm tool <tool_name> --stdin`); it runs the same tool and returns the same JSON. That is "
+    "the only shell command allowed."
+)
+
+
 def job_prompt(job: str) -> str:
     skill = CATALOG[job].skill
     return (
         f"Run the {skill} skill (agents/skills/{skill}/SKILL.md) for my FBM league. This is an unattended "
         "scheduled run: use only the fbm MCP tools and read-only file access; do not edit files, change settings, "
-        "or run shell commands. Numbers must come from fbm tool output. FBM never changes my league: produce "
-        "insights, the lineup recommendation (lineup_steps, without confirm) and proposals (create_proposal) only. "
-        "Never record approvals, never call proposal_steps or confirm_done, never claim a move was made. "
-        "Finish with a short report listing anything I need to do in Yahoo."
+        f"or run other shell commands. {MCP_FALLBACK} Numbers must come from fbm tool output. FBM never changes my "
+        "league: produce insights, the lineup recommendation (lineup_steps, without confirm) and proposals "
+        "(create_proposal) only. Never record approvals, never call proposal_steps or confirm_done, never claim a "
+        "move was made. Finish with a short report listing anything I need to do in Yahoo."
     )
 
 

@@ -18,7 +18,8 @@ Run as the `gm` agent but keep it short and cheap. No proposals, no market scan.
    until fixed): alert the owner and draft an add/drop proposal on the next `daily-gm` run.
 5. **Next man up.** If `signals_new` has an `opportunity` or `role_change` (up) signal of medium/high confidence
    for a player who is a free agent (`signals(scope="fa", new_only=true)`), it's time-sensitive: include it in the
-   alert with its note (other managers react within hours). No proposals here — the next `daily-gm` run (or the
+   alert with its note (other managers react within hours). `early_signals.fa_radar` (from `refresh_data`) lists any
+   free agent that just turned valuable, watch list or not; include medium/high hits too. No proposals here — the next `daily-gm` run (or the
    owner) evaluates the pickup.
 6. Only if something changed or needs the owner: `send_email` kind `alert` with the recommended steps
    and the reason (e.g. "X ruled OUT 40 min before tip; started Y instead").

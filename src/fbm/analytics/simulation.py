@@ -1,8 +1,10 @@
 """Monte Carlo category simulation for H2H weeks.
 
 Each player-game is drawn by resampling the player's real recent box-score lines (keeps stat correlations such as
-makes-with-attempts), times a Bernoulli "plays" draw from injury status. Team weekly totals are simulated once per
-team, so any pair of teams can be compared cheaply (matchups, league-wide category profiles).
+makes-with-attempts), re-centred on the projection table's per-game means, times a Bernoulli "plays" draw from injury
+status (and back-to-back rest risk). Each player's games in a simulated week share one role/form multiplier. Team
+weekly totals are simulated once per team, so any pair of teams can be compared cheaply (matchups, league-wide
+category profiles).
 """
 
 from __future__ import annotations
@@ -52,10 +54,45 @@ class PlayerModel:
     samples: np.ndarray  # (k, len(STATS)) per-game lines
     play_prob: float = 1.0
     synthetic: bool = False
+    form_sd: float = 0.0  # sd of the weekly multiplier shared by all of this player's games in a simulated week
+    rest_prob: float = 0.0  # extra chance of sitting a back-to-back leg (load management)
+    b2b_dates: frozenset = frozenset()  # ET dates that are one leg of a back-to-back for the player's NBA team
 
     @property
     def mean(self) -> np.ndarray:
         return self.samples.mean(axis=0)
+
+    def game_play_prob(self, day: object = None) -> float:
+        """Play probability for one game; back-to-back legs carry the player's rest risk."""
+        if self.rest_prob > 0 and day is not None and day in self.b2b_dates:
+            return self.play_prob * (1.0 - self.rest_prob)
+        return self.play_prob
+
+
+def form_multiplier(rng: np.random.Generator, n: int, sd: float) -> np.ndarray:
+    """Mean-one lognormal weekly multiplier with (approximately) standard deviation `sd`."""
+    if sd <= 0:
+        return np.ones(n)
+    s = float(np.sqrt(np.log1p(sd**2)))
+    return np.exp(rng.normal(-0.5 * s**2, s, n))
+
+
+def anchor_samples(samples: np.ndarray, target: pd.Series, weight: float, lo: float, hi: float) -> np.ndarray:
+    """Rescale each stat column so its mean moves toward the projection's per-game mean (`weight` 1 = all the way).
+
+    Column-wise scaling keeps each game's shape (and makes/attempts pairing); makes and attempts are scaled
+    separately so shooting percentages follow the projection too."""
+    if weight <= 0 or len(samples) == 0:
+        return samples
+    out = samples.astype(float, copy=True)
+    means = out.mean(axis=0)
+    for s, i in COL.items():
+        t = target.get(s)
+        if t is None or not np.isfinite(t) or means[i] <= 0:
+            continue
+        goal = (1.0 - weight) * means[i] + weight * float(t)
+        out[:, i] *= float(np.clip(goal / means[i], lo, hi))
+    return out
 
 
 def _synthetic_games(row: pd.Series, n: int, rng: np.random.Generator) -> np.ndarray:
@@ -86,13 +123,22 @@ def build_player_models(
     min_games: int = 8,
     seed: int | None = 7,
     play_probs: Mapping[str, float] | None = None,
+    rest_probs: Mapping[str, float] | None = None,
+    b2b_dates: Mapping[str, frozenset] | None = None,
 ) -> dict[str, PlayerModel]:
-    """Recent real games (most recent seasons first); synthetic from projections when history is thin.
+    """Recent real games (most recent seasons first), re-centred on the projection's per-game means
+    (`sim.projection_anchor`); synthetic from projections when history is thin.
 
-    `play_probs` overrides the status-derived play probability per player (e.g. rest-of-season availability)."""
+    `play_probs` overrides the status-derived play probability per player (e.g. rest-of-season availability).
+    `rest_probs` / `b2b_dates` add back-to-back rest risk on those dates (this-week sims only)."""
     ids = list(dict.fromkeys(player_ids))
     rng = np.random.default_rng(seed)
     statuses = statuses or {}
+    rest_probs = rest_probs or {}
+    b2b_dates = b2b_dates or {}
+    anchor = float(C("sim.projection_anchor"))
+    lo, hi = float(C("sim.anchor_scale_min")), float(C("sim.anchor_scale_max"))
+    form_sd = float(C("sim.form_sd"))
     models: dict[str, PlayerModel] = {}
     if not ids:
         return models
@@ -112,13 +158,23 @@ def build_player_models(
         if len(samples) < min_games and projections is not None and pid in projections.index:
             samples = _synthetic_games(projections.loc[pid], max_games, rng)
             synthetic = True
+        elif len(samples) and projections is not None and pid in projections.index:
+            samples = anchor_samples(samples, projections.loc[pid], anchor, lo, hi)
         if len(samples) == 0:
             samples = np.zeros((1, len(STATS)))
             synthetic = True
         prob = (
             play_probs[pid] if play_probs is not None and pid in play_probs else play_probability(statuses.get(pid, ""))
         )
-        models[pid] = PlayerModel(pid, samples, float(prob), synthetic)
+        models[pid] = PlayerModel(
+            pid,
+            samples,
+            float(prob),
+            synthetic,
+            form_sd=form_sd,
+            rest_prob=float(rest_probs.get(pid, 0.0)),
+            b2b_dates=frozenset(b2b_dates.get(pid, frozenset())),
+        )
     return models
 
 
@@ -128,6 +184,7 @@ class TeamWeek:
     player_games: list[str]  # one entry per remaining started game
     banked: dict[str, float] = field(default_factory=dict)  # stats already accumulated this week
     play_scale: dict[str, float] = field(default_factory=dict)  # extra per-player multipliers (e.g. start share)
+    game_dates: list | None = None  # ET date of each entry in player_games (enables back-to-back rest)
 
 
 def simulate_totals(
@@ -137,17 +194,22 @@ def simulate_totals(
     for s, v in week.banked.items():
         if s in COL:
             totals[:, COL[s]] += v
-    for pid in week.player_games:
+    dates = week.game_dates if week.game_dates is not None else [None] * len(week.player_games)
+    per_player: dict[str, np.ndarray] = {}
+    for pid, day in zip(week.player_games, dates, strict=True):
         model = models.get(pid)
         if model is None:
             continue
-        p = model.play_prob * week.play_scale.get(pid, 1.0)
+        p = model.game_play_prob(day) * week.play_scale.get(pid, 1.0)
         if p <= 0:
             continue
         draws = model.samples[rng.integers(0, len(model.samples), n_sims)]
         if p < 1:
             draws = draws * (rng.random(n_sims) < p)[:, None]
-        totals += draws
+        per_player[pid] = draws if pid not in per_player else per_player[pid] + draws
+    for pid, week_lines in per_player.items():
+        sd = models[pid].form_sd
+        totals += week_lines * form_multiplier(rng, n_sims, sd)[:, None] if sd > 0 else week_lines
     return totals
 
 

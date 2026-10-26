@@ -20,7 +20,9 @@ Run as the `gm` agent. Follow AGENTS.md. Be efficient: this runs every day.
    up signal (`opportunity`, `role_change` up, `buy_low`, `espn_revision` up): check the cause (`news`, `player_card`)
    and test them now with `evaluate_add_drop` / `waiver_decision` — the edge is acting before other managers. My
    players with down signals (`sell_high`, lost job, minutes drop): note them for `trade-scan` or a replacement.
-   Other teams' players with up signals: note as trade targets.
+   Other teams' players with up signals: note as trade targets. Then `fa_radar` (every free agent / waiver player,
+   not just flagged ones: signals + minutes jump + ownership surge + value vs my worst player) and
+   `ownership_trends` (what the league is adding/dropping); test the top radar hits with the tool it names.
 6. **Market scan.** `streaming_plan` for this week's best add/drop sequence (it respects the add limit, strategy
    punts, and rest-of-season cost), plus `free_agents(sort="value")` for long-term upgrades. Confirm the 1–3 best
    moves with `evaluate_add_drop`. For anyone on waivers, `waiver_decision` decides claim / wait / pass under rolling

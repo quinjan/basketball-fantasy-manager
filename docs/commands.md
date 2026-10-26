@@ -22,6 +22,7 @@ Dates are **US/Eastern** NBA game days (`YYYY-MM-DD`).
 | `fbm agent status [--timeout 120]` | Show installed agent files and check the MCP server starts and lists its tools |
 | `fbm agent uninstall [--agent NAME]` | Remove only the files FBM generated (tracked in `data/agent_install.json`) |
 | `fbm agent sync-setup-skill` | Maintainers: copy `agents/skills/setup-fbm/SKILL.md` into the committed per-agent copies |
+| `fbm tool [NAME] [key=value ...] [--stdin] [--list]` | Call any fbm MCP tool from the shell: same validation and JSON output as the MCP server. Fallback when an agent session can't reach the server. String arguments stay raw; others parse as JSON; `--stdin` reads a JSON object of arguments. Exits 1 on a tool error |
 
 ## Automation (`fbm automation`)
 

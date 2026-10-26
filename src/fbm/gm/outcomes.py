@@ -3,9 +3,10 @@
 - Predictions: every recorded matchup simulation stores per-category win odds and the planned started games. After
   the window ends, realized category results are computed from box scores (demo) or Yahoo results (later), and
   scored with the Brier score: (p_win + 0.5 p_tie - outcome)^2, outcome in {1, 0.5, 0}.
-- Decisions: executed add/drop, waiver, and trade proposals are graded by the realized production of players
-  acquired minus players given up, from the execution date on. Each category is scaled by a team-week standard
-  deviation, so +1.0 means the move added about one team-week SD of production summed across categories.
+- Decisions: executed add/drop, waiver, trade and IL-activation proposals are graded by the realized production of
+  players acquired (or activated) minus players given up, from the execution date on. Each category is scaled by a
+  team-week standard deviation, so +1.0 means the move added about one team-week SD of production summed across
+  categories.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from fbm.constants import C
 from fbm.gm import proposals as props
 from fbm.timeutil import ET
 
-GRADED_KINDS = ("add_drop", "waiver_claim", "trade")
+GRADED_KINDS = ("add_drop", "waiver_claim", "trade", "il_activation")
 
 ActualProvider = Callable[[sqlite3.Row], tuple[Mapping[str, float], Mapping[str, float]] | None]
 
@@ -275,15 +276,20 @@ def grade_decisions(
     cutoff = (datetime.now(UTC) - timedelta(days=lookback_days)).isoformat(timespec="seconds")
     out = []
     for p in props.list_proposals(conn, "done", 500):
-        if p.kind not in GRADED_KINDS or not p.executed_at or p.executed_at < cutoff:
+        if props.effective_kind(p.kind, p.payload) not in GRADED_KINDS or not p.executed_at or p.executed_at < cutoff:
             continue
         start = _et_date(p.executed_at)
         end = today - timedelta(days=1)
         if end < start:
             end = start
         pay = p.payload
-        ins = [pay["add"]] if p.kind != "trade" else list(pay.get("get", []))
-        outs = ([pay["drop"]] if pay.get("drop") else []) if p.kind != "trade" else list(pay.get("give", []))
+        kind = props.effective_kind(p.kind, pay)
+        if kind == "il_activation":
+            ins, outs = [pay["activate"]], ([pay["drop"]] if pay.get("drop") else [])
+        elif kind == "trade":
+            ins, outs = list(pay.get("get", [])), list(pay.get("give", []))
+        else:
+            ins, outs = [pay["add"]], ([pay["drop"]] if pay.get("drop") else [])
         got = [
             contribution(conn, pid, start, end, pool, categories, punts) | {"player": names.get(pid, pid)}
             for pid in ins

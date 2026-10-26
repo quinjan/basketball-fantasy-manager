@@ -9,8 +9,9 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from fbm.analytics.il_activation import validate_activation
 from fbm.gm import memory
-from fbm.gm.proposals import Proposal
+from fbm.gm.proposals import Proposal, effective_kind
 from fbm.league.demo import default_waiver_priority, roster_player, rotate_waiver_priority, save_league
 from fbm.league.model import IL_SLOTS, LeagueState, RosterPlayer
 
@@ -31,10 +32,15 @@ def already_made(p: Proposal, league: LeagueState) -> bool:
     owners = _rostered(league)
     mine = league.my_team_key
     pay = p.payload
-    if p.kind in ("add_drop", "waiver_claim"):
+    kind = effective_kind(p.kind, pay)
+    if kind in ("add_drop", "waiver_claim"):
         add, drop = pay.get("add"), pay.get("drop")
         return bool(add) and owners.get(add) == mine and (not drop or owners.get(drop) != mine)
-    if p.kind == "trade":
+    if kind == "il_activation":
+        act, drop = pay.get("activate"), pay.get("drop")
+        mover = next((x for x in league.my_team.players if x.player_id == act), None)
+        return mover is not None and mover.selected not in IL_SLOTS and (not drop or owners.get(drop) != mine)
+    if kind == "trade":
         give, get = list(pay.get("give", [])), list(pay.get("get", []))
         return (
             bool(give or get) and all(owners.get(x) != mine for x in give) and all(owners.get(x) == mine for x in get)
@@ -49,7 +55,8 @@ def revalidate(p: Proposal, league: LeagueState, teamless: frozenset[str] = froz
     owners = _rostered(league)
     mine = league.my_team_key
     pay = p.payload
-    if p.kind in ("add_drop", "waiver_claim"):
+    kind = effective_kind(p.kind, pay)
+    if kind in ("add_drop", "waiver_claim"):
         add, drop = pay.get("add"), pay.get("drop")
         if not add:
             problems.append("payload.add is required")
@@ -62,6 +69,11 @@ def revalidate(p: Proposal, league: LeagueState, teamless: frozenset[str] = froz
         active = [x for x in league.my_team.players if x.selected not in IL_SLOTS]
         if not drop and len(active) >= league.roster_size():
             problems.append("roster is full: a drop is required")
+    elif kind == "il_activation":
+        if not pay.get("activate"):
+            problems.append("payload.activate is required")
+        else:
+            problems.extend(_il_problems(pay, league))
     elif p.kind == "trade":
         partner = pay.get("partner")
         for pid in pay.get("give", []):
@@ -73,6 +85,45 @@ def revalidate(p: Proposal, league: LeagueState, teamless: frozenset[str] = froz
             elif pid in teamless:
                 problems.append(f"{pid} has no NBA team (not on any current NBA roster)")
     return problems
+
+
+def _il_problems(pay: Mapping[str, Any], league: LeagueState) -> list[str]:
+    problems = validate_activation(league.my_team.players, pay["activate"], pay.get("drop"), league.roster_size())
+    labels = {pay["activate"]: pay.get("activate_name"), pay.get("drop"): pay.get("drop_name")}
+    for pid, label in labels.items():  # name players the roster no longer has instead of showing raw ids
+        if pid and label:
+            problems = [x.replace(f"{pid} is not on your roster", f"{label} is not on your roster") for x in problems]
+    return problems
+
+
+def _il_activation_steps(pay: Mapping[str, Any]) -> list[str]:
+    act, drop = pay.get("activate_name", pay.get("activate")), pay.get("drop_name", pay.get("drop"))
+    effective = pay.get("effective_et")
+    steps = ["Open the Yahoo Fantasy app → your league → My Team."]
+    if effective:
+        steps.append(
+            f"Timing: make this move on **{effective}** (ET), before that day's tip-offs; "
+            "do not do it earlier, so nobody loses a game."
+        )
+    elif pay.get("timing"):
+        steps.append(f"Timing: {pay['timing']}")
+    if drop:
+        steps.append(
+            f"Drop **{drop}** first (tap him → Drop): Yahoo needs the open spot before **{act}** can leave IL."
+        )
+    steps.append(f"Move **{act}** from IL to an active or bench slot (tap his slot → Move → pick a slot).")
+    steps.append("This uses no weekly add. Confirm, then tell the GM it's done (it will verify on the next sync).")
+    return steps
+
+
+def _generic_steps(p: Proposal) -> list[str]:
+    return [
+        f"FBM has no step template for proposal kind '{p.kind}'. The owner-approved proposal was:",
+        f"**{p.title}**",
+        p.summary,
+        f"Payload: {p.payload}",
+        "Make this change in Yahoo yourself, then tell the GM it's done (confirm_done).",
+    ]
 
 
 def _add_drop_steps(pay: Mapping[str, Any], waiver: bool) -> list[str]:
@@ -116,20 +167,25 @@ def owner_steps(p: Proposal, league: LeagueState, teamless: frozenset[str] = fro
     if problems:
         return StepsResult("failed", {"revalidation": problems})
     pay = p.payload
-    if p.kind == "strategy":
+    kind = effective_kind(p.kind, pay)
+    if kind == "strategy":
         data = memory.write_strategy(
             list(pay.get("punts", [])), list(pay.get("targets", [])), str(pay.get("notes", "")), p.ref
         )
         return StepsResult("done", {"strategy": data, "note": "strategy recorded in FBM memory (no league change)"})
-    if p.kind in ("add_drop", "waiver_claim"):
-        steps = _add_drop_steps(pay, waiver=p.kind == "waiver_claim")
-    elif p.kind == "trade":
+    detail: dict[str, Any] = {}
+    if kind in ("add_drop", "waiver_claim"):
+        steps = _add_drop_steps(pay, waiver=kind == "waiver_claim")
+    elif kind == "il_activation":
+        steps = _il_activation_steps(pay)
+    elif kind == "trade":
         steps = _trade_steps(pay)
-    else:
-        return StepsResult("failed", {"error": f"no owner steps for proposal kind {p.kind}"})
+    else:  # an owner-approved proposal with no template is not a failed re-validation: hand over generic steps
+        steps = _generic_steps(p)
+        detail["warning"] = f"no step template for proposal kind '{p.kind}'; generic steps returned"
     if league.source == "demo":
         steps.append("Demo league: confirming it's done applies this move to the demo roster.")
-    return StepsResult("awaiting_owner", {"manual_steps": steps})
+    return StepsResult("awaiting_owner", {**detail, "manual_steps": steps})
 
 
 def simulate_in_demo(p: Proposal, league: LeagueState, values=None, eligibility=None) -> dict[str, Any]:
@@ -137,15 +193,23 @@ def simulate_in_demo(p: Proposal, league: LeagueState, values=None, eligibility=
     if league.source != "demo":
         return {}
     pay = p.payload
-    if p.kind in ("add_drop", "waiver_claim"):
+    kind = effective_kind(p.kind, pay)
+    if kind in ("add_drop", "waiver_claim"):
         team = league.my_team
         if pay.get("drop"):
             team.players = [x for x in team.players if x.player_id != pay["drop"]]
         team.players.append(roster_player_from_values(pay["add"], values, eligibility))
-        if p.kind == "waiver_claim":
+        if kind == "waiver_claim":
             current = league.waiver_priority or default_waiver_priority(league)
             league.waiver_priority = rotate_waiver_priority(current, league.my_team_key)
-    elif p.kind == "trade":
+    elif kind == "il_activation":
+        team = league.my_team
+        if pay.get("drop"):
+            team.players = [x for x in team.players if x.player_id != pay["drop"]]
+        for x in team.players:
+            if x.player_id == pay["activate"]:
+                x.selected = "BN"
+    elif kind == "trade":
         mine, partner = league.my_team, league.team(pay["partner"])
         give, get = set(pay.get("give", [])), set(pay.get("get", []))
         moving_out = [x for x in mine.players if x.player_id in give]

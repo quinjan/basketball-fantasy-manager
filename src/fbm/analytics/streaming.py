@@ -72,6 +72,7 @@ class StreamContext:
     weights: Mapping[str, float]  # category key -> objective weight (0 for punts)
     banked: Mapping[str, float] = field(default_factory=dict)
     skip: Mapping[date, set[str]] = field(default_factory=dict)  # ET day -> NBA teams whose games are banked
+    add_not_before: Mapping[str, date] = field(default_factory=dict)  # player on waivers -> first day he can be added
     _lineups: dict = field(default_factory=dict)
 
     def game_days(self, pid: str, start: date | None = None) -> list[date]:
@@ -95,6 +96,8 @@ def roster_by_day(ctx: StreamContext, moves: Sequence[Move]) -> dict[date, tuple
             m = ordered[i]
             if m.add in ids:
                 raise InvalidPlan(f"{m.add} already rostered on {m.day}")
+            if m.day < ctx.add_not_before.get(m.add, m.day):
+                raise InvalidPlan(f"{m.add} is on waivers until {ctx.add_not_before[m.add]}")
             if m.drop is not None:
                 if m.drop not in ids:
                     raise InvalidPlan(f"{m.drop} not rostered on {m.day}")
@@ -187,6 +190,7 @@ def plan_streams(
                     earliest = added[drop] + timedelta(days=1)
                 else:
                     earliest = ctx.days[0]
+                earliest = max(earliest, ctx.add_not_before.get(add, earliest))
                 if earliest > ctx.days[-1]:
                     continue
                 for d in _effective_days(ctx, add, drop, earliest):

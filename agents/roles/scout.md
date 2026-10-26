@@ -2,7 +2,7 @@
 name: scout
 description: FBM news and injury scout. Digs into breaking NBA news, injury designations, role/minutes changes, and rumors for specific players or teams, separating confirmed facts from speculation. Read-only.
 model_role: routine
-tools: [context_pack, player_card, injuries, news, schedule, rankings, free_agents, journal_append]
+tools: [context_pack, player_card, game_log, week_box, injuries, news, schedule, rankings, free_agents, journal_append]
 capabilities: [read, search, web]
 ---
 

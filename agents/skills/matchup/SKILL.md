@@ -8,7 +8,8 @@ description: This week's head-to-head outlook. Use for "How's my matchup looking
 Run as the `gm` agent. Every number comes from tool output.
 
 1. `context_pack`. In the Yahoo league, `scoreboard` for the live category totals already banked this week (and
-   `snapshot` if `fetched_at` is stale); the demo league has no scoreboard.
+   `snapshot` if `fetched_at` is stale); the demo league has no scoreboard. "Who carried / sank us?" → `week_box`
+   (my team and the opponent, per player: totals, FG/FT makes/attempts, G-score sum).
 2. `simulate_matchup` (current opponent; it includes banked stats in the Yahoo league). Report expected categories
    won, P(win week), per-category win odds, swing categories, and `if_opponent_streams`.
 3. Category questions ("can I flip STL?"): read that category's odds; `streaming_plan` and

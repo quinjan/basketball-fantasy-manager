@@ -65,9 +65,13 @@ punt scenarios) and season-level simulations; in matchup simulations each game i
 ## Matchup simulation
 
 Monte Carlo over the rest of the fantasy week. It resamples players' real game lines (which keeps correlations
-between stats) and multiplies by play probability. In the Yahoo league the stats already banked this week (live
-scoreboard) are added to the simulated remainder. Output includes per-category win/tie/loss odds and an "if the
-opponent streams" upper bound (the streaming planner run from their side).
+between stats), re-centred on the projection table's per-game means (`sim.projection_anchor`, so role/minutes changes
+and the ESPN blend show up), and multiplies by play probability. Each player's games in a simulated week share one
+role/form multiplier (`sim.form_sd`, measured from week-to-week variance), and players with a history of sitting a
+leg of back-to-backs carry that rest risk on their team's back-to-back dates (`sim.b2b_rest_*`). In the Yahoo league
+the stats already banked this week (live scoreboard) are added to the simulated remainder. Output includes
+per-category win/tie/loss odds and an "if the opponent streams" upper bound (the streaming planner run from their
+side).
 
 ## Daily lineup
 

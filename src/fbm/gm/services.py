@@ -14,6 +14,7 @@ from typing import Any
 import pandas as pd
 
 from fbm import credentials
+from fbm.analytics import boxscores as box
 from fbm.analytics.categories import NINE_CAT, parse_category_list
 from fbm.analytics.context import AnalyticsContext, build_context
 from fbm.analytics.lineup import il_moves, optimize_day
@@ -26,6 +27,7 @@ from fbm.constants import C
 from fbm.data import sync
 from fbm.data.espn import EspnClient
 from fbm.gm import memory, outcomes, steps
+from fbm.gm import ownership as _own_history
 from fbm.gm import proposals as props
 from fbm.league.model import IL_SLOTS, FantasyTeam, LeagueState, eligibility_from_espn_position
 from fbm.settings import load_settings
@@ -296,15 +298,21 @@ def league_overview() -> dict[str, Any]:
 
 
 def my_roster(day: str | None = None, punts: str | None = None) -> dict[str, Any]:
-    league, c = active_league(), ctx()
+    return _roster_view(active_league().my_team, day, punts)
+
+
+def _roster_view(team: FantasyTeam, day: str | None, punts: str | None) -> dict[str, Any]:
+    """Per-player roster rows for any league team (my_roster, team_roster)."""
+    c = ctx()
     target = parse_date(day) if day else nba_today()
     start, ws, we = _week_window(target)
     pun = _strategy_punts(punts)
     value = _value(c, pun)
     ros = _ros_value(c, pun)
     playing_today = teams_playing(_conn(), target, target)[target]
+    roles = _season_roles(c, team.player_ids())
     rows = []
-    for p in league.my_team.players:
+    for p in team.players:
         rows.append(
             {
                 "player": p.name,
@@ -319,6 +327,7 @@ def my_roster(day: str | None = None, punts: str | None = None) -> dict[str, Any
                 "ros_value": _r(ros.get(p.player_id, 0.0)),
                 **_availability(c, p.player_id),
                 "role": _role(c, p.player_id),
+                "season_role": box.compact_role(roles[p.player_id]),
                 "playoff_games": _player_playoff(p.player_id)["games"],
                 "g_by_cat": _cat_line(c, p.player_id),
                 "per_game": _per_game(c, p.player_id),
@@ -326,7 +335,31 @@ def my_roster(day: str | None = None, punts: str | None = None) -> dict[str, Any
             }
         )
     rows.sort(key=lambda r: -r["value"])
-    return {"team": league.my_team.name, "date_et": target.isoformat(), "punts_applied": list(pun), "players": rows}
+    return {"team": team.name, "date_et": target.isoformat(), "punts_applied": list(pun), "players": rows}
+
+
+def team_roster(team: str | None = None, day: str | None = None, punts: str | None = None) -> dict[str, Any]:
+    from fbm.gm import lookahead
+
+    return lookahead.team_roster(team, day, punts)
+
+
+def next_week(opponent: str | None = None, n: int = 4000) -> dict[str, Any]:
+    from fbm.gm import lookahead
+
+    return lookahead.next_week(opponent, n)
+
+
+def game_log(player: str, last_n: int = 10, season: int | None = None) -> dict[str, Any]:
+    from fbm.gm import boxscore_tools
+
+    return boxscore_tools.game_log(player, last_n, season)
+
+
+def week_box(team: str | None = None) -> dict[str, Any]:
+    from fbm.gm import boxscore_tools
+
+    return boxscore_tools.week_box(team)
 
 
 def player_card(query: str) -> dict[str, Any]:
@@ -340,7 +373,7 @@ def player_card(query: str) -> dict[str, Any]:
     start, ws, we = _week_window()
     conn = _conn()
     last = pd.read_sql_query(
-        "SELECT et_date, minutes, pts, reb, ast, stl, blk, tov, tpm, fgm, fga, ftm, fta FROM box_lines "
+        "SELECT et_date, season, minutes, pts, reb, ast, stl, blk, tov, tpm, fgm, fga, ftm, fta FROM box_lines "
         "WHERE espn_id = ? AND played = 1 ORDER BY et_date DESC LIMIT 10",
         conn,
         params=(pid,),
@@ -380,9 +413,11 @@ def player_card(query: str) -> dict[str, Any]:
         **_availability(c, pid),
         "injury": _injury(pid),
         "games_left_this_week": _games_remaining(str(proj["team"]), start, we),
-        "last_10_games_avg": {k: _r(v, 1) for k, v in last.drop(columns=["et_date"]).mean().items()}
+        "last_10_games_avg": {k: _r(v, 1) for k, v in last.drop(columns=["et_date", "season"]).mean().items()}
         if not last.empty
         else {},
+        "last_10_seasons_included": sorted(int(s) for s in last["season"].unique()) if not last.empty else [],
+        "season_role": _season_roles(c, [pid])[pid],
         "last_game_date": last["et_date"].iloc[0] if not last.empty else None,
         "recent_news": news,
         "other_matches": [str(c.projections.loc[i, "name"]) for i in ids[1:]],
@@ -421,9 +456,7 @@ def rankings(
         }
         for i, (pid, r) in enumerate(df.head(top).iterrows(), 1)
     ]
-    for row in rows:
-        if own := league.ownership.get(row["id"]):
-            row["pct_owned"], row["pct_owned_delta"] = own[0], own[1]
+    _own_history.annotate(_conn(), rows, league)
     return {
         "punts_applied": list(pun),
         "metric": "rest-of-season G-score sum over non-punted categories (scaled toward replacement by availability)",
@@ -431,17 +464,38 @@ def rankings(
     }
 
 
+def _mark_waivers(players: list[dict[str, Any]]) -> None:
+    """Flag free-agent rows that are really on waivers (Yahoo snapshot): not addable before they clear, so
+    games_left_this_week counts only games from the clear date (it drives week_value)."""
+    from fbm.gm.waiver_status import clear_dates, games_from
+
+    clears = clear_dates(active_league().on_waivers)
+    start, ws, we = _week_window()
+    playing = teams_playing(_conn(), start, we)
+    days = date_range(start, we)
+    for p in players:
+        clear = clears.get(p["id"])
+        p["on_waivers"] = clear is not None
+        if clear is not None:
+            p["clears_waivers_et"] = clear.isoformat()
+            p["games_left_this_week"] = games_from(p["nba"], days, playing, clear)
+
+
 def free_agents(
     top: int = 25, punts: str | None = None, position: str | None = None, sort: str = "value"
 ) -> dict[str, Any]:
     res = rankings(top=max(top * 3, 60), punts=punts, position=position, available_only=True)
     players = res["players"]
+    _mark_waivers(players)
     for p in players:
         p["week_value"] = _r(p["value"] * p["games_left_this_week"] / 3.5)
     if sort == "week":
         players.sort(key=lambda p: -p["week_value"])
     res["players"] = players[:top]
-    res["note"] = "week_value = value x games_left_this_week / 3.5 (streaming lens)"
+    res["note"] = (
+        "week_value = value x games_left_this_week / 3.5 (streaming lens). on_waivers=true: not addable before "
+        "clears_waivers_et (claim or wait); his games_left_this_week counts only games from that date."
+    )
     return res
 
 
@@ -616,9 +670,13 @@ def _matchup(league: LeagueState, me: FantasyTeam, opp: FantasyTeam, start_day: 
     _, my_plans = plan_team_week(me, days, playing, league.starting_slots(), value)
     _, opp_plans = plan_team_week(opp, days, playing, league.starting_slots(), value)
     banked, skip = _live_week(league, ws) if start_day is None else ({}, {})
-    mw = TeamWeek(me.team_key, [pid for pid, _ in _remaining_games(me, my_plans, skip)], banked.get(me.team_key, {}))
+    my_games = _remaining_games(me, my_plans, skip)
+    opp_games = _remaining_games(opp, opp_plans, skip)
+    mw = TeamWeek(
+        me.team_key, [pid for pid, _ in my_games], banked.get(me.team_key, {}), game_dates=[d for _, d in my_games]
+    )
     ow = TeamWeek(
-        opp.team_key, [pid for pid, _ in _remaining_games(opp, opp_plans, skip)], banked.get(opp.team_key, {})
+        opp.team_key, [pid for pid, _ in opp_games], banked.get(opp.team_key, {}), game_dates=[d for _, d in opp_games]
     )
     odds = simulate_matchup(mw, ow, models, league.categories, n_sims=n, seed=42)
     return odds, mw, ow, day0, we, models, my_plans, opp_plans
@@ -668,7 +726,7 @@ def simulate_matchup_tool(
             [(pid, p.day) for p in my_plans for pid in p.started],
             [(pid, p.day) for p in opp_plans for pid in p.started],
         )
-    adds, adds_source = _opponent_adds(league, opp, opponent_streams)
+    adds, adds_source = _opponent_adds(league, opp, opponent_streams, not start)
     banked, skip = _live_week(league, _week_window()[1]) if not start else ({}, {})
     streaming = (
         _opponent_streaming(league, opp, my_plans, date_range(day0, we), adds, banked, skip) if adds > 0 else None
@@ -705,18 +763,34 @@ def simulate_matchup_tool(
     }
 
 
-def _opponent_adds(league: LeagueState, opp: FantasyTeam, opponent_streams: int | None) -> tuple[int, str]:
-    """Adds the opponent is assumed to stream this week: caller > manager profile (enough history) > constant,
-    capped by their remaining Yahoo adds."""
+def _opponent_adds(
+    league: LeagueState, opp: FantasyTeam, opponent_streams: int | None, week_in_progress: bool = True
+) -> tuple[int, str]:
+    """Adds the opponent is assumed to stream over the rest of the week: caller > the manager's empirical-Bayes
+    adds/week (minus adds already used this week, if known) > constant sim.opponent_stream_adds when the league has
+    no transaction history; always capped by their remaining Yahoo adds."""
+    from fbm.analytics.manager_model import expected_adds
+
+    limit = getattr(league, "max_weekly_adds", None)
+    used = getattr(league, "adds_used", {}).get(opp.team_key)
     adds = int(C("sim.opponent_stream_adds")) if opponent_streams is None else opponent_streams
-    source = "constant sim.opponent_stream_adds" if opponent_streams is None else "caller"
-    if opponent_streams is None:
+    source = "constant sim.opponent_stream_adds (no league transaction history)"
+    if opponent_streams is not None:
+        source = "caller"
+    else:
         prof = _manager_profiles(league).get(opp.team_key)
-        if prof is not None and prof.has_history:
-            adds = prof.typical_adds()
-            source = f"manager profile ({prof.recent_adds_per_week} recent adds/week, confidence {prof.confidence})"
-    if league.max_weekly_adds is not None and opp.team_key in league.adds_used:
-        adds = min(adds, max(0, league.max_weekly_adds - league.adds_used[opp.team_key]))  # their adds left
+        m = prof.model if prof is not None else None
+        if m is not None and m.league_history:
+            e = m.adds_per_week
+            used_now = used if week_in_progress else None
+            adds = expected_adds(m, used_now, limit)
+            source = (
+                f"manager model: {e.posterior:.2f} adds/week (league prior {e.prior:.2f}, observed "
+                f"{'n/a' if e.observed is None else f'{e.observed:.2f}'} over {m.exposure_weeks:.1f} weighted weeks, "
+                f"evidence {e.evidence_share:.0%})" + (f", {used_now} already used this week" if used_now else "")
+            )
+    if limit is not None and used is not None and week_in_progress:
+        adds = min(adds, max(0, limit - used))  # their adds left
     return adds, source
 
 
@@ -968,7 +1042,32 @@ def punt_scenarios(scenarios: str | None = None, fa_moves: int | None = None, to
     }
 
 
-def evaluate_add_drop(add: str, drop: str | None = None, opponent: str | None = None, n: int = 6000) -> dict[str, Any]:
+def evaluate_il_activation(
+    activate: str,
+    drop: str | None = None,
+    opponent: str | None = None,
+    effective: str | None = None,
+    play_prob: float | None = None,
+    n: int = 6000,
+) -> dict[str, Any]:
+    """Move one of my IL players to active (optionally dropping another) from `effective` (ET date, default today)."""
+    from fbm.gm import il
+
+    return il.evaluate_il_activation(activate, drop, opponent, effective, play_prob, n)
+
+
+def evaluate_add_drop(
+    add: str | None = None,
+    drop: str | None = None,
+    opponent: str | None = None,
+    n: int = 6000,
+    activate: str | None = None,
+    effective: str | None = None,
+) -> dict[str, Any]:
+    if activate:  # IL activation instead of a free-agent add
+        return evaluate_il_activation(activate, drop, opponent, effective, None, n)
+    if not add:
+        raise GMError("Give `add` (a free agent) or `activate` (one of my IL players).")
     league, c = active_league(), ctx()
     add_id = _resolve(add)
     owners = _owners(league)
@@ -1118,6 +1217,27 @@ def context_pack() -> dict[str, Any]:
     return pack
 
 
+def _il_activation_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate an il_activation payload against my roster (activate on IL, drop on roster, roster math) and fill in
+    ids/names. Accepts player names or ids; effective_et (ET date) is optional."""
+    from fbm.analytics.il_activation import validate_activation
+
+    if not payload.get("activate"):
+        raise GMError("il_activation payload needs `activate` (the IL player to activate).")
+    league = active_league()
+    me = league.my_team
+    act = _resolve_on_team(str(payload["activate"]), me)
+    drop = _resolve_on_team(str(payload["drop"]), me) if payload.get("drop") else None
+    problems = validate_activation(me.players, act, drop, league.roster_size())
+    if problems:
+        raise GMError("Invalid IL activation: " + "; ".join(problems))
+    names = {p.player_id: p.name for p in me.players}
+    out = {**payload, "activate": act, "activate_name": names[act], "drop": drop, "drop_name": names.get(drop)}
+    if payload.get("effective_et"):
+        out["effective_et"] = parse_date(str(payload["effective_et"])).isoformat()
+    return out
+
+
 def create_proposal(
     kind: str,
     title: str,
@@ -1128,6 +1248,8 @@ def create_proposal(
     expires_in_hours: float | None = None,
 ) -> dict[str, Any]:
     settings = load_settings()
+    if kind == "il_activation":
+        payload = _il_activation_payload(payload)
     if kind in ("add_drop", "waiver_claim", "trade"):
         c = ctx()
         incoming = [payload.get("add")] if kind != "trade" else list(payload.get("get") or [])
@@ -1260,9 +1382,11 @@ def streaming_plan(
     candidates: int = 25,
     n: int = 2000,
     min_gain: float = 0.05,
+    include_waivers: bool = True,
 ) -> dict[str, Any]:
     from fbm.analytics.bank import DrawBank
     from fbm.analytics.streaming import StreamContext, plan_streams
+    from fbm.gm.waiver_status import clear_dates, games_from
 
     league, c, conn = active_league(), ctx(), _conn()
     me, opp = league.my_team, _team(league, opponent)
@@ -1272,12 +1396,15 @@ def streaming_plan(
     days = date_range(day0, we)
     playing = teams_playing(conn, ws, we)
     elig = _eligibility()
+    clears = clear_dates(league.on_waivers, c.values.index)  # players on waivers: addable only from this ET day
 
     def games(pid: str) -> int:
-        team = str(c.values.at[pid, "team"])
-        return sum(1 for d in days if team in playing.get(d, set()))
+        return games_from(str(c.values.at[pid, "team"]), days, playing, clears.get(pid))
 
-    available = [pid for pid in _available_ids(league, c) if games(pid) > 0]
+    wire = _available_ids(league, c)
+    if not include_waivers:
+        wire = [pid for pid in wire if pid not in clears]
+    available = [pid for pid in wire if games(pid) > 0]
     by_week = sorted(available, key=lambda pid: -(value.get(pid, -9) + 3.0) * games(pid))[:candidates]
     by_value = sorted(available, key=lambda pid: -value.get(pid, -9))[:10]
     fa = list(dict.fromkeys(by_week + by_value))
@@ -1311,6 +1438,7 @@ def streaming_plan(
         weights={k.key: 0.0 if k.key in pun else 1.0 for k in league.categories},
         banked=banked.get(me.team_key, {}),
         skip=skip,
+        add_not_before={pid: clears[pid] for pid in fa if pid in clears},
     )
     plan = plan_streams(sctx, fa, droppable, adds_available, min_gain=min_gain)
     name = {pid: p.name for pid, p in pool.items()}
@@ -1322,6 +1450,20 @@ def streaming_plan(
             "p_win_by_cat": {x.category.label: _r(x.p_win) for x in o.categories},
         }
 
+    def wire_fields(add_id: str, drop_id: str | None) -> dict[str, Any]:
+        """Waiver status of the added player; for waiver players the verdict (claim now / wait / pass)."""
+        if add_id not in clears:
+            return {"via_waivers": False}
+        out: dict[str, Any] = {"via_waivers": True, "waivers_clear_et": clears[add_id].isoformat()}
+        try:
+            v = waiver_decision(add_id, drop_id, True)
+            out["waiver_verdict"] = {
+                k: v[k] for k in ("action", "reason", "p_claimed_before_me", "p_claimed_by_another_team", "my_priority")
+            }
+        except Exception as err:  # the verdict is context; never fail the plan over it
+            out["waiver_verdict"] = {"error": f"{type(err).__name__}: {err}"}
+        return out
+
     return {
         "opponent": opp.name,
         "window_et": f"{days[0]}..{days[-1]}",
@@ -1331,12 +1473,14 @@ def streaming_plan(
         "adds_available": adds_available,
         "droppable_considered": [name[pid] for pid in droppable],
         "free_agents_considered": len(fa),
+        "on_waivers_considered": sorted(name[pid] for pid in fa if pid in clears),
         "baseline": odds_summary(plan.baseline),
         "after_plan": odds_summary(plan.final),
         "games_started": {"before": plan.starts_before, "after": plan.starts_after},
         "moves": [
             {
                 "effective_et": m.move.day.isoformat(),
+                "add_effective_et": m.move.day.isoformat(),
                 "add": name[m.move.add],
                 "add_id": m.move.add,
                 "drop": name.get(m.move.drop) if m.move.drop else None,
@@ -1345,13 +1489,18 @@ def streaming_plan(
                 "add_games": m.add_games,
                 "drop_games_lost": m.drop_games_lost,
                 "ros_value_cost": _r(m.ros_cost),
+                **wire_fields(m.move.add, m.move.drop),
             }
             for m in plan.moves
         ],
         "notes": [
             "Greedy plan: each move is the best single add/drop given the earlier moves (common random numbers).",
-            "Effective day = first ET day the added player is on the roster; check league add-lock rules.",
-            "Opponent streaming is not modeled; recently dropped players may be on waivers, not free agents.",
+            "Effective day = first ET day the added player is on the roster. League settings expose no add-lock "
+            "rule, so a free agent is addable today; players on waivers are only scheduled from the day they clear.",
+            "via_waivers moves cannot be made earlier than waivers_clear_et: place a claim (spends rolling priority; "
+            "see waiver_verdict) or add him as a free agent once he clears. Another team may claim him first.",
+            f"Waiver status is as of the Yahoo snapshot ({league.fetched_at or 'demo league: none'}).",
+            "Opponent streaming is not modeled.",
         ],
     }
 
@@ -1542,12 +1691,20 @@ def post_sync() -> dict[str, Any]:
     found = detect_all(conn, c.season, c.prior, c.projections, c.pool, c.cfg, c.statuses(conn), today)
     new_ids = signal_feed.record(conn, c.season, found, ownership=_ownership())
     new = [s for s in signal_feed.active(conn) if s["signal_id"] in set(new_ids)]
+    try:  # percent-owned history + the pickup radar are additive: never fail the sync over them
+        _own_history.record(conn, active_league())
+        from fbm.gm import pickups
+
+        radar = pickups.radar_summary()
+    except Exception as err:
+        radar = {"error": f"{type(err).__name__}: {err}"}
     return {
         "forecasts_logged": logged,
         "signals_detected": len(found),
         "signals_new": [
             {k: s[k] for k in ("kind", "direction", "player", "nba", "confidence", "note")} for s in new[:15]
         ],
+        "fa_radar": radar,
     }
 
 
@@ -1563,8 +1720,7 @@ def _annotate(
         r["owner"] = owner_name
         r["action_hint"] = action_hint(r["kind"], r["direction"], owner)
         r["_scope"] = owner
-        if own := league.ownership.get(r["id"]):
-            r["pct_owned"], r["pct_owned_delta"] = own[0], own[1]
+    _own_history.annotate(_conn(), rows, league)
     return rows
 
 
@@ -1602,6 +1758,20 @@ def signals_tool(
         "direction": "up = value expected to rise vs what the market sees; down = expected to fall",
         "min_confidence": min_confidence or str(C("signals.feed_min_confidence")),
     }
+
+
+def ownership_trends_tool(window_days: int = 3, top: int = 20, scope: str = "free_agents") -> dict[str, Any]:
+    """Percent-owned risers/fallers from FBM's recorded history + in-league adds/drops (see fbm.gm.pickups)."""
+    from fbm.gm import pickups
+
+    return pickups.ownership_trends(window_days, top, scope)
+
+
+def fa_radar_tool(top: int = 10, min_confidence: str = "medium") -> dict[str, Any]:
+    """League-wide pickup radar over every free agent / waiver player (see fbm.gm.pickups)."""
+    from fbm.gm import pickups
+
+    return pickups.fa_radar(top, min_confidence)
 
 
 def buy_sell_tool(scope: str = "all", top: int = 15) -> dict[str, Any]:
@@ -2078,7 +2248,8 @@ def waiver_decision(player: str, drop: str | None = None, on_waivers: bool | Non
     comps = interested_teams(vec, mine, priorities, weakest, weights, names)
     from fbm.analytics.opponents import claim_activity
 
-    activity = claim_activity(_manager_profiles(league))
+    profiles = _manager_profiles(league)
+    activity = claim_activity(profiles, {c.team_key: c.gain for c in comps})
     d = decide(ros_gain, on_waivers, mine, len(league.teams), comps, activity)
     return {
         "player": _names(c, [pid])[0],
@@ -2095,11 +2266,17 @@ def waiver_decision(player: str, drop: str | None = None, on_waivers: bool | Non
         "p_claimed_before_me": _r(d.p_claimed_before_me),
         "p_claimed_by_another_team": _r(d.p_claimed_by_other),
         "teams_likely_to_claim": [
-            f"#{x.priority} {x.name} (gain {x.gain}{', ahead of us' if x.priority < mine else ''}; claim activity "
-            f"{_r(activity[x.team_key]) if x.team_key in activity else 'default ' + str(C('waiver.manager_activity'))})"
+            f"#{x.priority} {x.name} (gain {x.gain}{', ahead of us' if x.priority < mine else ''}; P(claim) "
+            f"{_r(activity[x.team_key]) if x.team_key in activity else 'default ' + str(C('waiver.manager_activity'))}"
+            f"{_claim_basis(profiles.get(x.team_key))})"
             for x in d.competitors
         ],
-        "claim_activity_source": "manager profiles where history suffices, else constant waiver.manager_activity",
+        "claim_activity_source": (
+            "empirical-Bayes claim participation (shrunk toward the league-wide rate, recency-weighted) x interest "
+            "in this player (gain / (gain + waiver.claim_gain_half))"
+            if activity
+            else "constant waiver.manager_activity (no league transaction history)"
+        ),
         "punts_applied": list(pun),
         "next_step": {
             "claim": "create_proposal kind waiver_claim",
@@ -2169,6 +2346,12 @@ def _player_signals(pid: str) -> list[dict[str, Any]]:
 
     keep = ("kind", "direction", "confidence", "reasons", "note", "first_seen_et")
     return [{k: s[k] for k in keep} for s in signal_feed.active(_conn(), player=pid, min_confidence="low")]
+
+
+def _season_roles(c: AnalyticsContext, pids: list[str]) -> dict[str, dict[str, Any]]:
+    """Current-vs-prior season role (games, mpg, starts, usage per 36) from box scores, per player id."""
+    raw = box.season_roles(_conn(), pids, [c.season, c.prior])
+    return {pid: box.season_role(raw[pid], c.season, c.prior) for pid in pids}
 
 
 def _role(c: AnalyticsContext, pid: str) -> dict[str, Any] | None:
@@ -2360,11 +2543,42 @@ def _tx_history() -> list:
         return []
 
 
+def _claim_basis(p) -> str:
+    """'; participation prior X / observed Y / posterior Z (evidence N%)' for a waiver_decision competitor."""
+    m = p.model if p is not None else None
+    if m is None or not m.league_history:
+        return ""
+    e = m.claim_participation
+    obs = "n/a" if e.observed is None else f"{e.observed:.2f}"
+    return (
+        f"; weeks-with-claim prior {e.prior:.2f} / observed {obs} / posterior {e.posterior:.2f}, "
+        f"evidence {e.evidence_share:.0%}"
+    )
+
+
 def _manager_profiles(league: LeagueState, builds: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
     from fbm.analytics.opponents import profile_teams
 
     teams = {t.team_key: t.name for t in league.teams}
-    return profile_teams(_tx_history(), teams, datetime.now(UTC), None, builds)
+    return profile_teams(
+        _tx_history(),
+        teams,
+        datetime.now(UTC),
+        None,
+        builds,
+        league_start=_league_start(league),
+        max_weekly_adds=getattr(league, "max_weekly_adds", None),
+    )
+
+
+def _league_start(league: LeagueState) -> datetime | None:
+    """Yahoo league start date (UTC midnight): activity before it is draft-day-after churn."""
+    if getattr(league, "source", None) != "yahoo":
+        return None
+    try:
+        return datetime.fromisoformat(str((_league_summary() or {})["start_date"])).replace(tzinfo=UTC)
+    except (KeyError, ValueError):
+        return None
 
 
 def _builds(league: LeagueState, n: int = 800) -> dict[str, dict[str, float]]:
@@ -2427,6 +2641,8 @@ def _intel_row(p, fit: float | None = None) -> dict[str, Any]:
         "trades_proposed": p.trades_proposed,
         "last_activity_utc": p.last_activity,
     }
+    if p.model is not None:
+        row["model"] = p.model.summary()
     if fit is not None:
         row["complementary_fit"] = fit
         row["their_strong_cats"] = p.strong_cats
@@ -2464,7 +2680,9 @@ def manager_profile(team: str | None = None, n: int = 800) -> dict[str, Any]:
         "recent_moves": recent,
         "transactions_stored": len(history),
         "note": None if history else _INTEL_DEMO_NOTE,
-        "method": "counts from stored league transactions; build = typical-week category win rates vs the league",
+        "method": "counts from stored league transactions; `model` = empirical-Bayes behavior (observed rates "
+        "shrunk toward the league-wide prior, recency-weighted; ess/evidence_share say how much is evidence vs "
+        "prior); build = typical-week category win rates vs the league",
     }
 
 
@@ -2479,11 +2697,23 @@ def league_intel(n: int = 800, top: int = 5) -> dict[str, Any]:
     has_history = any(p.moves for p in others)
     partners = rank_partners(profiles, league.my_team_key, builds[league.my_team_key])
     wire = sorted(others, key=lambda p: (-p.recent_adds_per_week, -p.waiver_claims))[:top] if has_history else []
+    prior = next((p.model for p in others if p.model is not None), None)
     return {
         "activity_ranking": [_intel_row(p) for p in ranked_by_activity(others)],
         "most_active_on_wire": [_intel_row(p) for p in wire],
         "best_trade_partners": [_intel_row(p, fit) for p, fit in partners[:top]],
         "transactions_stored": len(_tx_history()),
+        "league_prior": (
+            {
+                "adds_per_week": round(prior.adds_per_week.prior, 2),
+                "claim_participation": round(prior.claim_participation.prior, 2),
+                "stream_fraction": round(prior.stream_fraction.prior, 2),
+                "evidence_weeks": round(prior.exposure_weeks, 2),
+                "from": "league-wide transactions, anchored by constants" if prior.league_history else "constants",
+            }
+            if prior is not None
+            else None
+        ),
         "note": None if has_history else _INTEL_DEMO_NOTE,
         "partner_order": "activity group (active/very active, casual, unknown, inactive), then complementary fit "
         "(their category surplus x my need + my surplus x their need), then trade count",

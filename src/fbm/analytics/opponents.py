@@ -6,7 +6,8 @@ Pure functions over `fbm.yahoo.league_reads.Transaction` records (as stored by `
   free-agent adds (source "freeagents").
 - streams: an add the same team drops again within C("intel.stream_days"); streaming propensity = streams / adds.
 - trades: completed trades the team was part of; trades it proposed (trader) of any status.
-- claim activity (feeds waiver_decision): share of observed weeks with at least one waiver claim.
+- claim activity: observed share of weeks with at least one waiver claim. waiver_decision uses the empirical-Bayes
+  posterior instead (`fbm.analytics.manager_model`: shrunk toward the league-wide prior, recency-weighted).
 - activity tier: inactive if no move for C("intel.inactive_days"), else by recent adds/week vs the tier constants.
 - confidence by sample size (moves): low < C("intel.min_moves") <= medium < 3x <= high. Profiles with low
   confidence never replace engine defaults (`has_history` is False).
@@ -23,6 +24,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 
+from fbm.analytics.manager_model import ManagerModel, claim_probability, estimate_managers
 from fbm.constants import C
 from fbm.yahoo.league_reads import Transaction
 
@@ -54,6 +56,7 @@ class ManagerProfile:
     weak_cats: list[str] = field(default_factory=list)
     likely_punts: list[str] = field(default_factory=list)
     cat_win_rate: dict[str, float] = field(default_factory=dict)
+    model: ManagerModel | None = None  # empirical-Bayes behavior model (prior vs observed vs posterior)
 
     @property
     def has_history(self) -> bool:
@@ -65,6 +68,7 @@ class ManagerProfile:
 
     def to_dict(self) -> dict:
         out = asdict(self)
+        out["model"] = self.model.to_dict() if self.model else None
         out["has_history"] = self.has_history
         return out
 
@@ -82,8 +86,11 @@ def _confidence(moves: int) -> str:
     return "medium" if moves < 3 * need else "high"
 
 
-def _tier(recent_apw: float, days_since: float | None) -> str:
-    if days_since is None or days_since > float(C("intel.inactive_days")):
+def _tier(recent_apw: float, days_since: float | None, span_days: float = 0.0) -> str:
+    if days_since is None:
+        # No move yet: "inactive" only once we have watched long enough; before that, "casual" (never above it).
+        return "inactive" if span_days >= float(C("intel.inactive_days")) else "casual"
+    if days_since > float(C("intel.inactive_days")):
         return "inactive"
     if recent_apw >= float(C("intel.tier_very_active")):
         return "very active"
@@ -107,9 +114,14 @@ def profile_teams(
     now: datetime,
     season_start: datetime | None = None,
     builds: Mapping[str, Mapping[str, float]] | None = None,
+    league_start: datetime | None = None,
+    max_weekly_adds: int | None = None,
 ) -> dict[str, ManagerProfile]:
-    """Profiles for every team in `teams` (team_key -> name). `season_start` defaults to the first transaction."""
+    """Profiles for every team in `teams` (team_key -> name). `season_start` defaults to the first transaction.
+
+    `league_start` / `max_weekly_adds` feed the empirical-Bayes behavior model (`ManagerProfile.model`)."""
     txs = sorted((t for t in transactions if t.timestamp is not None), key=lambda t: t.timestamp)
+    models = estimate_managers(txs, teams, now, league_start, max_weekly_adds)
     start = season_start or (txs[0].timestamp if txs else now)
     days = max((now - start).total_seconds() / 86400, 0.0)
     weeks = max(days / 7, 1.0)
@@ -181,21 +193,33 @@ def profile_teams(
             confidence=_confidence(moves),
             moves=moves,
             cat_win_rate=rates,
+            model=models[key],
             **build_summary(rates),
         )
-        prof.tier = _tier(prof.recent_adds_per_week, since) if txs else "unknown"
+        prof.tier = _tier(prof.recent_adds_per_week, since, days) if txs else "unknown"
         out[key] = prof
     return out
 
 
-def claim_activity(profiles: Mapping[str, ManagerProfile]) -> dict[str, float]:
-    """Per-team waiver-claim probability for teams with enough history (clamped); others use the default."""
-    lo, hi = float(C("intel.activity_floor")), 1 - float(C("intel.activity_floor"))
-    return {
-        k: min(max(p.claim_activity, lo), hi)
-        for k, p in profiles.items()
-        if p.has_history and p.claim_activity is not None
-    }
+def claim_activity(
+    profiles: Mapping[str, ManagerProfile], gains: Mapping[str, float] | None = None
+) -> dict[str, float]:
+    """Per-team probability of claiming a specific player (waiver_decision).
+
+    Empty when the league has no transaction history (callers fall back to C("waiver.manager_activity")).
+    Otherwise every team gets its empirical-Bayes claim participation (posterior), weighted by its interest in the
+    player (`gains`: team_key -> need-weighted gain; without it, the bare participation)."""
+    out = {}
+    floor = float(C("intel.activity_floor"))
+    for k, p in profiles.items():
+        m = p.model
+        if m is None or not m.league_history:
+            continue
+        if gains is None:
+            out[k] = min(max(m.claim_participation.posterior, floor), 1 - floor)
+        elif k in gains:
+            out[k] = claim_probability(m, gains[k])
+    return out
 
 
 def complementary_fit(mine: Mapping[str, float], theirs: Mapping[str, float]) -> float:
@@ -230,6 +254,9 @@ def profile_markdown(p: ManagerProfile, as_of: str) -> str:
     def pct(x: float | None) -> str:
         return "n/a" if x is None else f"{x:.0%}"
 
+    def num(x: float | None) -> str:
+        return "n/a" if x is None else f"{x:.2f}"
+
     lines = [
         f"_Generated by the engine from league transactions as of {as_of}; overwritten on refresh._",
         "",
@@ -241,6 +268,24 @@ def profile_markdown(p: ManagerProfile, as_of: str) -> str:
         f"- Trades: {p.trades_completed} completed, {p.trades_proposed} proposed",
         f"- Last activity (UTC): {p.last_activity or 'none'}",
     ]
+    m = p.model
+    if m is not None:
+        src = "league prior" if m.league_history else "engine constants (no league history)"
+        lines += [
+            f"- Modeled behavior (empirical Bayes: observed shrunk toward {src}; evidence "
+            f"{m.adds_per_week.evidence_share:.0%} of the estimate, {m.exposure_weeks:.1f} weighted weeks):",
+            f"  - Adds/week: prior {m.adds_per_week.prior:.2f}, observed {num(m.adds_per_week.observed)}, "
+            f"posterior {m.adds_per_week.posterior:.2f} (sd {m.adds_per_week.sd:.2f})",
+            f"  - Claim participation (weeks with a claim): prior {m.claim_participation.prior:.0%}, observed "
+            f"{pct(m.claim_participation.observed)}, posterior {m.claim_participation.posterior:.0%}",
+            f"  - Stream fraction (quick drops): prior {m.stream_fraction.prior:.0%}, observed "
+            f"{pct(m.stream_fraction.observed)}, posterior {m.stream_fraction.posterior:.0%}",
+        ]
+        if m.near_limit_rate is not None:
+            lines.append(
+                f"  - Weeks near the weekly add limit: observed {pct(m.near_limit_rate.observed)}, "
+                f"posterior {m.near_limit_rate.posterior:.0%}"
+            )
     if p.cat_win_rate:
         lines += [
             f"- Strong cats: {', '.join(p.strong_cats) or '-'}; weak: {', '.join(p.weak_cats) or '-'}; "

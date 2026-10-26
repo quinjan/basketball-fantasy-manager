@@ -77,11 +77,45 @@ def my_roster(day: str | None = None, punts: str | None = None) -> dict:
 
 
 @tool()
+def team_roster(team: str | None = None, day: str | None = None, punts: str | None = None) -> dict:
+    """Any league team's roster in my_roster's format (slot, status/injury, game today, games left this week, ROS
+    value, availability, role, G-scores, per-game) plus a team summary: games remaining this week, injured/out
+    players, category strengths. team: team key, name or manager (case-insensitive; default = this week's
+    opponent). day/punts as in my_roster."""
+    return svc.team_roster(team, day, punts)
+
+
+@tool()
+def next_week(opponent: str | None = None, n: int = 4000) -> dict:
+    """Next fantasy week lookahead: ET dates, next opponent (Yahoo schedule, or pass `opponent`), NBA games per team,
+    my players' and the opponent's game counts (and best-lineup started games), a quick Monte Carlo matchup
+    (n sims) and the free agents with the best value x next-week games."""
+    return svc.next_week(opponent, n)
+
+
+@tool()
 def player_card(query: str) -> dict:
     """Everything about one player (name or ESPN id): projection (and its basis: ESPN preseason / last season, ESPN
     blend weight), ESPN preseason vs latest projection, active early signals, G/Z by category, rank, fantasy owner,
-    injury, games left this week, last-10 averages, recent news."""
+    injury, games left this week, last-10 averages (with the seasons they span), current-vs-prior-season role
+    (`season_role`: games, mpg, starts, usage per 36, deltas), recent news."""
     return svc.player_card(query)
+
+
+@tool()
+def game_log(player: str, last_n: int = 10, season: int | None = None) -> dict:
+    """A player's recent games from stored ESPN box scores, newest first: date (ET), opponent, home/away, started,
+    min, pts/reb/ast/stl/blk/tov/3pm, FG and FT makes/attempts, plus a single-game G-score and Z-score. season: ESPN
+    season year (e.g. 2027) to restrict; default spans seasons (see seasons_included)."""
+    return svc.game_log(player, last_n, season)
+
+
+@tool()
+def week_box(team: str | None = None) -> dict:
+    """This fantasy week's box-score breakdown per player for my team and this week's opponent (or one `team`: name,
+    key, or 'me'): games, totals, FG/FT makes/attempts, share of team total and FG%/FT% effect per category, G-score
+    sum, who carried and who sank. Uses current rosters (mid-week moves are a known limitation; see note)."""
+    return svc.week_box(team)
 
 
 @tool()
@@ -136,7 +170,9 @@ def simulate_matchup(
 ) -> dict:
     """Monte Carlo rest-of-week matchup vs an opponent (team key or name): per-category win/tie/loss odds, expected
     categories won, swing categories. `if_opponent_streams` re-scores the week if the opponent streams
-    `opponent_streams` adds optimally (default sim.opponent_stream_adds; 0 = skip). record=True logs the prediction
+    `opponent_streams` adds optimally (default: the opponent's modeled adds/week from league transactions, see
+    `opponent_adds_source`; constant sim.opponent_stream_adds without history; 0 = skip). record=True logs the
+    prediction
     for calibration (daily-gm does this)."""
     return svc.simulate_matchup_tool(opponent, start, n, record, opponent_streams)
 
@@ -237,19 +273,49 @@ def punt_scenarios(scenarios: str | None = None, fa_moves: int | None = None, to
 
 
 @tool()
-def evaluate_add_drop(add: str, drop: str | None = None, opponent: str | None = None) -> dict:
+def evaluate_add_drop(
+    add: str | None = None,
+    drop: str | None = None,
+    opponent: str | None = None,
+    activate: str | None = None,
+    effective: str | None = None,
+) -> dict:
     """Quantify adding a free agent (and dropping one of mine): rest-of-season G deltas by category and this
-    week's matchup odds before/after."""
-    return svc.evaluate_add_drop(add, drop, opponent)
+    week's matchup odds before/after. Pass `activate` (one of my IL players) instead of `add` to model an IL
+    activation (see evaluate_il_activation); `effective` = ET date (YYYY-MM-DD) the move takes effect."""
+    return svc.evaluate_add_drop(add, drop, opponent, activate=activate, effective=effective)
 
 
 @tool()
-def streaming_plan(opponent: str | None = None, adds: int | None = None, drop_pool: int = 4, protect: str = "") -> dict:
+def evaluate_il_activation(
+    activate: str,
+    drop: str | None = None,
+    opponent: str | None = None,
+    effective: str | None = None,
+    play_prob: float | None = None,
+) -> dict:
+    """Quantify moving one of my IL players to the active roster (and dropping `drop` if the roster is full):
+    this week's matchup odds before/after (the player counts only from `effective`, an ET date, default today, and
+    from his ESPN return date at his injury play probability), rest-of-season G deltas, games gained/lost. Same shape
+    as evaluate_add_drop. `play_prob` (0-1) overrides his injury-based play probability."""
+    return svc.evaluate_il_activation(activate, drop, opponent, effective, play_prob)
+
+
+@tool()
+def streaming_plan(
+    opponent: str | None = None,
+    adds: int | None = None,
+    drop_pool: int = 4,
+    protect: str = "",
+    include_waivers: bool = True,
+) -> dict:
     """Best sequence of add/drop streaming moves for the rest of this week within the remaining weekly adds,
-    maximizing expected categories won vs the opponent (punts excluded). Each move has an effective ET day, the
-    gain in expected cats, games added/lost, and rest-of-season value cost. protect: comma-separated names that
-    must not be dropped. Analysis only — moves still require proposals."""
-    return svc.streaming_plan(opponent, adds, drop_pool, protect)
+    maximizing expected categories won vs the opponent (punts excluded). Each move has an effective ET day
+    (effective_et = add_effective_et), the gain in expected cats, games added/lost, and rest-of-season value cost.
+    Players on waivers are only scheduled from the day they clear (`via_waivers: true`, `waivers_clear_et`, plus the
+    waiver_decision verdict); include_waivers=false leaves them out. protect: comma-separated names that must not be
+    dropped. Analysis only — moves still require proposals."""
+    return svc.streaming_plan(opponent, adds, drop_pool, protect, include_waivers=include_waivers)
 
 
 @tool()
@@ -326,6 +392,26 @@ def buy_sell(scope: str = "all", top: int = 15) -> dict:
     game), with reasons vs the preseason expectation (minutes, usage, hot/cold FG%/FT%/3P%, teammate out, small
     sample), confidence, owner and action hint. scope: all | mine | others | fa."""
     return svc.buy_sell_tool(scope, top)
+
+
+@tool()
+def ownership_trends(window_days: int = 3, top: int = 20, scope: str = "free_agents") -> dict:
+    """What is the market grabbing? Biggest percent-owned risers and fallers over window_days (default 3) from FBM's
+    own recorded Yahoo history (every snapshot/daily sync adds a point; thin at first, see notes/history), plus the
+    league's recent adds/drops from the transaction log: who added/dropped whom, by which team, and which risers were
+    already added in-league. scope: free_agents (default) | all (includes players since rostered). Rows also carry
+    Yahoo's weekly delta."""
+    return svc.ownership_trends_tool(window_days, top, scope)
+
+
+@tool()
+def fa_radar(top: int = 10, min_confidence: str = "medium") -> dict:
+    """League-wide pickup radar: scans EVERY free agent (and players on waivers, flagged with their clear date), not
+    a watch list. Combines up signals (opportunity / role_change / buy_low / espn_revision), minutes jump vs season,
+    ownership surge, and ROS/week value vs my worst active rostered player. Ranked with reasons, owner status, a
+    suggested drop and the tool to confirm with (evaluate_add_drop, or waiver_decision for waiver players).
+    min_confidence: high | medium | low. Candidates to confirm, not recommendations."""
+    return svc.fa_radar_tool(top, min_confidence)
 
 
 @tool()
@@ -431,8 +517,11 @@ def create_proposal(
     evidence_json: str = "{}",
     expires_in_hours: float | None = None,
 ) -> dict:
-    """Draft a proposal for the owner (FBM never makes the move). kind: add_drop|waiver_claim|trade|strategy|other.
+    """Draft a proposal for the owner (FBM never makes the move). kind: add_drop|waiver_claim|trade|strategy|
+    il_activation|other. Refuses (naming the existing ref) when an open proposal already covers the same move.
     payload_json examples: add_drop {"add": id, "add_name": .., "drop": id, "drop_name": ..};
+    il_activation {"activate": IL player id/name, "drop": id/name (needed when the roster is full),
+    "effective_et": "YYYY-MM-DD" (optional)}; evaluate it first with evaluate_il_activation;
     trade {"partner": team_key, "partner_name": .., "give": [ids], "give_names": [..], "get": [ids],
     "get_names": [..]}; strategy {"punts": ["FT%"], "targets": ["BLK"], "notes": ".."}.
     rationale must cite tool outputs; evidence_json holds the key numbers."""

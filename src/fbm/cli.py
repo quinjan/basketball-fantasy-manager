@@ -1476,6 +1476,7 @@ from fbm import (  # noqa: E402,F401  (each module registers its commands on `ap
     cli_agent,  # `fbm agent`
     cli_automation,  # `fbm automation`
     cli_setup,  # setup, backup, sync-memory
+    cli_tool,  # `fbm tool` (MCP tools from the shell)
     cli_yahoo,  # Yahoo league commands
 )
 

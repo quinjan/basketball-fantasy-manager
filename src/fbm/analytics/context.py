@@ -33,6 +33,7 @@ class AnalyticsContext:
     engine_projections: pd.DataFrame | None = None  # FBM's engine before the ESPN blend (for calibration logs)
     espn_weight: tuple[float, str] = (0.0, "none")  # weight on ESPN in `projections` and where it came from
     teamless: frozenset[str] = frozenset()  # players on no current NBA roster (waived/unsigned): no games, no value
+    _rest_cache: tuple[dict[str, float], dict[str, frozenset]] | None = None
 
     def has_nba_team(self, pid: str) -> bool:
         return pid not in self.teamless
@@ -80,7 +81,25 @@ class AnalyticsContext:
                 self.projections,
                 play_probs={pid: probs.get(pid, 1.0) for pid in ids},
             )
-        return build_player_models(c, ids, [self.season, self.prior], self.projections, self.statuses(c))
+        rest, b2b = self._rest_inputs(c, ids)
+        return build_player_models(
+            c, ids, [self.season, self.prior], self.projections, self.statuses(c), rest_probs=rest, b2b_dates=b2b
+        )
+
+    def _rest_inputs(self, conn: sqlite3.Connection, ids: list[str]) -> tuple[dict[str, float], dict[str, frozenset]]:
+        """Back-to-back rest risk per player and his team's back-to-back dates (computed once per context)."""
+        from fbm.analytics.rest import b2b_rest_probs, team_b2b_dates
+
+        if self._rest_cache is None:
+            self._rest_cache = (
+                b2b_rest_probs(conn, [self.season, self.prior]),
+                team_b2b_dates(conn, self.season),
+            )
+        rates, by_team = self._rest_cache
+        teams = self.projections["team"].astype(str) if "team" in self.projections else pd.Series(dtype=str)
+        rest = {pid: rates[pid] for pid in ids if pid in rates}
+        dates = {pid: by_team.get(teams.get(pid, ""), frozenset()) for pid in rest}
+        return rest, dates
 
 
 def build_context(conn: sqlite3.Connection, today: date, cfg: ValuationConfig | None = None) -> AnalyticsContext:

@@ -202,6 +202,12 @@ def refresh(day: date | None = None) -> tuple[LeagueState, list[Match]]:
         league, summary, matches = build_snapshot(client, cfg, mapper, day or nba_today())
     save_matches(conn, matches)
     save_league(league, SNAPSHOT_PATH)
+    try:  # percent-owned history for trends (additive; never fail a snapshot over it)
+        from fbm.gm import ownership
+
+        ownership.record(conn, league)
+    except Exception:
+        pass
     SETTINGS_SUMMARY_PATH.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_SUMMARY_PATH.write_text(json.dumps(summary, indent=1), encoding="utf-8")
     _last_failure.update(at=None, error="")
