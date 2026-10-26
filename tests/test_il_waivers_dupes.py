@@ -105,6 +105,9 @@ def il_world(monkeypatch, conn, status="O", return_date="2026-10-21"):
         def statuses(self, c=None):
             return statuses
 
+        def return_dates(self, c=None):
+            return {}
+
         def models(self, ids, c=None, horizon="week"):
             return {pid: PlayerModel(pid, SAMPLES[pid][None], play_probability(statuses.get(pid, ""))) for pid in ids}
 

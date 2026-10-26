@@ -41,7 +41,7 @@ generated automation prompts allow this as the only shell command).
 | Tool | Description |
 |---|---|
 | `optimize_lineup` | Optimal lineup for a game day (max games started, then value); started games are locked |
-| `simulate_matchup` | Monte Carlo rest-of-week matchup vs an opponent: per-category win/tie/loss odds; `if_opponent_streams` re-scores the week with `opponent_adds_assumed` adds, taken from the opponent's modeled adds/week (`opponent_adds_source`; `opponent_streams` overrides) |
+| `simulate_matchup` | Monte Carlo rest-of-week matchup vs an opponent: per-category win/tie/loss odds (Out players with an ESPN return date count from that date at the GTD play probability); `if_opponent_streams` re-scores the week with `opponent_adds_assumed` adds, taken from the opponent's modeled adds/week (`opponent_adds_source`; `opponent_streams` overrides) |
 | `playoff_outlook` | Fantasy-playoff weeks, NBA team games per playoff week, players' playoff games |
 | `waiver_decision` | Rolling waivers: claim now, wait for him to clear, add (free agent), or pass; per-team P(claim) = empirical-Bayes claim participation x interest in the player |
 | `league_profile` | Every team's typical-week win rate per category vs the league |

@@ -61,6 +61,9 @@ signals ~45–55% — so the feed shows medium and high confidence by default (`
 
 ESPN injury status and expected return dates scale rest-of-season value (rankings, free agents, waivers, trades,
 punt scenarios) and season-level simulations; in matchup simulations each game is weighted by a play probability.
+An Out player with an ESPN return date misses every game before that date; from it the daily lineup can start him
+and each game counts at the game-time-decision probability (`sim.play_prob.gtd`), the same rule IL-activation
+evaluations use. Out players without a return date miss the whole week.
 
 ## Matchup simulation
 

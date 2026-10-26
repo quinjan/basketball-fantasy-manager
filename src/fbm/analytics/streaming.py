@@ -15,7 +15,7 @@ import numpy as np
 
 from fbm.analytics.bank import DrawBank
 from fbm.analytics.categories import Category
-from fbm.analytics.lineup import optimize_day
+from fbm.analytics.lineup import as_of, optimize_day
 from fbm.analytics.simulation import MatchupOdds, compare
 from fbm.constants import C
 from fbm.league.model import IL_SLOTS, RosterPlayer
@@ -73,6 +73,7 @@ class StreamContext:
     banked: Mapping[str, float] = field(default_factory=dict)
     skip: Mapping[date, set[str]] = field(default_factory=dict)  # ET day -> NBA teams whose games are banked
     add_not_before: Mapping[str, date] = field(default_factory=dict)  # player on waivers -> first day he can be added
+    return_dates: Mapping[str, date] = field(default_factory=dict)  # Out player -> ESPN return date (starts from it)
     _lineups: dict = field(default_factory=dict)
 
     def game_days(self, pid: str, start: date | None = None) -> list[date]:
@@ -118,7 +119,7 @@ def _started(ctx: StreamContext, d: date, ids: tuple[str, ...]) -> tuple[str, ..
     key = (d, frozenset(ids))
     cached = ctx._lineups.get(key)
     if cached is None:
-        players = [ctx.pool[pid] for pid in ids]
+        players = as_of([ctx.pool[pid] for pid in ids], d, ctx.return_dates)
         teams = ctx.playing.get(d, set())
         playing = {p.player_id for p in players if p.nba_team in teams}
         res = optimize_day(players, ctx.starting_slots, playing, ctx.value)

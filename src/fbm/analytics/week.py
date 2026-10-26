@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from fbm.analytics.lineup import LineupResult, optimize_day
+from fbm.analytics.lineup import LineupResult, as_of, optimize_day
 from fbm.analytics.simulation import TeamWeek
 from fbm.constants import C
 from fbm.league.model import IL_SLOTS, FantasyTeam
@@ -47,15 +47,19 @@ def plan_team_week(
     playing_by_date: Mapping[date, set[str]],
     starting_slots: list[str],
     value: Mapping[str, float],
+    return_dates: Mapping[str, date] | None = None,
 ) -> tuple[TeamWeek, list[DayPlan]]:
+    """Daily optimal lineups for `days`. `return_dates` (player_id -> ESPN return date): an Out player can start
+    from his return date (the simulation weights those games by his return play probability)."""
     starting = set(starting_slots)
     games: list[str] = []
     game_dates: list[date] = []
     plans: list[DayPlan] = []
     for d in days:
         nba_teams = playing_by_date.get(d, set())
-        playing = {p.player_id for p in team.players if p.nba_team in nba_teams}
-        res = optimize_day(team.players, starting_slots, playing, value)
+        roster = as_of(team.players, d, return_dates)
+        playing = {p.player_id for p in roster if p.nba_team in nba_teams}
+        res = optimize_day(roster, starting_slots, playing, value)
         started = tuple(pid for pid, slot in res.assignments.items() if slot in starting and pid in playing)
         games.extend(started)
         game_dates.extend([d] * len(started))

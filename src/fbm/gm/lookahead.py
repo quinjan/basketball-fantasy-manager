@@ -182,8 +182,9 @@ def _team_week(
     playing: Mapping[date, set[str]],
     league: LeagueState,
     value: Mapping[str, float],
+    return_dates: Mapping[str, date] | None = None,
 ) -> dict[str, Any]:
-    _, plans = plan_team_week(team, days, playing, league.starting_slots(), value)
+    _, plans = plan_team_week(team, days, playing, league.starting_slots(), value, return_dates)
     games = {p.player_id: sum(1 for d in days if p.nba_team in playing.get(d, set())) for p in team.players}
     players = [
         {
@@ -233,9 +234,10 @@ def next_week(opponent: str | None = None, n: int = 4000) -> dict[str, Any]:
         return out
     c = svc.ctx()
     value = svc._value(c, svc._strategy_punts(None)).to_dict()
-    out["me"] = _team_week(league.my_team, days, playing, league, value)
+    back = c.return_dates(svc._conn())
+    out["me"] = _team_week(league.my_team, days, playing, league, value, back)
     if opp:
-        out["opponent_roster"] = _team_week(opp, days, playing, league, value)
+        out["opponent_roster"] = _team_week(opp, days, playing, league, value, back)
         out["simulation"] = _simulate(league, opp, start, end, n)
     out["free_agents_most_games"] = _fa_lookahead(counts)
     return out

@@ -829,8 +829,9 @@ def sim(
         opp = league.teams[(idx + 1) % len(league.teams)]
     value = ctx.value_map()
     models = ctx.models([*me.player_ids(), *opp.player_ids()])
-    my_week, _ = plan_team_week(me, days, playing, league.starting_slots(), value)
-    opp_week, _ = plan_team_week(opp, days, playing, league.starting_slots(), value)
+    back = ctx.return_dates()
+    my_week, _ = plan_team_week(me, days, playing, league.starting_slots(), value, back)
+    opp_week, _ = plan_team_week(opp, days, playing, league.starting_slots(), value, back)
     odds = simulate_matchup(my_week, opp_week, models, league.categories, n_sims=n, seed=42)
 
     table = Table(

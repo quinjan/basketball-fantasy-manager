@@ -2,9 +2,10 @@
 
 Each player-game is drawn by resampling the player's real recent box-score lines (keeps stat correlations such as
 makes-with-attempts), re-centred on the projection table's per-game means, times a Bernoulli "plays" draw from injury
-status (and back-to-back rest risk). Each player's games in a simulated week share one role/form multiplier. Team
-weekly totals are simulated once per team, so any pair of teams can be compared cheaply (matchups, league-wide
-category profiles).
+status (and back-to-back rest risk). An Out player with an ESPN return date misses every game before it and plays
+from it at the game-time-decision probability. Each player's games in a simulated week share one role/form
+multiplier. Team weekly totals are simulated once per team, so any pair of teams can be compared cheaply (matchups,
+league-wide category profiles).
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -57,16 +59,22 @@ class PlayerModel:
     form_sd: float = 0.0  # sd of the weekly multiplier shared by all of this player's games in a simulated week
     rest_prob: float = 0.0  # extra chance of sitting a back-to-back leg (load management)
     b2b_dates: frozenset = frozenset()  # ET dates that are one leg of a back-to-back for the player's NBA team
+    return_date: date | None = None  # Out player's ESPN return date: from this ET day he plays at return_play_prob
+    return_play_prob: float = 0.0
 
     @property
     def mean(self) -> np.ndarray:
         return self.samples.mean(axis=0)
 
     def game_play_prob(self, day: object = None) -> float:
-        """Play probability for one game; back-to-back legs carry the player's rest risk."""
+        """Play probability for one game: from the return date on, an Out player's return probability; back-to-back
+        legs carry the player's rest risk."""
+        p = self.play_prob
+        if self.return_date is not None and isinstance(day, date) and day >= self.return_date:
+            p = self.return_play_prob
         if self.rest_prob > 0 and day is not None and day in self.b2b_dates:
-            return self.play_prob * (1.0 - self.rest_prob)
-        return self.play_prob
+            return p * (1.0 - self.rest_prob)
+        return p
 
 
 def form_multiplier(rng: np.random.Generator, n: int, sd: float) -> np.ndarray:
@@ -125,17 +133,20 @@ def build_player_models(
     play_probs: Mapping[str, float] | None = None,
     rest_probs: Mapping[str, float] | None = None,
     b2b_dates: Mapping[str, frozenset] | None = None,
+    return_dates: Mapping[str, date] | None = None,
 ) -> dict[str, PlayerModel]:
     """Recent real games (most recent seasons first), re-centred on the projection's per-game means
     (`sim.projection_anchor`); synthetic from projections when history is thin.
 
     `play_probs` overrides the status-derived play probability per player (e.g. rest-of-season availability).
-    `rest_probs` / `b2b_dates` add back-to-back rest risk on those dates (this-week sims only)."""
+    `rest_probs` / `b2b_dates` add back-to-back rest risk on those dates (this-week sims only).
+    `return_dates` (ESPN): a player whose status rules him out plays from that ET date at the GTD probability."""
     ids = list(dict.fromkeys(player_ids))
     rng = np.random.default_rng(seed)
     statuses = statuses or {}
     rest_probs = rest_probs or {}
     b2b_dates = b2b_dates or {}
+    return_dates = return_dates or {}
     anchor = float(C("sim.projection_anchor"))
     lo, hi = float(C("sim.anchor_scale_min")), float(C("sim.anchor_scale_max"))
     form_sd = float(C("sim.form_sd"))
@@ -163,9 +174,9 @@ def build_player_models(
         if len(samples) == 0:
             samples = np.zeros((1, len(STATS)))
             synthetic = True
-        prob = (
-            play_probs[pid] if play_probs is not None and pid in play_probs else play_probability(statuses.get(pid, ""))
-        )
+        overridden = play_probs is not None and pid in play_probs
+        prob = play_probs[pid] if overridden else play_probability(statuses.get(pid, ""))
+        returns = return_dates.get(pid) if not overridden and prob <= 0 else None
         models[pid] = PlayerModel(
             pid,
             samples,
@@ -174,6 +185,8 @@ def build_player_models(
             form_sd=form_sd,
             rest_prob=float(rest_probs.get(pid, 0.0)),
             b2b_dates=frozenset(b2b_dates.get(pid, frozenset())),
+            return_date=returns,
+            return_play_prob=play_probability("GTD") if returns is not None else 0.0,
         )
     return models
 

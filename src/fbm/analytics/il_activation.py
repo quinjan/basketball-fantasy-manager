@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import date
 
-from fbm.analytics.lineup import optimize_day
+from fbm.analytics.lineup import as_of, optimize_day
 from fbm.league.model import IL_SLOTS, RosterPlayer
 
 Phase = tuple[date, list[RosterPlayer]]  # (first ET day this roster applies, players)
@@ -79,14 +79,16 @@ def phase_games(
     starting_slots: list[str],
     value: Mapping[str, float],
     skip: Mapping[date, set[str]] | None = None,
+    return_dates: Mapping[str, date] | None = None,
 ) -> list[tuple[str, date]]:
     """(player_id, day) for every game my daily-optimal lineup starts, using the roster phase in force each day.
-    `skip`: NBA teams whose game that day already started (stats banked)."""
+    `skip`: NBA teams whose game that day already started (stats banked). `return_dates`: Out players start from
+    their ESPN return date."""
     skip = skip or {}
     starting = set(starting_slots)
     games: list[tuple[str, date]] = []
     for d in days:
-        players = next(roster for start, roster in reversed(phases) if start <= d)
+        players = as_of(next(roster for start, roster in reversed(phases) if start <= d), d, return_dates)
         nba = playing.get(d, set())
         playing_ids = {p.player_id for p in players if p.nba_team in nba}
         res = optimize_day(players, starting_slots, playing_ids, value)

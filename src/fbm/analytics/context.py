@@ -62,12 +62,23 @@ class AnalyticsContext:
             )
         return out
 
+    def return_dates(self, conn: sqlite3.Connection | None = None) -> dict[str, date]:
+        """ESPN expected return date (ET) per injured player, where ESPN gives one."""
+        out = {}
+        for r in (conn or self.conn).execute("SELECT espn_id, return_date FROM injuries_current"):
+            try:
+                out[r["espn_id"]] = date.fromisoformat(str(r["return_date"] or "")[:10])
+            except ValueError:
+                continue
+        return out
+
     def models(
         self, player_ids: Iterable[str], conn: sqlite3.Connection | None = None, horizon: str = "week"
     ) -> dict[str, PlayerModel]:
         """Pass `conn` when calling from a different thread than the one that built this context.
 
-        horizon="week": play probability from today's injury status (this week's matchups, daily lineups).
+        horizon="week": play probability from today's injury status (this week's matchups, daily lineups); an Out
+        player with an ESPN return date plays from it at the GTD probability.
         horizon="season": play probability = rest-of-season availability share (season-level sims).
         """
         c = conn or self.conn
@@ -83,7 +94,14 @@ class AnalyticsContext:
             )
         rest, b2b = self._rest_inputs(c, ids)
         return build_player_models(
-            c, ids, [self.season, self.prior], self.projections, self.statuses(c), rest_probs=rest, b2b_dates=b2b
+            c,
+            ids,
+            [self.season, self.prior],
+            self.projections,
+            self.statuses(c),
+            rest_probs=rest,
+            b2b_dates=b2b,
+            return_dates=self.return_dates(c),
         )
 
     def _rest_inputs(self, conn: sqlite3.Connection, ids: list[str]) -> tuple[dict[str, float], dict[str, frozenset]]:

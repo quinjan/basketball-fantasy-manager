@@ -667,8 +667,9 @@ def _matchup(league: LeagueState, me: FantasyTeam, opp: FantasyTeam, start_day: 
     playing = teams_playing(_conn(), ws, we)
     value = _value(c, _strategy_punts(None)).to_dict()
     models = c.models([*me.player_ids(), *opp.player_ids()], _conn())
-    _, my_plans = plan_team_week(me, days, playing, league.starting_slots(), value)
-    _, opp_plans = plan_team_week(opp, days, playing, league.starting_slots(), value)
+    back = c.return_dates(_conn())
+    _, my_plans = plan_team_week(me, days, playing, league.starting_slots(), value, back)
+    _, opp_plans = plan_team_week(opp, days, playing, league.starting_slots(), value, back)
     banked, skip = _live_week(league, ws) if start_day is None else ({}, {})
     my_games = _remaining_games(me, my_plans, skip)
     opp_games = _remaining_games(opp, opp_plans, skip)
@@ -842,6 +843,7 @@ def _opponent_streaming(
         weights={k.key: 1.0 for k in league.categories},
         banked=banked.get(opp.team_key, {}),
         skip=skip,
+        return_dates=c.return_dates(conn),
     )
     plan = plan_streams(sctx, fa, droppable, adds)
     n_cats = len(league.categories)
@@ -1413,7 +1415,8 @@ def streaming_plan(
     pool.update({pid: steps.roster_player_from_values(pid, c.values, elig) for pid in fa})
     models = c.models([*me.player_ids(), *opp.player_ids(), *fa], conn)
     bank = DrawBank(models, n_sims=n, seed=23)
-    _, opp_plans = plan_team_week(opp, days, playing, league.starting_slots(), c.value_map())
+    back = c.return_dates(conn)
+    _, opp_plans = plan_team_week(opp, days, playing, league.starting_slots(), c.value_map(), back)
     banked, skip = _live_week(league, ws)
     opp_totals = bank.total(_remaining_games(opp, opp_plans, skip), banked.get(opp.team_key, {}))
 
@@ -1439,6 +1442,7 @@ def streaming_plan(
         banked=banked.get(me.team_key, {}),
         skip=skip,
         add_not_before={pid: clears[pid] for pid in fa if pid in clears},
+        return_dates=back,
     )
     plan = plan_streams(sctx, fa, droppable, adds_available, min_gain=min_gain)
     name = {pid: p.name for pid, p in pool.items()}

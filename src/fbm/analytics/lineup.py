@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -26,6 +26,20 @@ class LineupResult:
     def moves(self, players: Iterable[RosterPlayer]) -> list[tuple[str, str, str]]:
         names = {p.player_id: p.name for p in players}
         return [(names.get(pid, pid), old, new) for pid, (old, new) in self.changes.items()]
+
+
+def as_of(
+    players: Iterable[RosterPlayer], day: date, return_dates: Mapping[str, date] | None = None
+) -> list[RosterPlayer]:
+    """Roster as of ET `day` for week planning: an Out player whose ESPN return date is on or before `day` is
+    treated as available (status cleared), so the lineup can start him from his return."""
+    if not return_dates:
+        return list(players)
+    out = []
+    for p in players:
+        back = return_dates.get(p.player_id)
+        out.append(replace(p, status="") if p.is_out and back is not None and back <= day else p)
+    return out
 
 
 def optimize_day(

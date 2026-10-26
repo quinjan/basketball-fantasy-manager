@@ -146,7 +146,7 @@ def _patch_lookahead(monkeypatch, league):
     monkeypatch.setattr(svc, "active_league", lambda: league)
     monkeypatch.setattr(svc, "_conn", lambda: conn)
     _set_window(monkeypatch, date(2026, 11, 1))
-    monkeypatch.setattr(svc, "ctx", lambda: SimpleNamespace())
+    monkeypatch.setattr(svc, "ctx", lambda: SimpleNamespace(return_dates=lambda conn=None: {}))
     monkeypatch.setattr(svc, "_strategy_punts", lambda punts: ())
     monkeypatch.setattr(svc, "_value", lambda c, punts: pd.Series({"a": 1.0, "b": 2.0, "c": 0.5, "d": 3.0}))
     monkeypatch.setattr(
