@@ -11,6 +11,10 @@ description: System health check — data freshness, Yahoo access status, email 
 2. What it covers (report as a short table):
    - ESPN data: `sync_log` times for schedule, boxscores, injuries, news (WARN if >24h during the season).
    - Yahoo: credentials, league configured, `[league] source` (demo vs yahoo).
+   - Hashtag Basketball (when `[hashtag] enabled = true`): `hashtag_status` (shell `uv run fbm hashtag status`;
+     deeper: `fbm hashtag check`) — sign-in stored, latest import per page/view, unmatched HT→ESPN players. Unhealthy
+     = FAIL: suggestions are paused (no fallback) until the owner fixes it (`fbm hashtag login` for an expired
+     session, `fbm hashtag import` for stale data, `config/hashtag_id_overrides.toml` for unmatched players).
    - Email: Gmail configured (`fbm status`); recent failures in the outbox (`uv run fbm notify outbox`).
    - Proposals: anything `awaiting_owner` > 12h, or approved but `proposal_steps` not yet run.
    - Scheduled runs: today's/yesterday's journal has the expected daily-gm entry; flag gaps (PC asleep, app closed).

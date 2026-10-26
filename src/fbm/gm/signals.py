@@ -22,7 +22,6 @@ from typing import Any
 
 import pandas as pd
 
-from fbm.analytics.projection_calibration import played_lines, window_actuals
 from fbm.analytics.signals import Signal
 from fbm.analytics.valuation import PoolStats, ValuationConfig, score_table
 from fbm.constants import C
@@ -147,7 +146,10 @@ def grade_pending(
     today: date,
     ownership: Mapping[str, Sequence[float | None]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Grade signals whose window has finished. Returns the newly graded ones."""
+    """Grade signals whose window has finished (legacy, non-HT mode: projection accuracy). Returns the newly graded
+    ones."""
+    from fbm.analytics.boxscores import played_lines, window_actuals
+
     ownership = ownership or {}
     horizon = int(C("signals.grade_horizon_days"))
     min_games = int(C("signals.grade_min_games"))
@@ -215,6 +217,8 @@ def summary(conn: sqlite3.Connection, season: int | None = None) -> dict[str, An
     ]
     by: dict[str, dict[str, Any]] = {}
     for r in rows:
+        if r["result"].get("mode") == "ht":
+            continue
         for key in (r["kind"], f"{r['kind']}/{r['confidence']}"):
             b = by.setdefault(key, {"graded": 0, "hit": 0, "miss": 0, "no_games": 0, "_own": []})
             b["graded"] += 1
@@ -234,4 +238,217 @@ def summary(conn: sqlite3.Connection, season: int | None = None) -> dict[str, An
         "by_kind": out,
         "how_to_read": "hit_rate > 0.5 means the signal beat the naive view (season-to-date line / old level). "
         "A positive ownership move means the market followed after FBM flagged him (we were early).",
+    }
+
+
+# ------------------------------------------------------------------ HT mode grading (signals as decision triggers)
+
+
+def _ids_in(obj: Any) -> set[str]:
+    """Every scalar inside a decision option / proposal payload, as strings (player ids are found among them)."""
+    out: set[str] = set()
+    if isinstance(obj, Mapping):
+        for v in obj.values():
+            out |= _ids_in(v)
+    elif isinstance(obj, list | tuple):
+        for v in obj:
+            out |= _ids_in(v)
+    elif obj is not None and not isinstance(obj, bool | float):
+        out.add(str(obj))
+    return out
+
+
+def _ht_lead(conn: sqlite3.Connection, pid: str, direction: str, seen: str, end: str) -> dict[str, Any]:
+    """Days from first sight until HT's ROS projection moved the same way (total by `signals.ht_revision_min` or
+    minutes by `signals.grade_min_minutes` vs the last import on/before first sight)."""
+    rows = conn.execute(
+        "SELECT as_of, total, minutes FROM hashtag_projections WHERE view = 'ROS' AND espn_id = ? AND as_of <= ? "
+        "ORDER BY as_of",
+        (pid, end),
+    ).fetchall()
+    base = [r for r in rows if r["as_of"] <= seen]
+    if not base:
+        return {"ht_lead_days": None, "ht_moved": None}
+    b = base[-1]
+    sign = 1.0 if direction == "up" else -1.0
+    min_total, min_minutes = float(C("signals.ht_revision_min")), float(C("signals.grade_min_minutes"))
+    for r in rows:
+        if r["as_of"] <= seen:
+            continue
+        moved_total = (
+            r["total"] is not None and b["total"] is not None and sign * (r["total"] - b["total"]) >= min_total
+        )
+        moved_min = (
+            r["minutes"] is not None
+            and b["minutes"] is not None
+            and sign * (r["minutes"] - b["minutes"]) >= min_minutes
+        )
+        if moved_total or moved_min:
+            days = (date.fromisoformat(r["as_of"]) - date.fromisoformat(seen)).days
+            return {"ht_lead_days": days, "ht_moved": True, "ht_moved_on": r["as_of"]}
+    return {"ht_lead_days": None, "ht_moved": False}
+
+
+def _market_lead(
+    conn: sqlite3.Connection, pid: str, direction: str, first_seen: str, end: str, owned_at: float | None
+) -> dict[str, Any]:
+    """Days from first sight until league % owned moved `signals.lead_owned_move` in the signal's direction (being
+    rostered counts as up)."""
+    from fbm.gm import ownership
+
+    ownership.ensure(conn)
+    rows = conn.execute(
+        "SELECT observed_at, pct_owned, owner_team_key FROM ownership_history WHERE player_id = ? AND observed_at <= ? "
+        "ORDER BY observed_at",
+        (pid, end),
+    ).fetchall()
+    base = owned_at
+    if base is None:
+        before = [r["pct_owned"] for r in rows if r["observed_at"] <= first_seen and r["pct_owned"] is not None]
+        base = before[-1] if before else None
+    move, sign = float(C("signals.lead_owned_move")), 1.0 if direction == "up" else -1.0
+    seen_day = datetime.fromisoformat(first_seen).date()
+    for r in rows:
+        if r["observed_at"] <= first_seen:
+            continue
+        rostered = bool(r["owner_team_key"])
+        moved = (direction == "up" and rostered) or (
+            base is not None and r["pct_owned"] is not None and sign * (float(r["pct_owned"]) - float(base)) >= move
+        )
+        if moved:
+            days = (datetime.fromisoformat(r["observed_at"]).date() - seen_day).days
+            return {"market_lead_days": days, "market_moved": True, "market_moved_on": r["observed_at"][:10]}
+    return {"market_lead_days": None, "market_moved": False if base is not None or rows else None}
+
+
+def _acted(conn: sqlite3.Connection, pid: str, start: str, end: str) -> dict[str, Any]:
+    """Decisions (recommended/chosen option involves him) and proposals naming him within the window."""
+    acted, considered = [], []
+    for d in conn.execute(
+        "SELECT id, kind, et_date, options, recommended, chosen, result, proposal_ref FROM decisions "
+        "WHERE et_date >= ? AND et_date <= ? ORDER BY et_date, id",
+        (start, end),
+    ):
+        options = json.loads(d["options"] or "[]")
+        by_id = {str(o.get("id")): o for o in options if isinstance(o, Mapping)}
+        if pid not in _ids_in(options):
+            continue
+        picked = [by_id.get(str(d["recommended"])), by_id.get(str(d["chosen"]))]
+        entry = {"decision_id": d["id"], "kind": d["kind"], "et_date": d["et_date"], "proposal_ref": d["proposal_ref"]}
+        if any(o is not None and pid in _ids_in(o) for o in picked):
+            result = json.loads(d["result"]) if d["result"] else None
+            if result:
+                entry["replay"] = {
+                    k: result.get(k) for k in ("regret_cats", "recommended", "chosen", "best", "complete")
+                }
+                rec = (result.get("options") or {}).get(str(result.get("recommended")))
+                if isinstance(rec, Mapping):
+                    entry["replay"]["recommended_cats_won"] = rec.get("cats_won")
+            acted.append(entry)
+        else:
+            considered.append(entry)
+    proposals = []
+    for p in conn.execute(
+        "SELECT id, kind, status, payload FROM proposals WHERE substr(created_at, 1, 10) >= ? "
+        "AND substr(created_at, 1, 10) <= ?",
+        (start, end),
+    ):
+        try:
+            payload = json.loads(p["payload"] or "{}")
+        except ValueError:
+            continue
+        if pid in _ids_in(payload):
+            proposals.append({"proposal_id": p["id"], "kind": p["kind"], "status": p["status"]})
+    return {"acted": bool(acted or proposals), "decisions": acted, "considered_in": considered, "proposals": proposals}
+
+
+def grade_pending_ht(conn: sqlite3.Connection, today: date) -> list[dict[str, Any]]:
+    """HT mode: grade each signal as an early trigger, not as a projection. Over `signals.grade_horizon_days` after
+    first sight: (1) lead time until HT's ROS projection moved the same way (ht_revision signals are HT moving, so
+    only their market lead counts) and until league % owned moved; (2) whether a decision/proposal involving the
+    player followed within `signals.acted_days`; (3) the replay grade (decisions.result) of those decisions."""
+    horizon, act_days = int(C("signals.grade_horizon_days")), int(C("signals.acted_days"))
+    rows = conn.execute(
+        "SELECT * FROM signals WHERE graded_at IS NULL AND first_seen_et <= ? ORDER BY first_seen_et",
+        ((today - timedelta(days=horizon + 1)).isoformat(),),
+    ).fetchall()
+    graded = []
+    for r in rows:
+        seen = r["first_seen_et"]
+        end = (date.fromisoformat(seen) + timedelta(days=horizon)).isoformat()
+        pid, direction = r["espn_id"], r["direction"]
+        result: dict[str, Any] = {"mode": "ht", "window_days": horizon}
+        if r["kind"] == "ht_revision":
+            result |= {"ht_lead_days": None, "ht_moved": None}
+        else:
+            result |= _ht_lead(conn, pid, direction, seen, end)
+        result |= _market_lead(conn, pid, direction, r["first_seen"], end + "T23:59:59", r["pct_owned_at"])
+        act_end = (date.fromisoformat(seen) + timedelta(days=act_days)).isoformat()
+        result |= _acted(conn, pid, seen, act_end)
+        conn.execute(
+            "UPDATE signals SET graded_at = ?, result = ? WHERE id = ?",
+            (_iso(datetime.now(UTC)), json.dumps(result, default=str), r["id"]),
+        )
+        graded.append({"signal_id": r["id"], "kind": r["kind"], "player": r["name"], **result})
+    conn.commit()
+    return graded
+
+
+def _mean(xs: list[float]) -> float | None:
+    return round(sum(xs) / len(xs), 2) if xs else None
+
+
+def summary_ht(conn: sqlite3.Connection, season: int | None = None) -> dict[str, Any]:
+    """Per signal kind: lead over HT and the market, how often FBM acted, and how acted-on signals graded in replay."""
+    sql = "SELECT kind, result FROM signals WHERE graded_at IS NOT NULL"
+    params: tuple = ()
+    if season is not None:
+        sql += " AND season = ?"
+        params = (season,)
+    by: dict[str, dict[str, list]] = {}
+    for r in conn.execute(sql, params):
+        res = json.loads(r["result"] or "{}")
+        if res.get("mode") != "ht":
+            continue
+        b = by.setdefault(
+            r["kind"], {k: [] for k in ("n", "ht", "ht_moved", "mkt", "mkt_moved", "acted", "regret", "cats")}
+        )
+        b["n"].append(1)
+        if res.get("ht_moved") is not None:
+            b["ht_moved"].append(1.0 if res["ht_moved"] else 0.0)
+        if res.get("ht_lead_days") is not None:
+            b["ht"].append(float(res["ht_lead_days"]))
+        if res.get("market_moved") is not None:
+            b["mkt_moved"].append(1.0 if res["market_moved"] else 0.0)
+        if res.get("market_lead_days") is not None:
+            b["mkt"].append(float(res["market_lead_days"]))
+        b["acted"].append(1.0 if res.get("acted") else 0.0)
+        for d in res.get("decisions") or []:
+            rep = d.get("replay") or {}
+            if rep.get("regret_cats") is not None:
+                b["regret"].append(float(rep["regret_cats"]))
+            if rep.get("recommended_cats_won") is not None:
+                b["cats"].append(float(rep["recommended_cats_won"]))
+    out = {
+        kind: {
+            "graded": len(b["n"]),
+            "ht_caught_up_rate": _mean(b["ht_moved"]),
+            "avg_lead_over_ht_days": _mean(b["ht"]),
+            "market_moved_rate": _mean(b["mkt_moved"]),
+            "avg_lead_over_market_days": _mean(b["mkt"]),
+            "acted_rate": _mean(b["acted"]),
+            "acted_replays_graded": len(b["regret"]),
+            "avg_replay_regret_cats": _mean(b["regret"]),
+            "avg_replay_cats_won": _mean(b["cats"]),
+        }
+        for kind, b in sorted(by.items())
+    }
+    return {
+        "mode": "ht",
+        "by_kind": out,
+        "how_to_read": "Signals are early triggers for decisions, not projections (HT owns projection accuracy). "
+        "avg_lead_over_ht_days / avg_lead_over_market_days: days from FBM's first sight until HT's ROS projection / "
+        "league % owned moved the same way (ht_caught_up_rate / market_moved_rate: how often it happened within the "
+        "window). acted_rate: share followed by a decision or proposal involving the player. avg_replay_*: replay "
+        "grade of those decisions (empty until the replay grader has run).",
     }

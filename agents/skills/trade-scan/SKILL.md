@@ -8,11 +8,15 @@ description: League-wide trade search (twice weekly). Find mutually beneficial t
 Run as the `gm` agent. Trades are never sent without the owner's explicit approval.
 
 1. `context_pack`. Read `memory/managers/` for tendencies (activity, what they overvalue, past trades).
-2. `find_trades` (whole league; optionally `partner=` for a targeted look). It screens 1-1, 2-1, 1-2, 2-2 packages
+2. `find_trades` (whole league; optionally `partner=` for a targeted look). Hashtag mode: candidates are HT
+   Trade Finder ideas (run with FBM's category multipliers; `candidate_source` says live run or stored ideas), each
+   evaluated season-level for our build with `evaluate_trade` plus partner intel; `HT_UNHEALTHY` → no trade
+   suggestions or proposals, report the fix. Demo league: it screens 1-1, 2-1, 1-2, 2-2 packages
    by need-weighted G-scores, confirms the best with season-level simulation, and keeps only trades that raise our
    expected categories per week, don't hurt the partner in simulation, and cost them at most ~1.0 ranking value
    (managers judge offers by rankings).
-3. **Buy low, sell high.** `buy_sell(scope="mine")`: high-confidence `sell_high` players (temporary cause: hot
+3. **Buy low, sell high.** Hashtag mode: buy/sell = HT ROS value vs the market (HT season stats, Yahoo % owned).
+   `buy_sell(scope="mine")`: high-confidence `sell_high` players (temporary cause: hot
    shooting, teammate out) are give candidates; `buy_sell(scope="others")` and `signals(scope="others")` up signals
    are targets. Test those packages with `evaluate_trade`; a role change that may stick (low confidence) is not a
    sell.

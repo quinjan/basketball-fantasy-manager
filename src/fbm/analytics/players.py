@@ -274,3 +274,55 @@ def projection_table(
     engine = engine_projection_table(conn, current, prior, shrink_games)
     weight = resolve_espn_weight(conn)[0] if espn_weight is None else espn_weight
     return blend_espn(engine, espn_snapshot_table(conn, current), weight)
+
+
+HT_TPA_PER_TPM = 1 / 0.36  # HT publishes no 3PA; league categories don't use 3P%, so tpa is only a rough filler
+
+
+def hashtag_projection_table(conn: sqlite3.Connection, view: str, season: int) -> pd.DataFrame:
+    """Hashtag Basketball per-game projections for one view, in the engine's projection-table shape.
+
+    Stats are HT's (no ESPN/engine projection numbers). Facts from ESPN fill the rest: NBA team and position from the
+    `players` table (HT's when unknown), games played this season, and recent minutes (role context only; never
+    changes a projected stat). HT's per-category z values are kept as `ht_z_<cat>` plus `ht_rank` / `ht_total`.
+    """
+    from fbm.hashtag import CATEGORY_KEYS
+    from fbm.hashtag import store as ht_store
+
+    ht = ht_store.projections(conn, view)
+    stat_cols = [s for s in BASE_STATS if s != "tpa"]
+    base_cols = ["name", "team", "position", "gp", *BASE_STATS, "gp_current", "gp_prior", "prior_source"]
+    if ht.empty:
+        return pd.DataFrame(columns=base_cols).rename_axis("espn_id")
+    out = pd.DataFrame(index=ht.index.astype(str))
+    out.index.name = "espn_id"
+    facts = {
+        r["espn_id"]: (r["team"], r["position"]) for r in conn.execute("SELECT espn_id, team, position FROM players")
+    }
+    out["name"] = ht["name"].values
+    out["team"] = [facts.get(pid, ("", ""))[0] or str(t or "") for pid, t in zip(out.index, ht["team"], strict=True)]
+    out["position"] = [
+        facts.get(pid, ("", ""))[1] or str(p or "").replace(" ", "").split(",")[0]
+        for pid, p in zip(out.index, ht["positions"], strict=True)
+    ]
+    for s in stat_cols:
+        out[s] = pd.to_numeric(ht[s], errors="coerce").fillna(0.0).astype(float).values
+    out["tpa"] = out["tpm"] * HT_TPA_PER_TPM
+    out["gp"] = pd.to_numeric(ht["gp"], errors="coerce").fillna(0.0).values
+    cur = season_table(conn, season)
+    out["gp_current"] = cur["gp"].reindex(out.index).fillna(0).astype(int)
+    out["gp_prior"] = 0
+    out["prior_source"] = f"hashtag:{ht.attrs.get('view', view)}"
+    out["weight_current"] = 1.0
+    out["espn_weight"] = 0.0
+    out["ht_rank"] = pd.to_numeric(ht["rank"], errors="coerce").values
+    out["ht_total"] = pd.to_numeric(ht["total"], errors="coerce").values
+    for k in CATEGORY_KEYS:
+        out[f"ht_z_{k}"] = pd.to_numeric(ht[f"z_{k}"], errors="coerce").fillna(0.0).values
+    recent = recent_minutes(conn, season, int(C("projection.recent_games")))
+    out["recent_mpg"] = recent["recent_mpg"].reindex(out.index) if not recent.empty else np.nan
+    out["minutes_trend"] = (out["recent_mpg"] - cur["minutes"].reindex(out.index)).round(1)
+    big = out["minutes_trend"].abs() >= float(C("projection.trend_min_change"))
+    out["role"] = np.where(big, np.where(out["minutes_trend"] > 0, "up", "down"), "")
+    out.attrs.update(view=ht.attrs.get("view", view), as_of=ht.attrs.get("as_of"), source="hashtag")
+    return out

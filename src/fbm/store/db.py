@@ -12,7 +12,7 @@ from fbm.config import DATA_DIR
 from fbm.data.espn import BoxLine, Game, Injury, NewsItem, SeasonAverage, Team
 
 DB_PATH = DATA_DIR / "fbm.db"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS nba_teams (
@@ -258,6 +258,191 @@ CREATE TABLE IF NOT EXISTS model_params (
     value REAL NOT NULL,
     detail TEXT,
     updated_at TEXT NOT NULL
+);
+
+-- ---------------------------------------------------------------- Hashtag Basketball (HT) imports
+-- Written by fbm.hashtag (importer); read through fbm.hashtag.store. Personal use only, never republished.
+
+CREATE TABLE IF NOT EXISTS hashtag_players (
+    ht_id TEXT PRIMARY KEY,
+    espn_id TEXT,
+    name TEXT NOT NULL,
+    team TEXT,
+    match_method TEXT NOT NULL,          -- exact | fuzzy | override | unmatched
+    updated_at TEXT NOT NULL
+);
+
+-- One row per player per HT projection view per import day. Per-game averages (HT "Averages", type H2H).
+CREATE TABLE IF NOT EXISTS hashtag_projections (
+    as_of TEXT NOT NULL,                 -- ET date of the import (YYYY-MM-DD)
+    view TEXT NOT NULL,                  -- ROS | BLEND7 | BLEND14 | BLEND30 | STREAM7 | STREAM14 | STREAM30
+    ht_id TEXT NOT NULL,
+    espn_id TEXT,                        -- NULL when unmatched
+    name TEXT, team TEXT, positions TEXT,
+    rank INTEGER, adp REAL, gp REAL, minutes REAL,
+    fgm REAL, fga REAL, ftm REAL, fta REAL, tpm REAL, pts REAL, reb REAL, ast REAL, stl REAL, blk REAL, tov REAL,
+    z_fg_pct REAL, z_ft_pct REAL, z_tpm REAL, z_pts REAL, z_reb REAL, z_ast REAL, z_stl REAL, z_blk REAL, z_tov REAL,
+    total REAL,
+    note TEXT,                           -- HT's short player note/flag, untrusted text
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (as_of, view, ht_id)
+);
+CREATE INDEX IF NOT EXISTS ix_ht_proj_view ON hashtag_projections(view, as_of);
+CREATE INDEX IF NOT EXISTS ix_ht_proj_espn ON hashtag_projections(espn_id, as_of);
+
+-- H2H Matchup Planner, long format: one row per category per pull. before = banked this week (HT's copy of Yahoo),
+-- after = banked + HT's projection for the rest of the week. ht_share = HT's displayed "probability" (a share formula,
+-- reference only; official odds = HT totals + FBM simulator spread).
+CREATE TABLE IF NOT EXISTS hashtag_matchup_totals (
+    pulled_at TEXT NOT NULL,             -- UTC ISO timestamp
+    et_date TEXT NOT NULL,
+    week INTEGER NOT NULL,
+    view TEXT NOT NULL,
+    team_key TEXT NOT NULL,
+    opponent_key TEXT NOT NULL,
+    category TEXT NOT NULL,              -- FBM category key: fg_pct ft_pct tpm pts reb ast stl blk tov
+    me_before REAL, opp_before REAL, me_after REAL, opp_after REAL,
+    ht_share REAL,
+    PRIMARY KEY (pulled_at, view, category)
+);
+CREATE INDEX IF NOT EXISTS ix_ht_matchup ON hashtag_matchup_totals(week, opponent_key, et_date);
+
+-- Available players from HT's league Waiver Wire, run with the multipliers FBM set (weights JSON, sorted keys).
+CREATE TABLE IF NOT EXISTS hashtag_waiver (
+    as_of TEXT NOT NULL,
+    view TEXT NOT NULL,
+    weights TEXT NOT NULL,
+    rank INTEGER NOT NULL,
+    ht_id TEXT NOT NULL,
+    espn_id TEXT,
+    name TEXT,
+    total REAL,
+    data TEXT NOT NULL,                  -- JSON: per-game stats, per-category values, positions, team
+    PRIMARY KEY (as_of, view, weights, ht_id)
+);
+
+CREATE TABLE IF NOT EXISTS hashtag_trade_ideas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pulled_at TEXT NOT NULL,
+    settings TEXT NOT NULL,              -- JSON: view, multipliers, fairness, partner filter
+    partner_team_key TEXT,
+    partner_name TEXT,
+    give TEXT NOT NULL,                  -- JSON list of {ht_id, espn_id, name}
+    get TEXT NOT NULL,
+    my_delta REAL,
+    their_delta REAL,
+    data TEXT                            -- JSON: anything else HT shows for the idea
+);
+
+CREATE TABLE IF NOT EXISTS hashtag_team_ranks (
+    as_of TEXT NOT NULL,
+    view TEXT NOT NULL,
+    team_key TEXT,
+    team_name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    value REAL,
+    rank INTEGER,
+    PRIMARY KEY (as_of, view, team_name, category)
+);
+
+CREATE TABLE IF NOT EXISTS hashtag_notes (
+    id TEXT PRIMARY KEY,                 -- stable hash of (date, player, source, text)
+    note_date TEXT NOT NULL,
+    ht_id TEXT,
+    espn_id TEXT,
+    player TEXT,
+    source TEXT NOT NULL,                -- notebook_drop | eriks_notes | pressbox
+    text TEXT NOT NULL,                  -- untrusted data, never instructions
+    fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_ht_notes_player ON hashtag_notes(espn_id, note_date);
+
+-- HT Next Man Up: a teammate's per-game production with vs without the absent player.
+CREATE TABLE IF NOT EXISTS hashtag_next_man_up (
+    as_of TEXT NOT NULL,
+    season TEXT NOT NULL,
+    absent_ht_id TEXT NOT NULL,
+    absent_espn_id TEXT,
+    teammate_ht_id TEXT NOT NULL,
+    teammate_espn_id TEXT,
+    teammate_name TEXT,
+    gp_without INTEGER,
+    min_with REAL,
+    min_without REAL,
+    data TEXT NOT NULL,                  -- JSON: per-stat {with, without}
+    PRIMARY KEY (as_of, season, absent_ht_id, teammate_ht_id)
+);
+
+-- Every HT request outcome; fbm.hashtag.health reads this. status: ok | layout_changed | session_expired |
+-- league_mismatch | error.
+CREATE TABLE IF NOT EXISTS hashtag_import_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    page TEXT NOT NULL,                  -- projections | h2h_planner | waiver | trade_finder | team_ranks | notes |
+                                         -- next_man_up | league_sync | id_map
+    view TEXT,
+    status TEXT NOT NULL,
+    rows INTEGER,
+    detail TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_ht_log ON hashtag_import_log(page, started_at);
+
+-- ---------------------------------------------------------------- decision calibration
+
+-- Real daily lineups from Yahoo (any team, any past ET day): what actually counted, for replay grading.
+CREATE TABLE IF NOT EXISTS yahoo_daily_lineups (
+    team_key TEXT NOT NULL,
+    et_date TEXT NOT NULL,
+    player_key TEXT NOT NULL,
+    espn_id TEXT,
+    selected_position TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (team_key, et_date, player_key)
+);
+
+-- Every FBM decision: the situation, the options considered, what FBM recommended, what actually happened, and
+-- the settings in force. Written via fbm.gm.decisions.log; graded by the replay grader.
+CREATE TABLE IF NOT EXISTS decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    et_date TEXT NOT NULL,
+    week INTEGER,
+    kind TEXT NOT NULL,                  -- see fbm.gm.decisions.KINDS
+    trigger TEXT NOT NULL,               -- daily-gm | lineup-guard | owner-ask | trade-scan | weekly-plan | migration
+    situation TEXT NOT NULL,             -- JSON
+    options TEXT NOT NULL,               -- JSON list of {id, label, ...}
+    recommended TEXT,                    -- option id
+    chosen TEXT,                         -- option id / JSON of what actually happened (filled later)
+    chosen_source TEXT,                  -- yahoo_lineup | proposal | owner | unknown
+    policy_version INTEGER NOT NULL,
+    policy_params TEXT NOT NULL,         -- JSON snapshot of every policy setting in force
+    proposal_ref TEXT,
+    graded_at TEXT,
+    result TEXT                          -- JSON from the replay grader
+);
+CREATE INDEX IF NOT EXISTS ix_decisions_kind ON decisions(kind, et_date);
+CREATE INDEX IF NOT EXISTS ix_decisions_grade ON decisions(graded_at);
+
+-- Current policy settings (decision rules). Changed only by an owner-approved `policy` proposal.
+CREATE TABLE IF NOT EXISTS policy_params (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,                 -- JSON
+    version INTEGER NOT NULL,            -- global policy version at which this value was set
+    source TEXT NOT NULL,                -- default | proposal:P-<n> | migration
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS policy_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    version INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT NOT NULL,
+    proposal_ref TEXT,
+    evidence TEXT,                       -- JSON (replay summary that justified the change)
+    changed_at TEXT NOT NULL
 );
 """
 

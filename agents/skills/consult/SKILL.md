@@ -7,8 +7,9 @@ description: Ad-hoc consultation with the owner — discuss an idea, a player, a
 
 1. `context_pack` (once per session).
 2. If a named skill fits, follow it: `lineup`, `matchup`, `waivers`, `stream-plan`, `trade-lab`, `player`,
-   `scout`, `league-intel`, `playoffs`, `approvals`, `memory`, `settings`, `health`, `draft-assist`,
-   `season-strategy`. Otherwise restate the owner's question/idea in one line. Pull the relevant numbers with tools before forming a view.
+   `scout`, `league-intel`, `playoffs`, `approvals`, `memory`, `settings`, `health`,
+   `season-strategy`, `weekly-retro-preview`. Drafts: the owner uses Hashtag Basketball's Draft Tracker (FBM has no
+   draft tools). Otherwise restate the owner's question/idea in one line. Pull the relevant numbers with tools before forming a view.
 3. Give a clear verdict first, then the justification (2–4 numbers), then risks and the best alternative.
 4. Steelman the owner's idea before disagreeing. If they still want it, it's their team: create a proposal and
    run it through review (roster moves), or make the change (rules/config/code).
@@ -18,6 +19,9 @@ description: Ad-hoc consultation with the owner — discuss an idea, a player, a
    - Playbook rules ("never drop X", "don't stream on Sundays") → `memory/playbook.md` under "Owner rules".
    - Proposal expiry/schedules/email preferences → `config/settings.toml` (and `fbm automation` schedules).
    - Engine changes → edit code with tests (`uv run pytest -q`, `uv run ruff check src tests`), then commit.
-   - Tuning a number (thresholds, penalties, assumed opponent adds, play probabilities) → `config/constants.toml`
+   - Decision rules (`policy_settings`: HT view per decision, bands, stream thresholds, odds spread scale, ...) →
+     only a `policy` proposal backed by replay evidence (`policy_suggestions`) → `reviewer` → owner approval →
+     `proposal_steps`. Never edit them directly, even when the owner asks: draft the proposal.
+   - Tuning another number (penalties, play probabilities, health thresholds) → `config/constants.toml`
      (see the `constants` tool for keys, defaults, and sources); journal the before/after and the evidence.
 6. End with a one-line summary of what changed (if anything) (memory is saved locally).

@@ -1,7 +1,8 @@
 """Learning loop: grade decisions against what actually happened, and check whether the simulator is calibrated.
 
 - Predictions: every recorded matchup simulation stores per-category win odds and the planned started games. After
-  the window ends, realized category results are computed from box scores (demo) or Yahoo results (later), and
+  the window ends, realized category results come from Yahoo's FINAL matchup result for the week (stat_winners;
+  demo league: box scores of the planned player-days), and
   scored with the Brier score: (p_win + 0.5 p_tie - outcome)^2, outcome in {1, 0.5, 0}.
 - Decisions: executed add/drop, waiver, trade and IL-activation proposals are graded by the realized production of
   players acquired (or activated) minus players given up, from the execution date on. Each category is scaled by a
@@ -24,6 +25,8 @@ from fbm.analytics.valuation import PoolStats
 from fbm.constants import C
 from fbm.gm import proposals as props
 from fbm.timeutil import ET
+from fbm.yahoo import lineups
+from fbm.yahoo.lineups import FinalsProvider
 
 GRADED_KINDS = ("add_drop", "waiver_claim", "trade", "il_activation")
 
@@ -113,46 +116,82 @@ def window_complete(conn: sqlite3.Connection, start: str, end: str) -> bool:
     return pending == 0
 
 
+def _grade_result(
+    payload: Mapping[str, Any],
+    by_key: Mapping[str, Category],
+    me: Mapping[str, float],
+    opp: Mapping[str, float],
+    winners: Mapping[str, float] | None = None,
+    actual_source: str = "box_scores",
+) -> dict[str, Any]:
+    """Score a stored forecast against actual totals. Yahoo's stat_winners (when given) decide each category."""
+    cats: dict[str, Any] = {}
+    for key, p in payload["categories"].items():
+        cat = by_key.get(key)
+        if cat is None:
+            continue
+        outcome = float(winners[key]) if winners and key in winners else category_outcome(cat, me, opp)
+        forecast = p["p_win"] + 0.5 * p.get("p_tie", 0.0)
+        cats[key] = {
+            "forecast": round(forecast, 4),
+            "outcome": outcome,
+            "brier": round((forecast - outcome) ** 2, 4),
+        }
+    return {
+        "categories": cats,
+        "expected_cats": payload["expected"],
+        "actual_cats": sum(c["outcome"] for c in cats.values()),
+        "brier_mean": round(sum(c["brier"] for c in cats.values()) / max(1, len(cats)), 4),
+        "actual_me": dict(me),
+        "actual_opp": dict(opp),
+        "actual_source": actual_source,
+    }
+
+
 def grade_predictions(
     conn: sqlite3.Connection,
     categories: Sequence[Category],
     today: date,
     actual_provider: ActualProvider | None = None,
+    finals: FinalsProvider | None = None,
 ) -> list[dict[str, Any]]:
-    """Grade every ungraded prediction whose window has ended and whose games are all final + synced."""
+    """Grade every ungraded prediction whose window has ended.
+
+    The actual outcome of a Yahoo matchup forecast is Yahoo's FINAL result for that week (full-week totals and
+    stat_winners), whatever day the forecast was made: a mid-week forecast includes the stats already banked, so it
+    must be graded on the whole week, not on the remaining days' planned player-days (bug fixed 2026-10-26). Such
+    predictions wait until Yahoo marks the matchup final. Demo-league predictions (source "demo") have no Yahoo
+    result and keep the box-score path (planned player-days, once every game is final and synced)."""
     graded = []
     by_key = {c.key: c for c in categories}
+    finals = finals or lineups.db_provider(conn)
     rows = conn.execute(
         "SELECT * FROM predictions WHERE graded_at IS NULL AND window_end < ? ORDER BY id", (today.isoformat(),)
     ).fetchall()
     for row in rows:
-        if not window_complete(conn, row["window_start"], row["window_end"]):
-            continue
         payload = json.loads(row["payload"])
         actual = actual_provider(row) if actual_provider else None
-        if actual is None:
-            actual = (realized_totals(conn, payload["plan_me"]), realized_totals(conn, payload["plan_opp"]))
-        me, opp = actual
-        cats: dict[str, Any] = {}
-        for key, p in payload["categories"].items():
-            cat = by_key.get(key)
-            if cat is None:
+        winners = None
+        source = "provider"
+        if actual is None and row["source"] != "demo":
+            final = finals(date.fromisoformat(row["window_end"]), row["team_key"], None)
+            if not final or not final.get("final"):
                 continue
-            outcome = category_outcome(cat, me, opp)
-            forecast = p["p_win"] + 0.5 * p["p_tie"]
-            cats[key] = {
-                "forecast": round(forecast, 4),
-                "outcome": outcome,
-                "brier": round((forecast - outcome) ** 2, 4),
-            }
-        result = {
-            "categories": cats,
-            "expected_cats": payload["expected"],
-            "actual_cats": sum(c["outcome"] for c in cats.values()),
-            "brier_mean": round(sum(c["brier"] for c in cats.values()) / max(1, len(cats)), 4),
-            "actual_me": me,
-            "actual_opp": opp,
-        }
+            if final.get("opponent_key") and row["opponent_key"] and final["opponent_key"] != row["opponent_key"]:
+                skipped = {"skipped": "forecast opponent was not the real matchup", "real": final["opponent_key"]}
+                conn.execute(
+                    "UPDATE predictions SET graded_at = ?, result = ? WHERE id = ?",
+                    (_now(), json.dumps(skipped), row["id"]),
+                )
+                continue
+            actual, winners, source = (final["me"], final["opp"]), final.get("stat_winners"), "yahoo_final"
+        elif actual is None:
+            if not window_complete(conn, row["window_start"], row["window_end"]):
+                continue
+            actual = (realized_totals(conn, payload["plan_me"]), realized_totals(conn, payload["plan_opp"]))
+            source = "box_scores"
+        me, opp = actual
+        result = _grade_result(payload, by_key, me, opp, winners, source)
         conn.execute(
             "UPDATE predictions SET graded_at = ?, result = ? WHERE id = ?", (_now(), json.dumps(result), row["id"])
         )
@@ -161,17 +200,30 @@ def grade_predictions(
     return graded
 
 
-def calibration(conn: sqlite3.Connection, since: date | None = None) -> dict[str, Any]:
+def calibration(
+    conn: sqlite3.Connection,
+    since: date | None = None,
+    sources: Sequence[str] | None = None,
+    exclude_sources: Sequence[str] = (),
+) -> dict[str, Any]:
     sql = "SELECT * FROM predictions WHERE graded_at IS NOT NULL"
-    args: tuple = ()
+    args: list[Any] = []
     if since:
         sql += " AND window_end >= ?"
-        args = (since.isoformat(),)
+        args.append(since.isoformat())
+    if sources:
+        sql += f" AND source IN ({','.join('?' * len(sources))})"
+        args.extend(sources)
+    if exclude_sources:
+        sql += f" AND source NOT IN ({','.join('?' * len(exclude_sources))})"
+        args.extend(exclude_sources)
     rows = conn.execute(sql, args).fetchall()
     forecasts: list[tuple[str, float, float]] = []
     exp_vs_actual = []
     for r in rows:
         res = json.loads(r["result"])
+        if "categories" not in res:  # skipped (e.g. forecast against a team that wasn't the real opponent)
+            continue
         exp_vs_actual.append((res["expected_cats"], res["actual_cats"]))
         for key, c in res["categories"].items():
             forecasts.append((key, c["forecast"], c["outcome"]))
@@ -332,9 +384,10 @@ def weekly_retro_data(
     today: date,
     punts: Sequence[str] = (),
     names: Mapping[str, str] | None = None,
+    finals: FinalsProvider | None = None,
 ) -> dict[str, Any]:
     week_end = week_start + timedelta(days=6)
-    newly_graded = grade_predictions(conn, categories, today)
+    newly_graded = grade_predictions(conn, categories, today, finals=finals)
     lo = datetime.combine(week_start, datetime.min.time(), ET).astimezone(UTC).isoformat(timespec="seconds")
     hi = (
         datetime.combine(week_end + timedelta(days=1), datetime.min.time(), ET)
@@ -374,5 +427,92 @@ def weekly_retro_data(
             }
             for r in preds
         ],
-        "calibration_season": calibration(conn),
+        "calibration_season": calibration(conn, exclude_sources=("ht_spread",)),
+        **decision_retro(conn, pool, categories, week_start, today, finals),
     }
+
+
+def per_view_comparison(conn: sqlite3.Connection, graded: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Re-choose each graded decision under every value of its kind's HT-view setting (choosers.choose, other
+    settings as in force at the time) and sum the replayed categories won by the option each view would have picked.
+    This is the retro's "what works best" table."""
+    from fbm.gm import choosers, policy
+    from fbm.hashtag import VIEWS
+
+    current = policy.all_values(conn)
+    table: dict[str, dict[str, Any]] = {}
+    for d in graded:
+        key = choosers.KIND_VIEW_PARAM.get(d["kind"])
+        res = d.get("result") or {}
+        if not key or not res.get("options"):
+            continue
+        row = table.setdefault(d["kind"], {"setting": key, "in_force": {}, "views": {}})
+        base = {**current, **(d.get("policy_params") or {})}
+        used = base.get(key)
+        row["in_force"][used] = row["in_force"].get(used, 0) + 1
+        for v in VIEWS:
+            try:
+                pick = choosers.choose(d, {**base, key: v})
+            except ValueError:
+                continue
+            r = res["options"].get(pick) or {}
+            if r.get("cats_won") is None:
+                continue
+            cell = row["views"].setdefault(v, {"decisions": 0, "cats_won": 0.0, "ros_value": 0.0})
+            cell["decisions"] += 1
+            cell["cats_won"] += float(r["cats_won"])
+            cell["ros_value"] += float(r.get("ros_value") or 0.0)
+    for row in table.values():
+        for cell in row["views"].values():
+            cell["cats_won_mean"] = round(cell["cats_won"] / cell["decisions"], 3)
+            cell["ros_value"] = round(cell["ros_value"], 3)
+        if row["views"]:
+            row["best_view"] = max(
+                row["views"], key=lambda v: (row["views"][v]["cats_won_mean"], row["views"][v]["ros_value"])
+            )
+    return table
+
+
+def decision_retro(
+    conn: sqlite3.Connection,
+    pool: PoolStats,
+    categories: Sequence[Category],
+    week_start: date,
+    today: date,
+    finals: FinalsProvider | None = None,
+) -> dict[str, Any]:
+    """Decision-calibration part of the weekly retro: replay grading, regret by kind, lineup regret, odds
+    reliability (vs Yahoo finals) and the per-view comparison."""
+    from fbm.gm import decisions as dlog
+    from fbm.gm import odds_reliability, replay
+
+    week_end = week_start + timedelta(days=6)
+    out: dict[str, Any] = {}
+    try:
+        replay.grade_pending(conn, today, finals=finals, pool=pool, categories=categories)
+    except Exception as err:  # the retro must still come back if replay fails
+        out["replay_error"] = f"{type(err).__name__}: {err}"
+    week = dlog.query(conn, since=week_start.isoformat(), until=week_end.isoformat(), limit=5000)
+    graded = [d for d in week if d.get("result") and d["result"].get("complete")]
+    rows = [
+        {
+            "kind": d["kind"],
+            "recommended": d["result"].get("recommended"),
+            "chosen": d["result"].get("chosen"),
+            "best": d["result"].get("best"),
+            "regret_cats": d["result"].get("regret_cats"),
+        }
+        for d in graded
+    ]
+    lineup = [r["regret_cats"] for r in rows if r["kind"] == "lineup" and r["regret_cats"] is not None]
+    out.update(
+        {
+            "decisions_logged_this_week": len(week),
+            "decisions_graded_this_week": len(graded),
+            "regret_by_kind": replay.regret_summary(rows),
+            "lineup_regret": {"days": len(lineup), "cats_lost_to_lineups": round(sum(lineup), 2)},
+            "odds_reliability": odds_reliability.report(conn, finals=finals),
+            "per_view": per_view_comparison(conn, graded),
+        }
+    )
+    return out

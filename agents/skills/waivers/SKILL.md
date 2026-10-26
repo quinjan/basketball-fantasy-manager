@@ -11,8 +11,11 @@ Run as the `gm` agent. Add/drops and claims are proposals — FBM never makes th
    ownership.
 2. Candidates: `free_agents(sort="value", punts=<approved punts>)` for rest-of-season (values are
    availability-adjusted for injuries); `free_agents(sort="week")` is this week only (see `stream-plan`).
-   Gems: `signals(scope="fa")` — next-man-up opportunities, new starters, buy-lows and ESPN revisions on free
-   agents, often before their season stats or rankings move. `fa_radar` scans every free agent and waiver player
+   Hashtag mode: candidates are HT's waiver wire, run with FBM's category multipliers (`ht_waiver_rank`); FBM
+   still makes the pick (claim view `policy.view.claim` for adds kept beyond this week). `HT_UNHEALTHY` → no
+   pickups or proposals; report the fix.
+   Gems: `signals(scope="fa")` — next-man-up opportunities (HT Next Man Up), new starters, buy-lows and
+   `ht_revision`s on free agents, often before their season stats or rankings move. `fa_radar` scans every free agent and waiver player
    (signals, minutes jump, ownership surge, value vs my worst rostered); `ownership_trends` shows who the league is
    grabbing.
 3. "Drop X for Y?" → `evaluate_add_drop(add=Y, drop=X)`; check `player_card` for both (injury, minutes trend).

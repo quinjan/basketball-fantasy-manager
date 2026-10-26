@@ -12,5 +12,7 @@ Run as the `gm` agent.
    current trade playoff weight. Targets: `playoff_outlook(scope="free_agents")` and `scope="league"`.
 3. Cross-check targets with `free_agents` / `waiver_decision` (unowned) or `find_trades` / `evaluate_trade`
    (owned; the trade output's playoff weight grows toward the playoffs).
+   Hashtag mode: values use the ROS view (`policy.view.ros`); `playoff_outlook` returns `HT_UNHEALTHY` while Hashtag is
+   unhealthy: report the fix, no move suggestions.
 4. Sells: rostered players with light playoff schedules and high trade value (`rankings`).
 5. Any move is a proposal (`create_proposal` → `reviewer` → owner → `proposal_steps` → owner does it in Yahoo → `confirm_done`).

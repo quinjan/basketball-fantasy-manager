@@ -264,6 +264,24 @@ def check_storage(data_dir_exists: bool, db_bytes: int | None) -> list[dict[str,
     return [result("Storage", WARN if mb > limit else OK, f"fbm.db {mb:.1f} MB (warn above {limit} MB)")]
 
 
+def check_hashtag(ht: dict[str, Any] | None) -> list[dict[str, str]]:
+    """Hashtag Basketball gate: OK when disabled (not needed) or healthy; FAIL with reasons/fix when enabled and not
+    healthy (owner rule: no suggestions without healthy HT data)."""
+    if not ht or not ht.get("enabled"):
+        return [result("Hashtag Basketball", OK, "not enabled ([hashtag] enabled = false); ESPN engine in use")]
+    if ht.get("healthy"):
+        newest = max((ts for ts in (ht.get("last_ok") or {}).values() if ts), default="-")
+        return [result("Hashtag Basketball", OK, f"healthy (newest import {newest})")]
+    return [
+        result(
+            "Hashtag Basketball",
+            FAIL,
+            "; ".join(ht.get("reasons") or ["unhealthy"]) + " No suggestions until fixed.",
+            " ".join(ht.get("fix") or []),
+        )
+    ]
+
+
 # ------------------------------------------------------------------ gather (real DB / files)
 
 
@@ -370,6 +388,15 @@ def gather(
                 unmatched = len(_unmatched(conn))
             except sqlite3.Error:
                 unmatched = 0
+        ht_status: dict[str, Any] | None = None
+        if settings.hashtag_enabled:
+            from fbm.hashtag import health as ht_health
+
+            try:
+                ht_status = ht_health.status(conn, True, now).as_dict()
+            except sqlite3.Error as err:
+                ht_status = {"enabled": True, "healthy": False, "reasons": [f"HT tables unreadable: {err}"],
+                             "fix": ["Run `fbm hashtag import`."]}  # fmt: skip
     finally:
         if own:
             conn.close()
@@ -393,4 +420,5 @@ def gather(
         check_journal(journal, phase, local_today, game_days, date.fromisoformat(min(regular)) if regular else None)
     )
     checks += check_notifications(settings.email_enabled, outbox, now)
+    checks += check_hashtag(ht_status)
     return {"overall": overall(checks), "phase": phase, "as_of": now.isoformat(), "checks": checks}

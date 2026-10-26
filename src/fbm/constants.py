@@ -100,8 +100,8 @@ _ALL = [
         "projection.espn_weight",
         0.5,
         "fraction",
-        "Weight on ESPN's current projection in the final blend (1 - this on FBM's engine). Used until "
-        "projection_calibration has measured a weight; an override here always wins.",
+        "Weight on ESPN's current projection in the final blend (1 - this on FBM's engine), ESPN mode only "
+        "(demo league / Hashtag disabled). Hashtag mode uses HT projections only.",
         "Equal weight until graded forecasts say otherwise.",
         "heuristic",
     ),
@@ -1138,6 +1138,84 @@ _ALL = [
         "Expected-category edge a build needs over the approved strategy before recommending a switch "
         "(divided by the number of categories when ranking by P(win the week)).",
         "Avoids churning strategy over simulation noise; switching costs moves.",
+        "heuristic",
+    ),
+    # hashtag basketball (ws-import: add new hashtag.* constants inside this section only)
+    Constant(
+        "hashtag.min_interval_s",
+        2.0,
+        "seconds",
+        "Minimum pause between requests to hashtagbasketball.com.",
+        "Polite pace for a personal subscription; a daily import is about 15-25 requests.",
+        "rule",
+    ),
+    Constant(
+        "hashtag.max_unmatched",
+        10,
+        "players",
+        "HT is unhealthy when more than this many projected players (top 300 by HT rank) have no ESPN id match.",
+        "Unmatched players silently disappear from every decision; a handful is tolerable, more means a mapping bug.",
+        "heuristic",
+    ),
+    Constant(
+        "hashtag.max_age_hours",
+        30.0,
+        "hours",
+        "HT is unhealthy when the newest successful projections or H2H Planner import is older than this.",
+        "One daily import (after games are final) plus slack for a late run; owner rule: no suggestions on stale HT.",
+        "rule",
+    ),
+    # decision calibration (ws-decisions: add new decisions.* / replay.* constants inside this section only)
+    Constant(
+        "replay.ros_horizon_days",
+        14,
+        "days",
+        "Days after a drop/add/IL decision over which the players' real production is replayed for ROS cost.",
+        "Two weeks: long enough to see value, short enough to stay attributable to the decision.",
+        "heuristic",
+    ),
+    # policy (ws-policy: add new policy.* meta constants inside this section only; the policy values themselves
+    # live in fbm.gm.policy and change only via owner-approved policy proposals)
+    Constant(
+        "policy.min_weeks",
+        4,
+        "weeks",
+        "Minimum graded weeks before the retro may propose changing a policy setting.",
+        "One matchup per week is a single, correlated sample; owner decision: changes need evidence + approval.",
+        "heuristic",
+    ),
+    # signals rework (ws-signals: add new signals.* constants inside this section only)
+    Constant(
+        "signals.ht_revision_min",
+        0.5,
+        "HT total (z-sum / game)",
+        "Day-over-day change in HT's ROS projection total that counts as an ht_revision signal (and as HT catching "
+        "up when grading lead time).",
+        "About half a category's worth of z-score: a real re-projection, not rounding.",
+        "heuristic",
+    ),
+    Constant(
+        "signals.ht_revision_min_stream",
+        1.0,
+        "HT total (z-sum / game)",
+        "Day-over-day change in HT's STREAM7 projection total that counts as an ht_revision signal.",
+        "Short windows move with the schedule and recent games: a higher bar than ROS.",
+        "heuristic",
+    ),
+    Constant(
+        "signals.lead_owned_move",
+        5.0,
+        "% owned points",
+        "League % owned move (in the signal's direction, or being rostered) that counts as the market catching up.",
+        "Yahoo % owned moves a point or two daily on noise; five points is managers acting.",
+        "heuristic",
+    ),
+    Constant(
+        "signals.acted_days",
+        7,
+        "days",
+        "A decision or proposal involving the player within this many days after the signal counts as acting on it.",
+        "One fantasy week: signals are early triggers for that week's moves.",
         "heuristic",
     ),
 ]

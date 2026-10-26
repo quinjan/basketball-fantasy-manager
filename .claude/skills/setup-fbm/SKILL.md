@@ -62,6 +62,11 @@ what fails. Works the same in any agent (Copilot, Claude Code, Codex, Cursor, Ge
    - Notifications: none or email (`--email` / `--no-email`); quiet hours (`--quiet-hours 23:00-07:00`).
    - Risk appetite (conservative / balanced / aggressive): not a setup flag — journal it later with
      `journal_append` (kind `owner`) for the season-strategy run.
+7. **Hashtag Basketball Premium (optional).** Only for a real Yahoo league and a Hashtag Basketball Premium
+   (Patreon) subscription. Explain: when enabled, HT becomes FBM's data layer (projections, weekly H2H totals,
+   waiver wire, Trade Finder, notes) and FBM decides on top of it; while HT is unhealthy FBM makes **no
+   suggestions** (no fallback). HT content is personal-use only. Ask: enable Hashtag now / later / no. Default: no
+   (the demo league always uses FBM's ESPN engine).
 
 ## 2. Run setup
 
@@ -82,6 +87,12 @@ NBA data (one-time prior-season backfill + sync; several minutes the first time)
 - Yahoo sign-in chosen: the user runs `uv run fbm yahoo login` in a terminal (they sign in in the browser window
   it opens; never ask for their Yahoo password), picks the league and accepts the switch. Then you run
   `uv run fbm yahoo check` and show which feeds work.
+- Hashtag chosen (after Yahoo is connected): set `[hashtag] enabled = true` and `league_id = "<Yahoo league id>"`
+  in `config/settings.toml` (no setup flag). The user runs `uv run fbm hashtag login` in a terminal (they sign in to
+  Hashtag in the browser window it opens; FBM never sees the password; the session goes to the OS credential
+  store). Then you run `uv run fbm hashtag check` (signed in, league visible, every page parses, unmatched ids) and
+  `uv run fbm hashtag import`; show the result. Unmatched players → `config/hashtag_id_overrides.toml` (see
+  `config/hashtag_id_overrides.example.toml`). Kill switch: `FBM_HASHTAG_ENABLED=0`.
 - Yahoo approved: the user runs `uv run fbm auth` (types Client ID/Secret into its prompts), then you run
   `uv run fbm league select`, `uv run fbm settings`, `uv run fbm setup --yes --league-source yahoo`,
   `uv run fbm snapshot`, `uv run fbm ids`.

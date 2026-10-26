@@ -16,7 +16,8 @@ Skills (`agents/skills/*/SKILL.md`) are scripted procedures:
 
 - Scheduled: `daily-gm`, `lineup-guard`, `weekly-retro-preview`, `trade-scan`, `health`
 - On demand: `consult`, `lineup`, `matchup`, `waivers`, `stream-plan`, `trade-lab`, `player`, `scout`, `playoffs`,
-  `league-intel`, `approvals`, `memory`, `settings`, `season-strategy`, `draft-assist`
+  `league-intel`, `approvals`, `memory`, `settings`, `season-strategy` (drafts: Hashtag Basketball's Draft
+  Tracker; FBM has no draft tools)
 - First run: `setup-fbm`
 
 Models are set per role in `config/settings.toml` (`[agent] gm_model`, `reviewer_model`, `routine_model`) or with

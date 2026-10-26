@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 import pandas as pd
@@ -30,10 +30,40 @@ class AnalyticsContext:
     cfg: ValuationConfig
     availability: pd.DataFrame | None = None
     ros_values: pd.DataFrame | None = None
-    engine_projections: pd.DataFrame | None = None  # FBM's engine before the ESPN blend (for calibration logs)
-    espn_weight: tuple[float, str] = (0.0, "none")  # weight on ESPN in `projections` and where it came from
+    espn_weight: tuple[float, str] = (0.0, "none")  # non-HT mode: weight on ESPN in `projections` and its source
     teamless: frozenset[str] = frozenset()  # players on no current NBA roster (waived/unsigned): no games, no value
+    source: str = "engine"  # "hashtag" (HT mode: every projection is Hashtag's) | "engine" (ESPN-based engine)
+    week_view: str = "STREAM7"  # HT view behind this-week sims (lineups, matchups, streams) unless one is passed
+    ht_as_of: str | None = None  # date of the HT ROS projections in `projections`
     _rest_cache: tuple[dict[str, float], dict[str, frozenset]] | None = None
+    _views: dict[str, pd.DataFrame] = field(default_factory=dict)
+
+    @property
+    def hashtag(self) -> bool:
+        return self.source == "hashtag"
+
+    def view_projections(self, view: str | None = None, conn: sqlite3.Connection | None = None) -> pd.DataFrame:
+        """Per-game projections for an HT view (lazy, cached; players the view lacks keep their ROS rows).
+        Non-HT mode has one projection table, returned for every view."""
+        if not self.hashtag or not view or view.upper() == "ROS":
+            return self.projections
+        view = view.upper()
+        if view not in self._views:
+            frame = player_tables.hashtag_projection_table(conn or self.conn, view, self.season)
+            extra = self.projections[~self.projections.index.isin(frame.index)]
+            frame = pd.concat([frame, extra[[c for c in frame.columns if c in extra.columns]]])
+            frame["team"] = self.projections["team"].reindex(frame.index).fillna(frame["team"])
+            self._views[view] = frame
+        return self._views[view]
+
+    def view_g(self, view: str | None = None, conn: sqlite3.Connection | None = None) -> pd.DataFrame:
+        """Per-category value table (columns g_<cat>) under a view: HT's z values for that view in HT mode, FBM's
+        G-scores otherwise."""
+        if not self.hashtag:
+            return self.values
+        frame = self.view_projections(view, conn)
+        cols = {f"ht_z_{c.key}": f"g_{c.key}" for c in self.cfg.categories if f"ht_z_{c.key}" in frame.columns}
+        return frame[list(cols)].rename(columns=cols).fillna(0.0)
 
     def has_nba_team(self, pid: str) -> bool:
         return pid not in self.teamless
@@ -73,7 +103,11 @@ class AnalyticsContext:
         return out
 
     def models(
-        self, player_ids: Iterable[str], conn: sqlite3.Connection | None = None, horizon: str = "week"
+        self,
+        player_ids: Iterable[str],
+        conn: sqlite3.Connection | None = None,
+        horizon: str = "week",
+        view: str | None = None,
     ) -> dict[str, PlayerModel]:
         """Pass `conn` when calling from a different thread than the one that built this context.
 
@@ -83,25 +117,29 @@ class AnalyticsContext:
         """
         c = conn or self.conn
         ids = list(player_ids)
+        # HT mode: the sim's per-game means are Hashtag's (anchor 1.0); game logs only give the spread.
+        anchor = 1.0 if self.hashtag else None
         if horizon == "season":
             probs = self.ros_play_probs()
             return build_player_models(
                 c,
                 ids,
                 [self.season, self.prior],
-                self.projections,
+                self.view_projections(view or "ROS", c),
                 play_probs={pid: probs.get(pid, 1.0) for pid in ids},
+                anchor=anchor,
             )
         rest, b2b = self._rest_inputs(c, ids)
         return build_player_models(
             c,
             ids,
             [self.season, self.prior],
-            self.projections,
+            self.view_projections(view or self.week_view, c),
             self.statuses(c),
             rest_probs=rest,
             b2b_dates=b2b,
             return_dates=self.return_dates(c),
+            anchor=anchor,
         )
 
     def _rest_inputs(self, conn: sqlite3.Connection, ids: list[str]) -> tuple[dict[str, float], dict[str, frozenset]]:
@@ -120,16 +158,34 @@ class AnalyticsContext:
         return rest, dates
 
 
-def build_context(conn: sqlite3.Connection, today: date, cfg: ValuationConfig | None = None) -> AnalyticsContext:
+def build_context(
+    conn: sqlite3.Connection,
+    today: date,
+    cfg: ValuationConfig | None = None,
+    hashtag: bool = False,
+    week_view: str = "STREAM7",
+) -> AnalyticsContext:
+    """Projections, values and availability for the analytics.
+
+    hashtag=True (HT mode): projections are Hashtag's ROS view (`fbm.hashtag.store`); other views are loaded lazily
+    per decision (`view_projections`). hashtag=False: FBM's ESPN-based engine blended with ESPN's projection at the
+    constant `projection.espn_weight` (demo league / installs without HT).
+    """
     from fbm.analytics.projection_calibration import resolve_espn_weight
 
     season = current_season(today)
     prior = season - 1
-    engine = player_tables.engine_projection_table(conn, season, prior)
-    weight = resolve_espn_weight(conn)
-    projections = player_tables.blend_espn(engine, player_tables.espn_snapshot_table(conn, season), weight[0])
-    if projections.empty:
-        raise RuntimeError("No player stats stored. Run `fbm data sync` and `fbm data backfill`.")
+    weight: tuple[float, str] = (0.0, "none")
+    if hashtag:
+        projections = player_tables.hashtag_projection_table(conn, "ROS", season)
+        if projections.empty:
+            raise RuntimeError("No Hashtag projections imported. Run `fbm hashtag import` (or refresh_data).")
+    else:
+        engine = player_tables.engine_projection_table(conn, season, prior)
+        weight = resolve_espn_weight(conn)
+        projections = player_tables.blend_espn(engine, player_tables.espn_snapshot_table(conn, season), weight[0])
+        if projections.empty:
+            raise RuntimeError("No player stats stored. Run `fbm data sync` and `fbm data backfill`.")
     has_current = bool(projections["gp_current"].sum())
     current = player_tables.current_teams(conn, f"{season - 1}-07-01")
     if current:
@@ -150,7 +206,9 @@ def build_context(conn: sqlite3.Connection, today: date, cfg: ValuationConfig | 
         cfg,
         availability,
         ros,
-        engine_projections=engine,
         espn_weight=weight,
         teamless=teamless,
+        source="hashtag" if hashtag else "engine",
+        week_view=week_view,
+        ht_as_of=projections.attrs.get("as_of") if hashtag else None,
     )

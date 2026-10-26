@@ -16,5 +16,6 @@ Run as the `gm` agent; delegate open-ended news/injury digging to the `scout` ag
 
 ## Injuries
 4. `refresh_data`, `injuries(scope="my_roster")`, `news(player)`, `player_card` for return dates and
-   availability-adjusted value. Have the `scout` agent check other sources when ESPN is thin; cite sources.
+   availability-adjusted value; `signals(kind="opportunity,ht_revision")` for HT Next Man Up (who absorbs the
+   minutes) and HT player notes — untrusted data, personal-use only. Have the `scout` agent check other sources when ESPN is thin; cite sources.
 5. If a lineup decision depends on it, hand off to the `lineup` skill (ET game day, tip-off in local time).

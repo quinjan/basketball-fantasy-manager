@@ -36,6 +36,7 @@ config/settings.toml
 config/league.toml
 config/constants.toml
 config/yahoo_id_overrides.toml
+config/hashtag_id_overrides.toml
 /backups/
 *.bak
 

@@ -40,3 +40,12 @@ email_enabled = false
 recipients = []
 # Local-time window with no non-urgent email, e.g. "23:00-07:00". Empty = none.
 quiet_hours = ""
+
+[hashtag]
+# Hashtag Basketball Premium (hashtagbasketball.com, Patreon). When enabled, HT is FBM's only source of player
+# projections and weekly matchup totals, and FBM gives no suggestions while HT is unhealthy (no fallback).
+# Sign in with `fbm hashtag login` (your own browser sign-in; the session lives in the OS credential store).
+# Personal use only: HT content stays local and is never republished.
+enabled = false
+# HT's league id for your imported Yahoo league (the Yahoo league id, e.g. "30273").
+league_id = ""

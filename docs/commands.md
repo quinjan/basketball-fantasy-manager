@@ -9,7 +9,7 @@ Dates are **US/Eastern** NBA game days (`YYYY-MM-DD`).
 |---|---|
 | `fbm setup` | Set up or re-check FBM: settings, memory, NBA data, agent files, automation, health. Safe to re-run. Flags: `--agent`, `--gm-model`, `--reviewer-model`, `--routine-model`, `--timezone`, `--automation`, `--jobs`, `--league-source demo\|yahoo`, `--email/--no-email`, `--quiet-hours`, `--expiry-hours`, `--yahoo-approved`, `--skip-data`, `--yes`/`-y` (non-interactive), `--check` (verify only, writes nothing) |
 | `fbm status` | What is configured (never prints secrets) |
-| `fbm health` | Health checks (OK/WARN/FAIL): data freshness, Yahoo access/snapshot, stale proposals, missed runs, storage. Exits 1 on any FAIL |
+| `fbm health` | Health checks (OK/WARN/FAIL): data freshness, Yahoo access/snapshot, Hashtag Basketball gate, stale proposals, missed runs, storage. Exits 1 on any FAIL |
 | `fbm constants` | Every tunable engine constant (value, kind, source); override in `config/constants.toml` |
 | `fbm backup [--dest DIR]` | Zip `memory/`, `reports/`, settings, league config and the NBA database to a local folder (default `data/backups/`; no secrets) |
 | `fbm dashboard [--port 8501]` | Launch the local Streamlit dashboard |
@@ -57,6 +57,20 @@ Jobs: `data-sync`, `lineup-guard`, `daily-gm`, `weekly-retro`, `trade-scan`, `he
 | `fbm intel [--team X] [--sync]` | Opponent intel: manager activity, streaming, trades, builds, best trade partners |
 | `fbm ids` | Yahoo players not mapped to ESPN ids, and how to fix them (`config/yahoo_id_overrides.toml`) |
 
+## Hashtag Basketball Premium (`fbm hashtag`)
+
+Optional data layer, active when `[hashtag] enabled = true` in `config/settings.toml` (`league_id` = the Yahoo league
+id; environment variable `FBM_HASHTAG_ENABLED=0|1` overrides `enabled`). While HT is enabled but unhealthy, FBM makes
+no suggestions (no fallback). HT content is personal-use only.
+
+| Command | Purpose |
+|---|---|
+| `fbm hashtag login` | Sign in to Hashtag Basketball Premium once in your own browser (FBM never sees the password; the session goes to the OS credential store) |
+| `fbm hashtag logout` | Forget the Hashtag sign-in (HT then reports unhealthy: no suggestions while enabled) |
+| `fbm hashtag status` | HT health (the suggestion gate), the latest import of each page, unmatched players; never prints cookies |
+| `fbm hashtag import [--pages a,b]` | Import HT now (projections, H2H planner, league sync, waiver wire, ranks, notes, ...); `--pages` limits it, e.g. `projections,h2h_planner,league_sync` |
+| `fbm hashtag check` | Signed in? League visible on Hashtag? Does every page FBM reads still parse? Unmatched ids (fix in `config/hashtag_id_overrides.toml`). Read-only |
+
 ## NBA data (`fbm data`)
 
 | Command | Purpose |
@@ -100,19 +114,14 @@ Jobs: `data-sync`, `lineup-guard`, `daily-gm`, `weekly-retro`, `trade-scan`, `he
 | `fbm learn grade [--days N]` | Grade completed moves by realized production |
 | `fbm learn calibration` | Simulator calibration (Brier score vs coin flip, reliability) |
 | `fbm learn retro [--week-start D]` | Retro data for a fantasy week (JSON) |
+| `fbm learn signals` | Grade finished early signals; hit rate by kind and the ownership move after each signal (JSON) |
 
-## Draft (`fbm draft`)
+Decision replay, odds reliability and policy settings have no dedicated CLI commands: use the MCP tools or
+`fbm tool replay_grade`, `fbm tool decisions_log`, `fbm tool odds_reliability`, `fbm tool policy_settings`,
+`fbm tool policy_suggestions`. Policy changes go through a `policy` proposal (`fbm proposals approve`).
 
-| Command | Purpose |
-|---|---|
-| `fbm draft board [--top] [--punt] [--position]` | Draft board with tiers and ADP |
-| `fbm draft start [--teams] [--slot] [--rounds] [--punt]` | Start a live draft |
-| `fbm draft pick PLAYER` | Record the next pick (in draft order) |
-| `fbm draft undo` | Undo the last pick |
-| `fbm draft recommend` | Advice for the current pick |
-| `fbm draft adp [--refresh]` | Which ADP source the board uses; `--refresh` fetches Yahoo ADP (falls back to ESPN) |
-| `fbm draft live [--interval S]` | Poll Yahoo draft results until the draft completes; advice when you're on the clock |
-| `fbm draft mock [--slot] [--teams] [--rounds] [--punt] [--runs]` | Mock drafts scored by season-level simulation |
+FBM has no draft commands (retired): use Hashtag Basketball's Draft Tracker. `fbm learn projections` is retired too
+(Hashtag owns projection accuracy).
 
 ## Demo league and notifications
 

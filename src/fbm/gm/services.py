@@ -26,8 +26,10 @@ from fbm.config import LEAGUE_CONFIG_PATH, RAW_DIR, load_league_config
 from fbm.constants import C
 from fbm.data import sync
 from fbm.data.espn import EspnClient
+from fbm.gm import engine_ht as _ht
 from fbm.gm import memory, outcomes, steps
 from fbm.gm import ownership as _own_history
+from fbm.gm import policy as _policy
 from fbm.gm import proposals as props
 from fbm.league.model import IL_SLOTS, FantasyTeam, LeagueState, eligibility_from_espn_position
 from fbm.settings import load_settings
@@ -56,9 +58,16 @@ def _league_summary() -> dict | None:
 def ctx() -> AnalyticsContext:
     conn = _conn()
     stamp = conn.execute("SELECT MAX(last_run) FROM sync_log").fetchone()[0]
-    key = f"{date.today()}|{stamp}"
+    hashtag = _ht.enabled()
+    ht_stamp = None
+    if hashtag:
+        ht_stamp = conn.execute("SELECT MAX(as_of) FROM hashtag_projections").fetchone()[0]
+    key = f"{date.today()}|{stamp}|{hashtag}|{ht_stamp}"
     if _CTX_CACHE.get("key") != key:
-        _CTX_CACHE["ctx"] = build_context(conn, date.today(), config_from_settings(_league_summary()))
+        week_view = str(_policy.get(conn, "policy.view.lineup")) if hashtag else "STREAM7"
+        _CTX_CACHE["ctx"] = build_context(
+            conn, date.today(), config_from_settings(_league_summary()), hashtag=hashtag, week_view=week_view
+        )
         _CTX_CACHE["key"] = key
     return _CTX_CACHE["ctx"]
 
@@ -344,6 +353,7 @@ def team_roster(team: str | None = None, day: str | None = None, punts: str | No
     return lookahead.team_roster(team, day, punts)
 
 
+@_ht.gated
 def next_week(opponent: str | None = None, n: int = 4000) -> dict[str, Any]:
     from fbm.gm import lookahead
 
@@ -432,6 +442,15 @@ def rankings(
     pun = _strategy_punts(punts)
     value = _ros_value(c, pun)
     healthy = _value(c, pun)
+    metric = "rest-of-season G-score sum over non-punted categories (scaled toward replacement by availability)"
+    if c.hashtag:  # HT values (ROS view z) weighted by FBM's season multipliers
+        g = c.view_g("ROS")
+        mult = (_category_multipliers() or {}).get("season") or {}
+        cols = {f"g_{k.key}": float(mult.get(k.key, 1.0)) for k in c.cfg.categories if k.key not in pun}
+        cols = {col: w for col, w in cols.items() if col in g.columns}
+        value = g[list(cols)].mul(pd.Series(cols), axis=1).sum(axis=1).reindex(c.values.index).fillna(-99.0)
+        healthy = value
+        metric = "Hashtag ROS z-values x FBM season multipliers, non-punted categories"
     df = c.values.assign(value=value).sort_values("value", ascending=False)
     owners = _owners(league)
     if available_only:
@@ -459,7 +478,7 @@ def rankings(
     _own_history.annotate(_conn(), rows, league)
     return {
         "punts_applied": list(pun),
-        "metric": "rest-of-season G-score sum over non-punted categories (scaled toward replacement by availability)",
+        "metric": metric,
         "players": rows,
     }
 
@@ -481,6 +500,7 @@ def _mark_waivers(players: list[dict[str, Any]]) -> None:
             p["games_left_this_week"] = games_from(p["nba"], days, playing, clear)
 
 
+@_ht.gated
 def free_agents(
     top: int = 25, punts: str | None = None, position: str | None = None, sort: str = "value"
 ) -> dict[str, Any]:
@@ -491,6 +511,15 @@ def free_agents(
         p["week_value"] = _r(p["value"] * p["games_left_this_week"] / 3.5)
     if sort == "week":
         players.sort(key=lambda p: -p["week_value"])
+    elif ctx().hashtag:
+        from fbm.hashtag import store as ht_store
+
+        wl = ht_store.waiver(_conn())
+        if not wl.empty:
+            rank = {str(e): int(r) for e, r in zip(wl["espn_id"], wl["rank"], strict=True) if e}
+            for p in players:
+                p["ht_waiver_rank"] = rank.get(p["id"])
+            players.sort(key=lambda p: (p["ht_waiver_rank"] is None, p["ht_waiver_rank"] or 0, -p["value"]))
     res["players"] = players[:top]
     res["note"] = (
         "week_value = value x games_left_this_week / 3.5 (streaming lens). on_waivers=true: not addable before "
@@ -572,11 +601,18 @@ def schedule(days: int = 7) -> dict[str, Any]:
 # ------------------------------------------------------------------ analytics tools
 
 
-def _lineup_plan(league: LeagueState, target: date, apply_il: bool) -> dict[str, Any]:
-    """Lock-aware lineup for an ET day, with IL compliance moves applied first (when allowed)."""
+def _lineup_plan(
+    league: LeagueState, target: date, apply_il: bool, trigger: str | None = None, log: bool = False
+) -> dict[str, Any]:
+    """Lock-aware lineup for an ET day, with IL compliance moves applied first (when allowed).
+
+    Options: one week-weighted lineup per HT view (HT mode; one in engine mode), the ROS-value lineup and a pct-risk
+    variant; `choosers.choose` picks the recommendation (log=True also writes the decision log)."""
     from dataclasses import replace
 
     from fbm.analytics.lineup import started_teams
+    from fbm.analytics.lineup_swing import swing_categories, swing_values
+    from fbm.gm import choosers
 
     c, conn = ctx(), _conn()
     team = league.my_team
@@ -594,10 +630,86 @@ def _lineup_plan(league: LeagueState, target: date, apply_il: bool) -> dict[str,
     playing = {p.player_id for p in players if p.nba_team in nba}
     punts = _strategy_punts(None)
     ros = _value(c, punts).to_dict()
-    weights, swing, values = _swing_weights(league, target, punts, c, ros)
-    res = optimize_day(players, league.starting_slots(), playing, values, locked)
-    plain = optimize_day(players, league.starting_slots(), playing, ros, locked) if weights else res
+    params = _policy.all_values(conn)
+    opp = _default_opponent(league)
+    try:
+        start = None if target == nba_today() else target
+        odds, odds_source = _week_odds(league, opp, int(C("lineup.swing_sims")), start)
+    except Exception:  # noqa: BLE001 - no odds: every category weighs the same (ROS-style lineup)
+        odds, odds_source = {}, "unavailable"
+    weights = choosers.week_weights(odds, params, punts) if odds else {}
+    floor = float(params["policy.weight_floor"])
     starting = set(league.starting_slots())
+    active_view = str(params["policy.view.lineup"]) if c.hashtag else None
+    active_g = c.view_g(active_view, conn)
+    cats = list(league.categories)
+
+    def weighted(g: pd.DataFrame) -> dict[str, float]:
+        if weights:
+            return swing_values(g, weights, ros)
+        cols = [f"g_{k.key}" for k in cats if k.key not in punts and f"g_{k.key}" in g.columns]
+        return g[cols].sum(axis=1).to_dict()
+
+    options: list[dict[str, Any]] = []
+    results: dict[str, Any] = {}
+
+    def add(oid: str, label: str, values: dict[str, float], g: pd.DataFrame, **extra: Any) -> None:
+        res = optimize_day(players, league.starting_slots(), playing, values, locked)
+        starters = sorted(pid for pid, slot in res.assignments.items() if slot in starting and pid in playing)
+        options.append(
+            {
+                "id": oid,
+                "label": label,
+                **extra,
+                "spec": {"date": target.isoformat(), "starters": starters},
+                "cat_scores": _ht.lineup_cat_scores(g, starters, cats),
+                "stand_pat": False,
+                "adds": 0,
+            }
+        )
+        results[oid] = res
+
+    if c.hashtag:
+        from fbm.hashtag import VIEWS
+
+        for v in VIEWS:
+            g = c.view_g(v, conn)
+            add(f"view:{v}", f"week-weighted lineup, HT {v} projections", weighted(g), g, view=v)
+    else:
+        add("weighted", "week-weighted lineup (contested categories count more)", weighted(active_g), active_g)
+    add("ros", "rest-of-season value lineup", ros, active_g)
+    max_impact = float(params["policy.pct_risk.max_impact"])
+    risky = {
+        pid
+        for pid in playing
+        if pid in active_g.index
+        and any(
+            weights.get(k, 0.0) >= 0.5 and float(active_g.at[pid, f"g_{k}"]) < -max_impact
+            for k in ("fg_pct", "ft_pct")
+            if f"g_{k}" in active_g.columns
+        )
+    }
+    base = weighted(active_g)
+    add(
+        "pct_risk",
+        "week-weighted lineup, sitting poor shooters while FG%/FT% is contested",
+        {pid: (v - 100.0 if pid in risky else v) for pid, v in base.items()},
+        active_g,
+        requires={"policy.pct_risk.enabled": True},
+        **({"view": active_view} if active_view else {}),
+    )
+    sit = _decision_situation(league, opp, odds, active_view, target, odds_source=odds_source)
+    rec_id, decision_id = _ht.decide(
+        conn,
+        kind="lineup",
+        trigger=trigger,
+        et_date=target,
+        situation=sit,
+        options=options,
+        week=league.week,
+        log=log,
+    )
+    res, plain = results[rec_id], results["ros"]
     tiebreak = [
         {"player_id": pid, "ros_lineup": plain.assignments[pid], "swing_lineup": slot}
         for pid, slot in res.assignments.items()
@@ -610,35 +722,128 @@ def _lineup_plan(league: LeagueState, target: date, apply_il: bool) -> dict[str,
         "locked": locked,
         "players": players,
         "swing_weights": weights,
-        "swing_categories": swing,
+        "swing_categories": swing_categories(weights, floor),
         "tiebreak_changes": tiebreak,
+        "recommended_option": rec_id,
+        "decision_id": decision_id,
+        "odds_source": odds_source,
     }
 
 
-def _swing_weights(
-    league: LeagueState, target: date, punts: tuple[str, ...], c: AnalyticsContext, ros: dict[str, float]
-) -> tuple[dict[str, float], list[str], dict[str, float]]:
-    """This week's category weights for the lineup tie-break; ROS values when the matchup can't be simulated."""
-    from fbm.analytics.lineup_swing import category_weights, swing_categories, swing_values
+def _week_odds(
+    league: LeagueState, opp: FantasyTeam, n: int, start_day: date | None = None
+) -> tuple[dict[str, float], str]:
+    """This week's per-category odds {cat: P(win)} and their source: HT mode = the official HT totals + sim spread
+    (current week only); otherwise FBM's simulator."""
+    if ctx().hashtag and start_day is None:
+        return _ht_week_odds(league, opp, n)["p_win"], "ht_spread"
+    return _ht.odds_map(_matchup(league, league.my_team, opp, start_day, n)[0]), "fbm_sim"
 
-    floor = float(C("lineup.swing_floor"))
+
+def _ht_week_odds(league: LeagueState, opp: FantasyTeam, n: int) -> dict[str, Any]:
+    """Official weekly odds (contract B): HT H2H Planner me_after/opp_after as the means, sd of (me - opp) per
+    category from FBM's simulator on HT projections (view policy.view.weekly_odds) for the remaining days (banked
+    stats a fixed offset), scaled by policy.odds_spread_scale."""
+    from fbm.analytics import ht_odds
+    from fbm.hashtag import store as ht_store
+
+    conn = _conn()
+    params = _policy.all_values(conn)
+    view = str(params["policy.view.weekly_odds"])
+    row = ht_store.matchup_totals(conn, week=league.week, opponent_key=opp.team_key, view=view)
+    if not row or not row["categories"]:
+        raise GMError(
+            f"No Hashtag H2H Planner totals for week {league.week} vs {opp.name} (view {view}): run "
+            "`fbm hashtag import` (no fallback in HT mode)."
+        )
+    totals: dict[str, Any] = {}
+    sim_odds, mw, ow, day0, we, models, my_plans, opp_plans = _matchup(
+        league, league.my_team, opp, None, n, view=view, totals=totals
+    )
+    keys = {k.key for k in league.categories}
+    means = {
+        k: (float(v["me_after"]), float(v["opp_after"]))
+        for k, v in row["categories"].items()
+        if k in keys and v.get("me_after") is not None and v.get("opp_after") is not None
+    }
+    sd = ht_odds.spread(totals["me"], totals["opp"], [k for k in league.categories if k.key in means])
+    scale = float(params["policy.odds_spread_scale"])
+    p_win = ht_odds.odds_from_totals(means, sd, scale, league.categories)
+    return {
+        "p_win": p_win,
+        "summary": ht_odds.summary(p_win),
+        "means": means,
+        "sd": sd,
+        "scale": scale,
+        "view": view,
+        "ht": row,
+        "sim_odds": sim_odds,
+        "mw": mw,
+        "ow": ow,
+        "day0": day0,
+        "we": we,
+        "models": models,
+        "my_plans": my_plans,
+        "opp_plans": opp_plans,
+    }
+
+
+def _decision_situation(
+    league: LeagueState,
+    opp: FantasyTeam,
+    odds: dict[str, float],
+    view_used: str | None,
+    day: date | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Situation features logged with every decision (contract C)."""
+    start, _ws, we = _week_window()
+    days = date_range(start, we)
+    playing = teams_playing(_conn(), start, we)
+
+    def games(team: FantasyTeam) -> int:
+        return sum(
+            1 for d in days for p in team.players if p.selected not in IL_SLOTS and p.nba_team in playing.get(d, set())
+        )
+
+    limit = league.max_weekly_adds
     try:
-        start = None if target == nba_today() else target
-        odds = _matchup(league, league.my_team, _default_opponent(league), start, int(C("lineup.swing_sims")))[0]
-    except Exception:  # noqa: BLE001 — tie-break only; fall back to ROS value
-        odds = None
-    weights = category_weights(odds, punts, float(C("lineup.swing_band")), floor)
-    return weights, swing_categories(weights, floor), swing_values(c.values, weights, ros)
+        used = adds_used_this_week()
+    except Exception:  # noqa: BLE001 - situation is context only
+        used = 0
+    banked = league.banked or {}
+    return _ht.situation(
+        odds=odds,
+        punts=_strategy_punts(None),
+        day=day or start,
+        adds_left=None if limit is None else max(0, limit - used),
+        week=league.week,
+        days_left=len(days),
+        games_left={"me": games(league.my_team), "opp": games(opp)},
+        banked=_ht.banked_by_cat(banked.get(league.my_team_key, {}), banked.get(opp.team_key, {}), league.categories),
+        opponent_key=opp.team_key,
+        view_used=view_used,
+        ht_as_of=ctx().ht_as_of,
+        team_key=league.my_team_key,
+        starting_slots=list(league.starting_slots()),
+        **extra,
+    )
 
 
-def optimize_lineup(day: str | None = None) -> dict[str, Any]:
+@_ht.gated
+def optimize_lineup(day: str | None = None, trigger: str | None = None) -> dict[str, Any]:
+    """Recommended lineup for an ET day. `trigger` (daily-gm | lineup-guard | owner-ask) is logged with the
+    decision."""
     league = active_league()
     target = parse_date(day) if day else nba_today()
-    plan = _lineup_plan(league, target, apply_il=True)
+    plan = _lineup_plan(league, target, apply_il=True, trigger=trigger, log=True)
     res, team = plan["res"], league.my_team
     names = {p.player_id: p.name for p in team.players}
     original = {p.player_id: p.selected for p in team.players}
     return {
+        "recommended_option": plan.get("recommended_option"),
+        "decision_id": plan.get("decision_id"),
+        "odds_source": plan.get("odds_source"),
         "date_et": target.isoformat(),
         "starters_with_games": res.starters_with_games,
         "assignments": {names[pid]: slot for pid, slot in res.assignments.items()},
@@ -658,15 +863,25 @@ def optimize_lineup(day: str | None = None) -> dict[str, Any]:
     }
 
 
-def _matchup(league: LeagueState, me: FantasyTeam, opp: FantasyTeam, start_day: date | None, n: int):
-    from fbm.analytics.simulation import TeamWeek
+def _matchup(
+    league: LeagueState,
+    me: FantasyTeam,
+    opp: FantasyTeam,
+    start_day: date | None,
+    n: int,
+    view: str | None = None,
+    totals: dict | None = None,
+):
+    """Simulate the rest of the week (HT mode: per-game means from HT view `view`, default the lineup view).
+    Pass a dict as `totals` to receive the simulated week totals arrays ("me", "opp")."""
+    from fbm.analytics.simulation import TeamWeek, compare, simulate_totals
 
     c = ctx()
     day0, ws, we = _week_window(start_day)
     days = date_range(day0, we)
     playing = teams_playing(_conn(), ws, we)
     value = _value(c, _strategy_punts(None)).to_dict()
-    models = c.models([*me.player_ids(), *opp.player_ids()], _conn())
+    models = c.models([*me.player_ids(), *opp.player_ids()], _conn(), view=view)
     back = c.return_dates(_conn())
     _, my_plans = plan_team_week(me, days, playing, league.starting_slots(), value, back)
     _, opp_plans = plan_team_week(opp, days, playing, league.starting_slots(), value, back)
@@ -679,7 +894,15 @@ def _matchup(league: LeagueState, me: FantasyTeam, opp: FantasyTeam, start_day: 
     ow = TeamWeek(
         opp.team_key, [pid for pid, _ in opp_games], banked.get(opp.team_key, {}), game_dates=[d for _, d in opp_games]
     )
-    odds = simulate_matchup(mw, ow, models, league.categories, n_sims=n, seed=42)
+    if totals is None:
+        odds = simulate_matchup(mw, ow, models, league.categories, n_sims=n, seed=42)
+    else:
+        import numpy as np
+
+        rng = np.random.default_rng(42)
+        totals["me"] = simulate_totals(mw, models, n, rng)
+        totals["opp"] = simulate_totals(ow, models, n, rng)
+        odds = compare(totals["me"], totals["opp"], league.categories)
     return odds, mw, ow, day0, we, models, my_plans, opp_plans
 
 
@@ -703,6 +926,193 @@ def _team(league: LeagueState, query: str | None) -> FantasyTeam:
     return matches[0]
 
 
+def _category_multipliers(odds: dict[str, float] | None = None) -> dict[str, dict[str, float]] | None:
+    """HT category multipliers {season, week, combined} (fbm.analytics.category_weights); None if unavailable."""
+    try:
+        from fbm.analytics import category_weights as cw
+    except ImportError:
+        return None
+    conn = _conn()
+    params = _policy.all_values(conn)
+    punts = _strategy_punts(None)
+    season = cw.season_multipliers(memory.current_strategy(), params)
+    week = cw.week_multipliers(odds, params, punts) if odds else {k: 1.0 for k in season}
+    return {"season": season, "week": week, "combined": cw.combine(season, week)}
+
+
+def _log_weekly_plan(
+    league: LeagueState, opp: FantasyTeam, odds: dict[str, float], view: str | None, trigger: str | None
+) -> dict[str, Any]:
+    """Weekly plan decisions (chase_concede + category_weights), logged at most once per ET day each."""
+    from fbm.gm import choosers
+
+    conn, today = _conn(), nba_today()
+    params = _policy.all_values(conn)
+    punts = _strategy_punts(None)
+    status = choosers.classify(odds, params, punts)
+    weights = choosers.week_weights(odds, params, punts)
+    sit = _decision_situation(league, opp, odds, view, today)
+    scores = {k: round(float(p), 4) for k, p in odds.items()}
+    out: dict[str, Any] = {"status": status, "weights": {k: round(w, 3) for k, w in weights.items()}}
+    if not _ht.logged_today(conn, "chase_concede", today):
+        options = [
+            {
+                "id": "policy",
+                "label": "chase/hold/lock/concede from the policy thresholds",
+                "spec": {"status": status, "weights": weights},
+                "cat_scores": scores,
+            },
+            {
+                "id": "neutral",
+                "label": "no chase/concede: every non-punted category weighs the same",
+                "spec": {
+                    "status": {k: "punt" if k in punts else "hold" for k in odds},
+                    "weights": {k: 0.0 if k in punts else 1.0 for k in odds},
+                },
+                "cat_scores": scores,
+            },
+        ]
+        out["chase_concede"] = _ht.decide(
+            conn,
+            kind="chase_concede",
+            trigger=trigger or "daily-gm",
+            et_date=today,
+            situation=sit,
+            options=options,
+            week=league.week,
+        )
+    mult = _category_multipliers(odds)
+    if mult is not None:
+        out["multipliers"] = mult
+        if not _ht.logged_today(conn, "category_weights", today):
+            options = [
+                {
+                    "id": "season_x_week",
+                    "label": "season x week multipliers",
+                    "spec": {"multipliers": mult["combined"]},
+                    "cat_scores": scores,
+                },
+                {
+                    "id": "season",
+                    "label": "season multipliers only",
+                    "spec": {"multipliers": mult["season"]},
+                    "cat_scores": scores,
+                },
+                {
+                    "id": "neutral",
+                    "label": "all multipliers 1",
+                    "spec": {"multipliers": {k: 1.0 for k in odds}},
+                    "cat_scores": scores,
+                },
+            ]
+            out["category_weights"] = _ht.decide(
+                conn,
+                kind="category_weights",
+                trigger=trigger or "daily-gm",
+                et_date=today,
+                situation=sit,
+                options=options,
+                week=league.week,
+            )
+    return out
+
+
+@_ht.gated
+def weekly_plan(opponent: str | None = None, trigger: str | None = "daily-gm", n: int = 4000) -> dict[str, Any]:
+    """This week's chase/concede status and category weights from the official odds; logs both decisions (once a
+    day)."""
+    league = active_league()
+    opp = _team(league, opponent)
+    odds, source = _week_odds(league, opp, n)
+    view = str(_policy.get(_conn(), "policy.view.weekly_odds")) if ctx().hashtag else None
+    plan = _log_weekly_plan(league, opp, odds, view, trigger)
+    return {
+        "opponent": opp.name,
+        "odds_source": source,
+        "p_win": {_CAT_LABEL.get(k, k): _r(p) for k, p in odds.items()},
+        **plan,
+    }
+
+
+def _simulate_matchup_ht(
+    league: LeagueState, opp: FantasyTeam, n: int, record: bool, opponent_streams: int | None
+) -> dict[str, Any]:
+    """HT mode outlook: official odds = HT totals + FBM sim spread (contract B); HT's own share for reference."""
+    w = _ht_week_odds(league, opp, n)
+    p_win, summ, means, mw, ow = w["p_win"], w["summary"], w["means"], w["mw"], w["ow"]
+    prediction_id = None
+    plan_me = [[pid, p.day.isoformat()] for p in w["my_plans"] for pid in p.started]
+    plan_opp = [[pid, p.day.isoformat()] for p in w["opp_plans"] for pid in p.started]
+    if record:
+        from fbm.analytics import ht_odds
+
+        payload = ht_odds.payload(
+            p_win, means, w["sd"], w["scale"], w["view"], league.fetched_at or None, plan_me, plan_opp
+        )
+        prediction_id = _ht.record_ht_prediction(
+            _conn(), payload, (w["day0"], w["we"]), league.my_team_key, opp.team_key
+        )
+    plan = None
+    if record:
+        try:
+            plan = _log_weekly_plan(league, opp, p_win, w["view"], "daily-gm")
+        except Exception as err:  # noqa: BLE001 - the outlook must come back even if the plan log fails
+            plan = {"error": f"{type(err).__name__}: {err}"}
+    adds, adds_source = _opponent_adds(league, opp, opponent_streams, True)
+    banked, skip = _live_week(league, _week_window()[1])
+    day0, we = w["day0"], w["we"]
+    streaming = (
+        _opponent_streaming(league, opp, w["my_plans"], date_range(day0, we), adds, banked, skip) if adds > 0 else None
+    )
+    ht_cats = w["ht"]["categories"]
+    pct = {k.key for k in league.categories if k.kind == "pct"}
+    lo, hi = 0.25, 0.75
+    return {
+        "me": league.my_team.name,
+        "opponent": opp.name,
+        "opponent_key": opp.team_key,
+        "window_et": f"{day0}..{we}",
+        "odds_source": "ht_spread: Hashtag projected week totals (means) + FBM simulator spread",
+        "ht_view": w["view"],
+        "ht_pulled_at": w["ht"]["pulled_at"],
+        "spread_scale": w["scale"],
+        "banked_this_week": (
+            {"as_of_utc": league.fetched_at, "me": mw.banked, "opp": ow.banked} if mw.banked or ow.banked else None
+        ),
+        "games_started": {"me": len(mw.player_games), "opp": len(ow.player_games)},
+        "categories": [
+            {
+                "cat": _CAT_LABEL.get(k, k),
+                "me_total_ht": _r(means[k][0], 3 if k in pct else 1),
+                "opp_total_ht": _r(means[k][1], 3 if k in pct else 1),
+                "sd_diff_sim": _r(w["sd"].get(k, 0.0), 4 if k in pct else 2),
+                "p_win": _r(p),
+                "p_tie": 0.0,
+                "p_loss": _r(1 - p),
+                "ht_share_reference": None
+                if ht_cats.get(k, {}).get("ht_share") is None
+                else _r(ht_cats[k]["ht_share"]),
+            }
+            for k, p in p_win.items()
+        ],
+        "expected_cats_won": _r(summ["expected"]),
+        "p_win_majority": _r(summ["p_majority"]),
+        "swing_categories": [_CAT_LABEL.get(k, k) for k, p in p_win.items() if lo <= p <= hi],
+        "comparator_sim": {
+            "expected_cats_won": _r(w["sim_odds"].expected_score),
+            "note": "FBM simulator on HT projections: option comparator only, not the outlook",
+        },
+        "if_opponent_streams": streaming,
+        "opponent_adds_assumed": adds,
+        "opponent_adds_source": adds_source,
+        "weekly_plan": plan,
+        "prediction_id": prediction_id,
+        "method": "p_win = Phi((HT me - HT opp) / (spread_scale x sd of the simulated difference)); categories "
+        "treated as independent for expected/p_majority. ht_share_reference is HT's displayed share formula, "
+        "not a probability.",
+    }
+
+
 def simulate_matchup_tool(
     opponent: str | None = None,
     start: str | None = None,
@@ -712,6 +1122,18 @@ def simulate_matchup_tool(
 ) -> dict[str, Any]:
     league = active_league()
     opp = _team(league, opponent)
+    if record and league.opponent_key and opp.team_key != league.opponent_key:
+        raise GMError("record=True only for this week's scheduled opponent (forecasts are graded on the real matchup).")
+    if ctx().hashtag:
+        blocked = _ht.gate()
+        if blocked is not None:
+            return blocked
+        if start:
+            raise GMError(
+                "In Hashtag mode the matchup outlook comes from HT's current-week totals only; `start` is not "
+                "supported (no FBM-only projections in HT mode)."
+            )
+        return _simulate_matchup_ht(league, opp, n, record, opponent_streams)
     odds, mw, ow, day0, we, models, my_plans, opp_plans = _matchup(
         league, league.my_team, opp, parse_date(start) if start else None, n
     )
@@ -892,6 +1314,7 @@ def _scoring_metric() -> str:
     return "p_win_week" if (summary.get("settings") or {}).get("scoring_type") == "headone" else "expected_cats"
 
 
+@_ht.gated
 def punt_scenarios(scenarios: str | None = None, fa_moves: int | None = None, top: int = 8, n: int = 3000):
     """Compare punt builds for my roster: each lens makes its best free-agent swaps, then all categories are scored
     against every team. `scenarios`: optional 'FT%;3PM,FT%' list (no punt and the approved strategy always run)."""
@@ -1044,6 +1467,7 @@ def punt_scenarios(scenarios: str | None = None, fa_moves: int | None = None, to
     }
 
 
+@_ht.gated
 def evaluate_il_activation(
     activate: str,
     drop: str | None = None,
@@ -1051,13 +1475,39 @@ def evaluate_il_activation(
     effective: str | None = None,
     play_prob: float | None = None,
     n: int = 6000,
+    trigger: str | None = None,
 ) -> dict[str, Any]:
     """Move one of my IL players to active (optionally dropping another) from `effective` (ET date, default today)."""
     from fbm.gm import il
 
-    return il.evaluate_il_activation(activate, drop, opponent, effective, play_prob, n)
+    out = il.evaluate_il_activation(activate, drop, opponent, effective, play_prob, n)
+    pid = out.get("activate_id") or out.get("player_id")
+    days_out = None
+    try:
+        back = ctx().return_dates(_conn()).get(str(pid)) if pid else None
+        days_out = None if back is None else max(0, (back - nba_today()).days)
+    except Exception:  # noqa: BLE001 - situation context only
+        days_out = None
+    when = str(out.get("effective_et") or nba_today().isoformat())
+    drop_id = out.get("drop_id")
+    rec, did = _log_choice(
+        "il",
+        trigger,
+        {
+            "id": "activate",
+            "label": f"activate {out.get('activate', activate)}",
+            "action": "activate",
+            "spec": {"action": "activate", "player": pid, "replacement": drop_id, "date": when},
+            "stand_spec": {"action": "hold", "player": pid, "replacement": None, "date": when},
+            "cat_scores": _keyed(out.get("cat_p_win_change")),
+        },
+        "policy.view.ros",
+        expected_days_out=days_out,
+    )
+    return {**out, "recommended_option": rec, "decision_id": did}
 
 
+@_ht.gated
 def evaluate_add_drop(
     add: str | None = None,
     drop: str | None = None,
@@ -1065,9 +1515,10 @@ def evaluate_add_drop(
     n: int = 6000,
     activate: str | None = None,
     effective: str | None = None,
+    trigger: str | None = None,
 ) -> dict[str, Any]:
     if activate:  # IL activation instead of a free-agent add
-        return evaluate_il_activation(activate, drop, opponent, effective, None, n)
+        return evaluate_il_activation(activate, drop, opponent, effective, None, n, trigger)
     if not add:
         raise GMError("Give `add` (a free agent) or `activate` (one of my IL players).")
     league, c = active_league(), ctx()
@@ -1098,7 +1549,7 @@ def evaluate_add_drop(
     swapped.players.append(steps.roster_player_from_values(add_id, c.values, _eligibility()))
     after, *_ = _matchup(league, swapped, opp, None, n)
     start, ws, we = _week_window()
-    return {
+    out = {
         "add": str(c.projections.loc[add_id, "name"]),
         "add_id": add_id,
         "drop": str(c.projections.loc[drop_id, "name"]) if drop_id else None,
@@ -1119,17 +1570,85 @@ def evaluate_add_drop(
             b.category.label: _r(a.p_win - b.p_win) for b, a in zip(before.categories, after.categories, strict=True)
         },
     }
+    rec, did = _log_choice(
+        "drop",
+        trigger,
+        {
+            "id": "add_drop",
+            "label": f"add {out['add']}" + (f", drop {out['drop']}" if drop_id else ""),
+            "spec": {"moves": [{"add": add_id, "drop": drop_id, "date": nba_today().isoformat()}]},
+            "cat_scores": _keyed(out["cat_p_win_change"]),
+            "adds": 1,
+            "ros_cost": max(0.0, -float(out["ros_value_delta"])),
+        },
+        "policy.view.ros",
+        opp,
+    )
+    return {**out, "recommended_option": rec, "decision_id": did}
 
 
 # ------------------------------------------------------------------ recommendations -> owner steps
 
 
-def lineup_steps(day: str | None = None, confirm: bool = False) -> dict[str, Any]:
+_LABEL_KEY = {v: k for k, v in _CAT_LABEL.items()}
+
+
+def _keyed(scores: dict[str, Any] | None) -> dict[str, float]:
+    return {_LABEL_KEY.get(k, k): float(v) for k, v in (scores or {}).items() if v is not None}
+
+
+def _log_choice(
+    kind: str,
+    trigger: str | None,
+    act: dict[str, Any],
+    view_param: str | None = None,
+    opp: FantasyTeam | None = None,
+    **extra: Any,
+) -> tuple[str, int | None]:
+    """Log a two-way decision (stand pat vs `act`) and return choosers' pick. Never raises."""
+    try:
+        league, conn = active_league(), _conn()
+        opp = opp or _default_opponent(league)
+        view = str(_policy.get(conn, view_param)) if (view_param and ctx().hashtag) else None
+        stand = {
+            "id": "stand_pat",
+            "label": "no move",
+            "spec": act.pop("stand_spec", {"moves": []}),
+            "cat_scores": {k.key: 0.0 for k in league.categories},
+            "stand_pat": True,
+            "adds": 0,
+            "ros_cost": 0.0,
+            **({"action": "hold"} if kind == "il" else {}),
+        }
+        option = {"stand_pat": False, "adds": 0, "ros_cost": 0.0, **({"view": view} if view else {}), **act}
+        try:
+            odds, _src = _week_odds(league, opp, 1500)
+        except Exception:  # noqa: BLE001 - situation context only
+            odds = {}
+        return _ht.decide(
+            conn,
+            kind=kind,
+            trigger=trigger,
+            et_date=nba_today(),
+            situation=_decision_situation(league, opp, odds, view, **extra),
+            options=[option, stand],
+            week=league.week,
+        )
+    except Exception:  # noqa: BLE001 - logging never blocks the evaluation
+        return str(act.get("id", "")), None
+
+
+def lineup_steps(day: str | None = None, confirm: bool = False, trigger: str | None = None) -> dict[str, Any]:
     """Today's recommended lineup + IL moves as exact steps for the owner. FBM changes nothing.
-    confirm=True records that the owner set it (demo league: updates the demo roster to match)."""
+    confirm=True records that the owner set it (demo league: updates the demo roster to match).
+    HT mode: no recommendation while Hashtag is unhealthy (the owner's confirmation is still recorded)."""
+    if not confirm:
+        blocked = _ht.gate()
+        if blocked is not None:
+            return blocked
     league = active_league()
     target = parse_date(day) if day else nba_today()
-    plan = _lineup_plan(league, target, apply_il=True)
+    plan = _lineup_plan(league, target, apply_il=True, trigger=trigger, log=not confirm)
     assignments = plan["res"].assignments
     out = steps.lineup_steps(league, assignments, target)
     blocked = [f"{m.name}: {m.reason}" for m in plan["moves"] if m.blocked]
@@ -1154,8 +1673,48 @@ def lineup_steps(day: str | None = None, confirm: bool = False) -> dict[str, Any
         "il_moves_recommended": [f"{m.name}: {m.from_slot} -> {m.to_slot}" for m in plan["applied"]],
         "il_moves_needing_a_roster_move": blocked,
         "locked_game_started": sorted(names[pid] for pid in plan["locked"]),
+        "recommended_option": plan.get("recommended_option"),
+        "decision_id": plan.get("decision_id"),
         "note": "FBM never changes your league: set this lineup in Yahoo yourself.",
     }
+
+
+def _ht_import(league: LeagueState) -> dict[str, Any]:
+    """HT mode: run the daily Hashtag import with FBM's category multipliers, then Next Man Up for key absences."""
+    try:
+        from fbm.hashtag import importer
+    except ImportError as err:
+        return {"error": f"Hashtag importer unavailable: {err}"}
+    conn = _conn()
+    weights = None
+    try:
+        odds: dict[str, float] = {}
+        try:
+            odds, _src = _week_odds(league, _default_opponent(league), 1500)
+        except Exception:  # noqa: BLE001 - before the first import there are no HT totals: season weights only
+            odds = {}
+        mult = _category_multipliers(odds or None)
+        weights = mult["combined"] if mult else None
+    except Exception:  # noqa: BLE001 - import with HT's defaults rather than not at all
+        weights = None
+    try:
+        out = importer.run_import(conn, league=league, weights=weights)
+    except Exception as err:  # noqa: BLE001 - reported; health shows the failure
+        return {"error": f"{type(err).__name__}: {err}", "weights": weights}
+    _CTX_CACHE.clear()
+    out = {**out, "weights": weights}
+    try:
+        from fbm.analytics.signals import ht_absent_key_players
+
+        absent = ht_absent_key_players(conn)
+        ids = [str(a.get("espn_id") or a.get("id")) if isinstance(a, dict) else str(a) for a in absent]
+        ids = [i for i in ids if i and i != "None"]
+        out["next_man_up"] = importer.run_next_man_up(conn, ids) if ids else 0
+    except (ImportError, AttributeError):
+        pass
+    except Exception as err:  # noqa: BLE001 - additive
+        out["next_man_up"] = {"error": f"{type(err).__name__}: {err}"}
+    return out
 
 
 def refresh_data() -> dict[str, Any]:
@@ -1177,6 +1736,7 @@ def refresh_data() -> dict[str, Any]:
         if r["espn_id"] in rostered
     ]
     _CTX_CACHE.clear()
+    ht_import = _ht_import(league) if _ht.enabled() else None
     try:
         early = post_sync()
     except Exception as err:  # signals are additive; never fail the refresh over them
@@ -1184,6 +1744,7 @@ def refresh_data() -> dict[str, Any]:
     return {
         "jobs": [str(r) for r in results],
         **({"yahoo_snapshot": yahoo_summary} if yahoo_summary else {}),
+        **({"hashtag_import": ht_import} if ht_import is not None else {}),
         "rostered_injury_changes": [{**ch, "fantasy_team": rostered[ch["espn_id"]]} for ch in changes],
         "early_signals": early,
     }
@@ -1208,6 +1769,15 @@ def context_pack() -> dict[str, Any]:
     except Exception as err:  # context must load even if the signal feed can't
         pack["signals_new"] = {"error": f"{type(err).__name__}: {err}"}
     settings = load_settings()
+    try:
+        from fbm.hashtag import health as _ht_health
+
+        ht_status = _ht_health.status(conn, enabled=settings.hashtag_enabled)
+        pack["hashtag"] = ht_status.as_dict()
+        pack["suggestions_paused"] = bool(ht_status.enabled and not ht_status.healthy)
+    except Exception as err:  # noqa: BLE001 - context must load; a broken check pauses suggestions in HT mode
+        pack["hashtag"] = {"error": f"{type(err).__name__}: {err}"}
+        pack["suggestions_paused"] = bool(settings.hashtag_enabled)
     pack["decision_policy"] = {
         "league_changes": "none: FBM gives insights, lineup recommendations and proposals; the owner makes every move",
         "proposal_flow": "create_proposal -> record_review -> record_owner_decision -> proposal_steps -> owner acts "
@@ -1250,6 +1820,10 @@ def create_proposal(
     expires_in_hours: float | None = None,
 ) -> dict[str, Any]:
     settings = load_settings()
+    if kind in ("add_drop", "waiver_claim", "trade", "il_activation"):
+        blocked = _ht.gate()
+        if blocked is not None:
+            return {**blocked, "message": "No proposal created: " + blocked["message"]}
     if kind == "il_activation":
         payload = _il_activation_payload(payload)
     if kind in ("add_drop", "waiver_claim", "trade"):
@@ -1258,6 +1832,13 @@ def create_proposal(
         for pid in incoming:
             if pid:
                 _require_nba_team(c, str(pid))
+    if kind == "policy":
+        from fbm.gm import policy as _policy
+
+        clean, problems = _policy.check_changes(_conn(), (payload or {}).get("changes"))
+        if problems:
+            raise GMError("Invalid policy proposal: " + "; ".join(problems))
+        payload = {**payload, "changes": clean, "evidence": payload.get("evidence") or evidence or {}}
     p = props.create(
         _conn(), kind, title, summary, payload, rationale, evidence, expires_in_hours or settings.default_expiry_hours
     )
@@ -1285,7 +1866,8 @@ def proposal_steps(ref: str) -> dict[str, Any]:
     conn = _conn()
     p = props.ready_for_steps(conn, ref)
     teamless = _teamless(ctx()) if p.kind in ("add_drop", "waiver_claim", "trade") else frozenset()
-    result = steps.owner_steps(p, active_league(), teamless)
+    league = None if p.kind == "policy" else active_league()
+    result = steps.owner_steps(p, league, teamless, conn=conn)
     p = props.record_outcome(conn, p.id, result.status, result.detail)
     memory.journal_append("proposal", f"{p.ref} {result.status}", json.dumps(result.detail, indent=1))
     return p.as_dict()
@@ -1376,6 +1958,7 @@ def _names(c: AnalyticsContext, ids) -> list[str]:
 # ------------------------------------------------------------------ streaming planner
 
 
+@_ht.gated
 def streaming_plan(
     opponent: str | None = None,
     adds: int | None = None,
@@ -1385,6 +1968,7 @@ def streaming_plan(
     n: int = 2000,
     min_gain: float = 0.05,
     include_waivers: bool = True,
+    trigger: str | None = None,
 ) -> dict[str, Any]:
     from fbm.analytics.bank import DrawBank
     from fbm.analytics.streaming import StreamContext, plan_streams
@@ -1410,6 +1994,14 @@ def streaming_plan(
     by_week = sorted(available, key=lambda pid: -(value.get(pid, -9) + 3.0) * games(pid))[:candidates]
     by_value = sorted(available, key=lambda pid: -value.get(pid, -9))[:10]
     fa = list(dict.fromkeys(by_week + by_value))
+    if c.hashtag:  # candidates = HT's waiver wire (run with FBM's multipliers), in HT's order
+        from fbm.hashtag import store as ht_store
+
+        wl = ht_store.waiver(conn)
+        if not wl.empty:
+            ok = set(available)
+            ht_ids = [str(x) for x in wl["espn_id"].dropna() if str(x) in ok]
+            fa = list(dict.fromkeys(ht_ids[:candidates] + by_value[:5]))
 
     pool = {p.player_id: p for p in me.players}
     pool.update({pid: steps.roster_player_from_values(pid, c.values, elig) for pid in fa})
@@ -1446,6 +2038,60 @@ def streaming_plan(
     )
     plan = plan_streams(sctx, fa, droppable, adds_available, min_gain=min_gain)
     name = {pid: p.name for pid, p in pool.items()}
+    stream_view = str(_policy.get(conn, "policy.view.stream")) if c.hashtag else None
+    view_kw = {"view": stream_view} if stream_view else {}
+    options: list[dict[str, Any]] = [
+        {
+            "id": "stand_pat",
+            "label": "no moves",
+            "spec": {"moves": []},
+            "cat_scores": {k.key: 0.0 for k in league.categories},
+            "stand_pat": True,
+            "adds": 0,
+            "ros_cost": 0.0,
+        }
+    ]
+    total_gain = sum(max(0.0, float(m.gain)) for m in plan.moves)
+
+    def share(i: int) -> float:
+        if i >= len(plan.moves) or total_gain <= 0:
+            return 1.0
+        return sum(max(0.0, float(m.gain)) for m in plan.moves[:i]) / total_gain
+
+    for i in range(len(plan.moves), 0, -1):  # the full plan, then its shorter prefixes (top alternatives)
+        moves = plan.moves[:i]
+        options.append(
+            {
+                "id": f"plan:{i}" if i < len(plan.moves) else "plan",
+                "label": f"first {i} move(s) of the greedy plan" if i < len(plan.moves) else "greedy stream plan",
+                **view_kw,
+                "spec": {
+                    "moves": [{"add": m.move.add, "drop": m.move.drop, "date": m.move.day.isoformat()} for m in moves]
+                },
+                # per-category change in P(win) vs standing pat; prefixes scale the full plan's change by their
+                # share of its expected-category gain (the planner reports per-move gains only)
+                "cat_scores": {k: round(v * share(i), 4) for k, v in _ht.odds_delta(plan.final, plan.baseline).items()},
+                "stand_pat": False,
+                "adds": i,
+                "ros_cost": round(float(sum(max(0.0, float(m.ros_cost)) for m in moves)), 4),
+            }
+        )
+    options = [o for o in options if o["stand_pat"] or o["adds"]]
+    try:
+        odds_now, _src = _week_odds(league, opp, 1500)
+    except Exception:  # noqa: BLE001 - situation context only
+        odds_now = _ht.odds_map(plan.baseline)
+    rec_id, decision_id = _ht.decide(
+        conn,
+        kind="stream_plan",
+        trigger=trigger,
+        et_date=nba_today(),
+        situation=_decision_situation(league, opp, odds_now, stream_view),
+        options=options,
+        week=league.week,
+    )
+    n_moves = 0 if rec_id == "stand_pat" else (len(plan.moves) if rec_id == "plan" else int(rec_id.split(":")[1]))
+    recommended_moves = plan.moves[:n_moves]
 
     def odds_summary(o) -> dict[str, Any]:
         return {
@@ -1495,8 +2141,12 @@ def streaming_plan(
                 "ros_value_cost": _r(m.ros_cost),
                 **wire_fields(m.move.add, m.move.drop),
             }
-            for m in plan.moves
+            for m in recommended_moves
         ],
+        "recommended_option": rec_id,
+        "decision_id": decision_id,
+        "candidate_source": "hashtag waiver wire" if c.hashtag else "FBM free-agent ranking",
+        "planner_moves_considered": len(plan.moves),
         "notes": [
             "Greedy plan: each move is the best single add/drop given the earlier moves (common random numbers).",
             "Effective day = first ET day the added player is on the roster. League settings expose no add-lock "
@@ -1564,7 +2214,8 @@ def _trade_dict(ev, c: AnalyticsContext) -> dict[str, Any]:
     }
 
 
-def evaluate_trade_tool(partner: str, give: str, get: str, n: int = 1500) -> dict[str, Any]:
+@_ht.gated
+def evaluate_trade_tool(partner: str, give: str, get: str, n: int = 1500, trigger: str | None = None) -> dict[str, Any]:
     from fbm.analytics.trades import evaluate_trade
 
     league, c = active_league(), ctx()
@@ -1577,15 +2228,92 @@ def evaluate_trade_tool(partner: str, give: str, get: str, n: int = 1500) -> dic
     ev = evaluate_trade(sim, league.my_team_key, team.team_key, give_ids, get_ids, fa, _strategy_punts(None))
     out = _trade_dict(ev, c)
     out["method"] = "season-level: typical week vs every team, before/after; rosters rebalanced"
+    rec, did = _log_choice(
+        "trade",
+        trigger,
+        {
+            "id": "trade",
+            "label": f"trade with {team.name}",
+            "spec": {"partner": team.team_key, "give": give_ids, "get": get_ids},
+            "stand_spec": {"partner": team.team_key, "give": [], "get": []},
+            "cat_scores": _keyed(out["me"]["cat_win_rate_delta"]),
+        },
+        "policy.view.ros",
+    )
+    return {**out, "recommended_option": rec, "decision_id": did}
+
+
+def _idea_ids(side: Any) -> list[str]:
+    out = []
+    for x in side or []:
+        pid = x.get("espn_id") if isinstance(x, dict) else x
+        if pid:
+            out.append(str(pid))
     return out
 
 
+def _find_trades_ht(league: LeagueState, partner: str | None, limit: int, n: int) -> dict[str, Any]:
+    """HT mode: HT Trade Finder candidates (FBM multipliers), each evaluated for my build + partner tendencies."""
+    from fbm.analytics.opponents import complementary_fit
+    from fbm.analytics.trades import evaluate_trade
+
+    conn, c = _conn(), ctx()
+    part = _team(league, partner) if partner else None
+    mult = _category_multipliers() or {}
+    try:
+        from fbm.hashtag import importer
+
+        ideas = importer.run_trade_finder(
+            conn, weights=mult.get("combined") or mult.get("season") or {}, partner=part.team_key if part else None
+        )
+        source = "hashtag trade finder (live run)"
+    except Exception as err:  # noqa: BLE001 - fall back to today's stored ideas (still HT's)
+        from fbm.hashtag import store as ht_store
+
+        ideas = ht_store.trade_ideas(conn, since=nba_today().isoformat())
+        source = f"hashtag trade finder (stored ideas; live run unavailable: {type(err).__name__})"
+    sim, fa = _league_sim(n)
+    mine = dict(sim.profile(league.my_team_key)[0])
+    profiles = _manager_profiles(league, {t.team_key: dict(sim.profile(t.team_key)[0]) for t in league.teams})
+    keys = {t.team_key for t in league.teams}
+    trades, skipped = [], 0
+    for idea in ideas:
+        pkey = idea.get("partner_key") or idea.get("partner")
+        give, get = _idea_ids(idea.get("give")), _idea_ids(idea.get("get"))
+        if pkey not in keys or not give or not get or (part and pkey != part.team_key):
+            skipped += 1
+            continue
+        try:
+            ev = evaluate_trade(sim, league.my_team_key, pkey, give, get, fa, _strategy_punts(None))
+        except Exception:  # noqa: BLE001 - stale idea (roster changed)
+            skipped += 1
+            continue
+        d = _trade_dict(ev, c)
+        d["ht_idea"] = {k: idea.get(k) for k in ("id", "pulled_at", "data") if k in idea}
+        p = profiles.get(pkey)
+        if p is not None:
+            d["partner_intel"] = _intel_row(p, complementary_fit(mine, p.cat_win_rate))
+        trades.append(d)
+    trades.sort(key=lambda d: -float(d["me"]["expected_cats_delta"]))
+    return {
+        "trades": trades[:limit],
+        "ideas_considered": len(ideas),
+        "ideas_skipped": skipped,
+        "candidate_source": source,
+        "my_category_win_rates": {k: _r(v) for k, v in mine.items()},
+        "method": "HT Trade Finder candidates, each evaluated season-level for my build (evaluate_trade)",
+    }
+
+
+@_ht.gated
 def find_trades_tool(
     partner: str | None = None, max_give: int = 2, max_get: int = 2, limit: int = 6, n: int = 1200
 ) -> dict[str, Any]:
     from fbm.analytics.trades import find_trades
 
     league, c = active_league(), ctx()
+    if c.hashtag:
+        return _find_trades_ht(league, partner, limit, n)
     partners = [_team(league, partner).team_key] if partner else None
     sim, fa = _league_sim(n)
     results = find_trades(sim, league.my_team_key, fa, _strategy_punts(None), partners, max_give, max_get, limit=limit)
@@ -1618,7 +2346,7 @@ def find_trades_tool(
 
 
 def grade_decisions_tool(lookback_days: int = 28) -> dict[str, Any]:
-    c = ctx()
+    c = _grading_ctx()
     graded = outcomes.grade_decisions(
         _conn(),
         c.pool,
@@ -1628,20 +2356,56 @@ def grade_decisions_tool(lookback_days: int = 28) -> dict[str, Any]:
         lookback_days,
         names=c.projections["name"].to_dict(),
     )
-    return {"decisions": graded, "scale": "std units = team-week SDs per category (+0.5 good, -0.5 bad)"}
+    out = {"decisions": graded, "scale": "std units = team-week SDs per category (+0.5 good, -0.5 bad)"}
+    try:
+        from fbm.gm import decision_services
+
+        out["replay"] = decision_services.replay_grade(lookback_days)
+    except Exception as err:  # proposal grading must still come back if replay fails
+        out["replay"] = {"error": f"{type(err).__name__}: {err}"}
+    return out
+
+
+def _grading_ctx() -> AnalyticsContext:
+    """Context for GRADING real outcomes (scales realized box scores; never used for suggestions). Before Hashtag's
+    first import there are no HT projections yet, so grading falls back to the ESPN context for its scale/names."""
+    try:
+        return ctx()
+    except RuntimeError:
+        if not ctx_is_hashtag():
+            raise
+        return build_context(_conn(), date.today(), config_from_settings(_league_summary()), hashtag=False)
+
+
+def ctx_is_hashtag() -> bool:
+    from fbm.gm import engine_ht
+
+    return engine_ht.enabled()
 
 
 def prediction_calibration() -> dict[str, Any]:
-    c, conn = ctx(), _conn()
-    newly = outcomes.grade_predictions(conn, c.cfg.categories, nba_today())
-    return {"newly_graded": len(newly), **outcomes.calibration(conn)}
+    from fbm.gm import decision_services, odds_reliability
+
+    conn = _conn()
+    categories = config_from_settings(_league_summary()).categories
+    sync = decision_services.sync_yahoo_results()
+    newly = outcomes.grade_predictions(conn, categories, nba_today())
+    return {
+        "yahoo_sync": sync,
+        "odds_reliability": odds_reliability.report(conn),
+        "legacy": {"newly_graded": len(newly), **outcomes.calibration(conn, exclude_sources=("ht_spread",))},
+        "note": "Graded against Yahoo FINAL matchup results (stat_winners); legacy = pre-HT simulator forecasts.",
+    }
 
 
 def weekly_retro_data_tool(week_start: str | None = None) -> dict[str, Any]:
     from datetime import timedelta
 
-    c = ctx()
+    from fbm.gm import decision_services
+
+    c = _grading_ctx()
     start = parse_date(week_start) if week_start else fantasy_week(nba_today() - timedelta(days=7))[0]
+    sync = decision_services.sync_yahoo_results()
     data = outcomes.weekly_retro_data(
         _conn(),
         c.pool,
@@ -1651,7 +2415,8 @@ def weekly_retro_data_tool(week_start: str | None = None) -> dict[str, Any]:
         _strategy_punts(None),
         names=c.projections["name"].to_dict(),
     )
-    for key, fn in (("projection_calibration", projection_calibration_tool), ("signal_grades", signal_grades_tool)):
+    data["yahoo_sync"] = sync
+    for key, fn in (("signal_grades", signal_grades_tool),):
         try:
             data[key] = fn()
         except Exception as err:  # retro data must still come back if one learning input fails
@@ -1677,21 +2442,13 @@ def _owner_kind(pid: str, owners: dict[str, FantasyTeam], my_key: str) -> tuple[
 
 
 def post_sync() -> dict[str, Any]:
-    """After every data sync: log today's engine and ESPN forecasts (calibration) and detect/persist early signals.
-    Runs from `refresh_data` (daily-gm, hourly lineup-guard) and `fbm data sync` (scheduled, no AI)."""
-    from fbm.analytics import players as player_tables
-    from fbm.analytics.projection_calibration import log_forecasts
+    """After every data sync: detect/persist early signals and update the pickup radar (projection calibration is
+    retired). Runs from `refresh_data` (daily-gm, hourly lineup-guard) and `fbm data sync` (scheduled, no AI)."""
     from fbm.analytics.signals import detect_all
     from fbm.gm import signals as signal_feed
 
     _CTX_CACHE.clear()
     c, conn, today = ctx(), _conn(), nba_today()
-    espn_now = player_tables.espn_snapshot_table(conn, c.season)
-    opening = player_tables.opening_day(conn, c.season)
-    in_season = opening is not None and today.isoformat() >= opening
-    logged = 0
-    if in_season and c.engine_projections is not None:  # before opening night the engine forecast is ESPN's
-        logged = log_forecasts(conn, c.season, today, c.engine_projections, espn_now)
     found = detect_all(conn, c.season, c.prior, c.projections, c.pool, c.cfg, c.statuses(conn), today)
     new_ids = signal_feed.record(conn, c.season, found, ownership=_ownership())
     new = [s for s in signal_feed.active(conn) if s["signal_id"] in set(new_ids)]
@@ -1703,7 +2460,6 @@ def post_sync() -> dict[str, Any]:
     except Exception as err:
         radar = {"error": f"{type(err).__name__}: {err}"}
     return {
-        "forecasts_logged": logged,
         "signals_detected": len(found),
         "signals_new": [
             {k: s[k] for k in ("kind", "direction", "player", "nba", "confidence", "note")} for s in new[:15]
@@ -1753,12 +2509,35 @@ def signals_tool(
     kinds = [k.strip() for k in kind.split(",")] if kind else None
     feed = signal_feed.active(_conn(), kinds=kinds, new_only=new_only, min_confidence=min_confidence)
     rows = _scoped(_annotate(feed, active_league(), _teamless(ctx())), scope)
+    ht_mode = load_settings().hashtag_enabled
+    extra: dict[str, Any] = {}
+    if ht_mode:
+        from fbm.analytics.signals import ht_absent_key_players
+        from fbm.hashtag import store as ht_store
+
+        missing = [
+            {k: p.get(k) for k in ("espn_id", "name", "team", "return_date")}
+            for p in ht_absent_key_players(_conn())
+            if not ht_store.next_man_up(_conn(), str(p["espn_id"]))
+        ]
+        extra["opportunity_without_ht_data"] = {
+            "players": missing,
+            "note": "key players ruled out whose HT Next Man Up page isn't imported yet: no opportunity numbers for "
+            "their teammates until it is (HT mode never uses FBM-computed fallback numbers)",
+        }
     return {
         **({"detection": detection} if detection else {}),
         "signals": rows[:top],
         "count": len(rows),
-        "kinds": "buy_low / sell_high (season line vs projection), role_change (starts/minutes), opportunity "
-        "(key teammate out), espn_revision (ESPN projection moved)",
+        **extra,
+        "kinds": (
+            "buy_low / sell_high (HT ROS value vs the market's season-to-date value; feeds trade-scan), role_change "
+            "(box-score starts/minutes), opportunity (key teammate out; HT Next Man Up numbers), ht_revision (HT "
+            "ROS/STREAM7 projection moved day over day; HT note quoted as data)"
+            if ht_mode
+            else "buy_low / sell_high (season line vs projection), role_change (starts/minutes), opportunity "
+            "(key teammate out), espn_revision (ESPN projection moved)"
+        ),
         "direction": "up = value expected to rise vs what the market sees; down = expected to fall",
         "min_confidence": min_confidence or str(C("signals.feed_min_confidence")),
     }
@@ -1771,6 +2550,7 @@ def ownership_trends_tool(window_days: int = 3, top: int = 20, scope: str = "fre
     return pickups.ownership_trends(window_days, top, scope)
 
 
+@_ht.gated
 def fa_radar_tool(top: int = 10, min_confidence: str = "medium") -> dict[str, Any]:
     """League-wide pickup radar over every free agent / waiver player (see fbm.gm.pickups)."""
     from fbm.gm import pickups
@@ -1783,13 +2563,38 @@ def buy_sell_tool(scope: str = "all", top: int = 15) -> dict[str, Any]:
     from fbm.analytics.signals import detect_all
 
     c, conn, league = ctx(), _conn(), active_league()
+    ht_mode = load_settings().hashtag_enabled
+    if ht_mode:
+        from fbm.hashtag import health as ht_health
+
+        try:
+            ht_health.require_healthy(conn, enabled=True)
+        except ht_health.HTUnhealthyError as err:
+            return err.status.gate_payload()
     found = detect_all(
-        conn, c.season, c.prior, c.projections, c.pool, c.cfg, c.statuses(conn), nba_today(), ("buy_low", "sell_high")
+        conn,
+        c.season,
+        c.prior,
+        c.projections,
+        c.pool,
+        c.cfg,
+        c.statuses(conn),
+        nba_today(),
+        ("buy_low", "sell_high"),
+        ht=ht_mode,
     )
     rows = _scoped(_annotate([s.as_dict() for s in found], league, _teamless(c)), scope)
     order = {"high": 0, "medium": 1, "low": 2}
     rows.sort(key=lambda r: (order.get(r["confidence"], 3), -r["strength"]))
-    if not rows and not int(c.projections["gp_current"].max() or 0):
+    if ht_mode:
+        note = (
+            "gap = market's season-to-date value (HT season stats when imported, else FBM's box-score season line; "
+            "see evidence.market_source) minus HT's rest-of-season value, both in FBM G points per game. "
+            "pct_owned / ownership trend columns are the Yahoo market view. Confidence is high when the gap is "
+            "luck-driven (shooting vs HT's line, temporary role) and low when minutes/usage changed. These lists "
+            "feed trade-scan next to HT Trade Finder."
+        )
+    elif not rows and not int(c.projections["gp_current"].max() or 0):
         note = "No games played yet this season: buy/sell needs a season line to compare with."
     else:
         note = (
@@ -1801,303 +2606,20 @@ def buy_sell_tool(scope: str = "all", top: int = 15) -> dict[str, Any]:
         "buy_low": [r for r in rows if r["kind"] == "buy_low"][:top],
         "sell_high": [r for r in rows if r["kind"] == "sell_high"][:top],
         "min_gap": float(C("signals.buy_sell_min_gap")),
+        "projection_source": "hashtag_ros" if ht_mode else "fbm_engine",
         "note": note,
     }
-
-
-def projection_calibration_tool() -> dict[str, Any]:
-    """Grade logged engine vs ESPN forecasts and measure the blend weight (stored once the sample is big enough)."""
-    from fbm.analytics.projection_calibration import measure_and_store
-
-    c = ctx()
-    report = measure_and_store(_conn(), c.season, nba_today())
-    _CTX_CACHE.clear()
-    report["how_to_read"] = (
-        "best_weight = weight on ESPN that minimised forecast error over the graded windows (0 = FBM engine only, "
-        "1 = ESPN only). normalized_error: lower is better (1.0 = no better than guessing the average player)."
-    )
-    return report
 
 
 def signal_grades_tool() -> dict[str, Any]:
     from fbm.gm import signals as signal_feed
 
     c, conn = ctx(), _conn()
+    if load_settings().hashtag_enabled:  # HT owns projection accuracy: grade signals as decision triggers
+        newly = signal_feed.grade_pending_ht(conn, nba_today())
+        return {"newly_graded": newly[:40], "newly_graded_count": len(newly), **signal_feed.summary_ht(conn, c.season)}
     newly = signal_feed.grade_pending(conn, c.pool, c.cfg, nba_today(), _ownership())
     return {"newly_graded": newly[:40], "newly_graded_count": len(newly), **signal_feed.summary(conn, c.season)}
-
-
-# ------------------------------------------------------------------ draft assistant
-
-
-def _draft_adp() -> tuple[dict[str, float], str]:
-    """ADP for the board: cached Yahoo ADP (league platform) when available, else ESPN."""
-    from fbm.data.espn_fantasy import adp_map
-    from fbm.yahoo.draft import yahoo_adp_map
-
-    c, conn = ctx(), _conn()
-    yahoo = yahoo_adp_map(conn)
-    if len(yahoo) >= int(C("draft.yahoo_adp_min_players")):
-        return yahoo, "yahoo"
-    adp = adp_map(conn)
-    if not adp:
-        sync.sync_fantasy_meta(conn, EspnClient(), c.season)
-        adp = adp_map(conn)
-    return adp, "espn"
-
-
-def _draft_board(punts: tuple[str, ...]):
-    from fbm.analytics.draft import build_board
-
-    c = ctx()
-    adp, _source = _draft_adp()
-    return build_board(c.values, c.cfg.categories, punts, adp, _eligibility())
-
-
-def _board_rows(board, top: int) -> list[dict[str, Any]]:
-    import math
-
-    return [
-        {
-            "rank": int(r["rank"]),
-            "tier": int(r["tier"]),
-            "player": r["name"],
-            "id": pid,
-            "nba": r["team"],
-            "positions": [e for e in r["eligible"] if e != "UTIL"],
-            "value": _r(r["value"]),
-            "adp": None if math.isnan(r["adp"]) else _r(r["adp"], 1),
-            "value_vs_adp": None if math.isnan(r["value_vs_adp"]) else int(r["value_vs_adp"]),
-        }
-        for pid, r in board.head(top).iterrows()
-    ]
-
-
-def draft_board(
-    top: int = 60, punts: str | None = None, position: str | None = None, hide_drafted: bool = True
-) -> dict[str, Any]:
-    from fbm.analytics.draft import DraftState
-
-    pun = tuple(c.key for c in parse_category_list(punts or ""))
-    board = _draft_board(pun)
-    try:
-        state = DraftState.load()
-        if hide_drafted:
-            board = board[~board.index.isin(state.taken())]
-    except FileNotFoundError:
-        pass
-    if position:
-        board = board[board["eligible"].map(lambda el: position.upper() in el)]
-    _adp, source = _draft_adp()
-    return {
-        "punts": list(pun),
-        "adp_source": source,
-        "players": _board_rows(board, top),
-        "notes": "value = punt-aware G-score (pre-season: ESPN's preseason projection, else last season per-game); "
-        "value_vs_adp > 0 means the "
-        f"market drafts him later than his value rank (potential bargain). ADP source: {source}.",
-    }
-
-
-def draft_start(teams: int = 12, my_slot: int = 1, rounds: int = 13, punts: str = "") -> dict[str, Any]:
-    from fbm.analytics.draft import DraftState
-
-    if not 1 <= my_slot <= teams:
-        raise GMError("my_slot must be between 1 and teams")
-    state = DraftState(teams, my_slot, rounds, [c.key for c in parse_category_list(punts)])
-    state.save()
-    memory.journal_append(
-        "decision", "Draft started", f"{teams} teams, slot {my_slot}, {rounds} rounds, punts {state.punts or 'none'}"
-    )
-    return draft_recommend()
-
-
-def draft_pick(player: str) -> dict[str, Any]:
-    """Record the pick for the team on the clock (call in draft order)."""
-    from fbm.analytics.draft import DraftState
-
-    state = DraftState.load()
-    board = _draft_board(tuple(state.punts))
-    avail = board[~board.index.isin(state.taken())]
-    q = _norm(player)
-    ids = [pid for pid in avail.index if _norm(str(avail.at[pid, "name"])) == q] or [
-        pid for pid in avail.index if q in _norm(str(avail.at[pid, "name"]))
-    ]
-    if len(ids) != 1:
-        raise GMError(f"'{player}' matched {len(ids)} available players; be more specific.")
-    pick = state.record(ids[0], str(avail.at[ids[0], "name"]))
-    state.save()
-    return {
-        "recorded": {
-            "overall": pick.overall,
-            "team_slot": pick.team_slot,
-            "player": pick.name,
-            "mine": pick.team_slot == state.my_slot,
-        },
-        **draft_recommend(),
-    }
-
-
-def draft_undo() -> dict[str, Any]:
-    from fbm.analytics.draft import DraftState
-
-    state = DraftState.load()
-    undone = state.undo()
-    state.save()
-    return {"undone": undone.name if undone else None, **draft_recommend()}
-
-
-def draft_recommend(top: int = 8) -> dict[str, Any]:
-    from fbm.analytics.draft import DraftState, recommend
-
-    state = DraftState.load()
-    if state.done:
-        return {"done": True, "my_team": [p.name for p in state.my_picks()]}
-    return {
-        **recommend(state, _draft_board(tuple(state.punts)), ctx().cfg.categories, top),
-        "adp_source": _draft_adp()[1],
-    }
-
-
-_YAHOO_PENDING = (
-    "Yahoo Fantasy API access is pending/unavailable ({err}). Draft data stays on ESPN ADP and manual "
-    "`fbm draft pick` entry."
-)
-
-
-def _yahoo_draft_client():
-    """(league config, mapper, client) or GMError with a clear message when Yahoo isn't usable."""
-    from fbm.yahoo.client import YahooClient
-    from fbm.yahoo.ids import IdMapper, espn_players_from_db, load_overrides
-
-    try:
-        cfg = load_league_config()
-    except Exception as err:
-        raise GMError(_YAHOO_PENDING.format(err=f"league not configured: {err}")) from err
-    try:
-        client = YahooClient()
-    except Exception as err:
-        raise GMError(_YAHOO_PENDING.format(err=err)) from err
-    return cfg, IdMapper(espn_players_from_db(_conn()), load_overrides()), client
-
-
-def draft_adp_refresh() -> dict[str, Any]:
-    """Fetch Yahoo ADP (draft_analysis) into the cache; without Yahoo access keep ESPN ADP and say why."""
-    from fbm.yahoo.draft import fetch_adp, save_adp
-
-    try:
-        cfg, mapper, client = _yahoo_draft_client()
-        with client:
-            rows = fetch_adp(client, cfg.league_key, int(C("draft.yahoo_adp_limit")))
-    except GMError as err:
-        return {"refreshed": False, "adp_source": _draft_adp()[1], "message": str(err)}
-    except Exception as err:
-        return {"refreshed": False, "adp_source": _draft_adp()[1], "message": _YAHOO_PENDING.format(err=err)}
-    stats = save_adp(_conn(), rows, mapper)
-    return {"refreshed": True, **stats, "adp_source": _draft_adp()[1]}
-
-
-def draft_adp_status() -> dict[str, Any]:
-    from fbm.yahoo.draft import yahoo_adp_map
-
-    adp, source = _draft_adp()
-    return {
-        "adp_source": source,
-        "players_with_adp": len(adp),
-        "yahoo_cached": len(yahoo_adp_map(_conn())),
-        "yahoo_min_players": int(C("draft.yahoo_adp_min_players")),
-    }
-
-
-def draft_sync_yahoo(top: int = 8) -> dict[str, Any]:
-    """Read Yahoo draftresults and record every new pick into the live draft state (idempotent)."""
-    from fbm.analytics.draft import DraftState
-    from fbm.yahoo.draft import apply_results, draft_params, fetch_draftresults
-
-    cfg, mapper, client = _yahoo_draft_client()
-    try:
-        with client:
-            results = fetch_draftresults(client, cfg.league_key)
-    except Exception as err:
-        raise GMError(_YAHOO_PENDING.format(err=err)) from err
-    try:
-        state = DraftState.load()
-    except FileNotFoundError:
-        teams, slot, rounds = draft_params(results, cfg.team_key)
-        if not teams:
-            raise GMError("Yahoo has no draft order yet; start manually with `fbm draft start`.") from None
-        state = DraftState(teams, slot, rounds, [])
-    names = ctx().projections["name"].to_dict()
-
-    def resolve(r):
-        m = mapper.match(r.player_id, r.name, r.nba_team)
-        if m.espn_id:
-            return m.espn_id, str(names.get(m.espn_id, r.name or m.espn_id))
-        return f"yahoo:{r.player_id}", r.name or f"Yahoo player {r.player_id}"
-
-    new = apply_results(state, results, resolve, cfg.team_key)
-    state.save()
-    my_turn = not state.done and state.on_clock() == state.my_slot
-    out: dict[str, Any] = {
-        "new_picks": new,
-        "picks_recorded": len(state.picks),
-        "done": state.done,
-        "my_turn": my_turn,
-        "on_clock": None if state.done else state.on_clock(),
-        "next_overall": state.next_overall,
-    }
-    if my_turn:
-        out["recommendations"] = draft_recommend(top)
-    return out
-
-
-def draft_mock(
-    my_slot: int = 1, teams: int = 12, rounds: int = 13, punts: str = "", runs: int = 3, seed: int = 0, n: int = 1000
-) -> dict[str, Any]:
-    from fbm.analytics.bank import DrawBank
-    from fbm.analytics.draft import DraftState, mock_draft, rosters_from_state
-    from fbm.analytics.trades import LeagueSim
-    from fbm.league.demo import league_from_rosters
-
-    c, conn = ctx(), _conn()
-    pun = tuple(k.key for k in parse_category_list(punts))
-    board = _draft_board(pun)
-    elig, statuses = _eligibility(), c.statuses(conn)
-    results = []
-    for r in range(runs):
-        state = mock_draft(board, DraftState(teams, my_slot, rounds, list(pun)), c.cfg.categories, seed=seed + r)
-        rosters = rosters_from_state(state)
-        league = league_from_rosters(
-            [rosters[s] for s in range(1, teams + 1)],
-            c.values,
-            c.season,
-            my_slot - 1,
-            statuses,
-            elig,
-            key_prefix="mock",
-        )
-        ids = [pid for t in league.teams for pid in t.player_ids()]
-        sim = LeagueSim(league, DrawBank(c.models(ids, conn), n_sims=n, seed=41 + r), c.values)
-        exps = {t.team_key: sim.profile(t.team_key)[1] for t in league.teams}
-        cats, mine = sim.profile(league.my_team_key)
-        rank = sorted(exps.values(), reverse=True).index(mine) + 1
-        results.append(
-            {
-                "run": r + 1,
-                "my_expected_cats": _r(mine),
-                "rank_of_teams": f"{rank}/{teams}",
-                "cat_win_rates": {k: _r(v) for k, v in cats.items()},
-                "my_picks": [f"{p.overall}. {p.name}" for p in state.my_picks()],
-            }
-        )
-    return {
-        "slot": my_slot,
-        "teams": teams,
-        "punts": list(pun),
-        "runs": results,
-        "avg_expected_cats": _r(sum(x["my_expected_cats"] for x in results) / len(results)),
-        "method": "others draft by noisy ESPN ADP; I draft by the build-aware recommender; season-level sim",
-    }
 
 
 # ------------------------------------------------------------------ playoffs
@@ -2167,6 +2689,7 @@ def _playoff_trade_info(incoming: list[str], outgoing: list[str]) -> dict[str, A
     }
 
 
+@_ht.gated
 def playoff_outlook(scope: str = "my_roster", top: int = 25) -> dict[str, Any]:
     """Fantasy-playoff schedule: games per NBA team in the playoff weeks and players' playoff value."""
     league, c, sched = active_league(), ctx(), _playoff_schedule()
@@ -2209,6 +2732,7 @@ def playoff_outlook(scope: str = "my_roster", top: int = 25) -> dict[str, Any]:
 # ------------------------------------------------------------------ waivers
 
 
+@_ht.gated
 def waiver_decision(player: str, drop: str | None = None, on_waivers: bool | None = None) -> dict[str, Any]:
     """Should we spend waiver priority on this player now, wait for him to clear, or pass?"""
     from fbm.analytics.trades import need_weights
@@ -2255,7 +2779,24 @@ def waiver_decision(player: str, drop: str | None = None, on_waivers: bool | Non
     profiles = _manager_profiles(league)
     activity = claim_activity(profiles, {c.team_key: c.gain for c in comps})
     d = decide(ros_gain, on_waivers, mine, len(league.teams), comps, activity)
+    rec, did = _log_choice(
+        "waiver_claim",
+        None,
+        {
+            "id": "claim" if on_waivers else "add",
+            "label": f"{'claim' if on_waivers else 'add'} {_names(c, [pid])[0]}, drop {_names(c, [drop_id])[0]}",
+            "spec": {"moves": [{"add": pid, "drop": drop_id, "date": nba_today().isoformat()}]},
+            "cat_scores": {
+                k: round(vec.get(k, 0.0) - (float(ros.at[drop_id, f"g_{k}"]) if drop_id in ros.index else 0.0), 4)
+                for k in keys
+            },
+            "adds": 1,
+        },
+        "policy.view.claim",
+    )
     return {
+        "recommended_option": rec,
+        "decision_id": did,
         "player": _names(c, [pid])[0],
         "player_id": pid,
         "drop": _names(c, [drop_id])[0],
@@ -2509,11 +3050,14 @@ def pending_offers_tool() -> dict[str, Any]:
         txs = fetch_pending(client, league.league_key, league.my_team_key)
     groups = split_pending(txs, league.my_team_key)
     mapper = _yahoo_mapper(league)
+    blocked = _ht.gate()  # no trade verdicts while HT is unhealthy (owner rule: no fallback)
     incoming = []
     for tx in groups["incoming"]:
         row = transaction_view(league, tx, mapper)
         give, get, missing = trade_sides(tx, league.my_team_key, mapper)
-        if missing:
+        if blocked is not None:
+            row["evaluation"] = blocked
+        elif missing:
             row["evaluation"] = {"error": f"unmatched players {missing}; {_OVERRIDE_HELP}"}
         else:
             try:

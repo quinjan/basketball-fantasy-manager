@@ -319,3 +319,27 @@ def compact_role(role: Mapping[str, Any]) -> dict[str, Any]:
     if "usage_per36" in delta:
         out["d_usage"] = delta["usage_per36"]
     return out
+
+
+def played_lines(conn: sqlite3.Connection, season: int) -> pd.DataFrame:
+    """Every played box-score line of a season (ET dates), lines without minutes dropped."""
+    from fbm.analytics.categories import BASE_STATS
+
+    return pd.read_sql_query(
+        "SELECT espn_id, et_date, " + ", ".join(BASE_STATS) + " FROM box_lines WHERE season = ? AND played = 1",
+        conn,
+        params=(season,),
+    ).dropna(subset=["minutes"])
+
+
+def window_actuals(lines: pd.DataFrame, start: date, end: date, min_games: int) -> pd.DataFrame:
+    """Per-game averages over [start, end] (ET dates) for players with at least `min_games` games played."""
+    from fbm.analytics.categories import BASE_STATS
+
+    sub = lines[(lines["et_date"] >= start.isoformat()) & (lines["et_date"] <= end.isoformat())]
+    if sub.empty:
+        return pd.DataFrame(columns=[*BASE_STATS, "games"])
+    grouped = sub.groupby("espn_id")
+    out = grouped[list(BASE_STATS)].mean()
+    out["games"] = grouped.size()
+    return out[out["games"] >= min_games]

@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html><body><form method="post" action="./" id="form1"><a id="LoginStatus2" href="javascript:__doPostBack(&#x27;ctl00$LoginStatus2$ctl00&#x27;,&#x27;&#x27;)">Logout</a>
+<div class="aspNetHidden">
+<input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="" />
+<input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="" />
+<input type="hidden" name="__LASTFOCUS" id="__LASTFOCUS" value="" />
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="dummyviewstate" />
+</div>
+<div class="aspNetHidden">
+ <input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="D775FA03" />
+ <input type="hidden" name="__SCROLLPOSITIONX" id="__SCROLLPOSITIONX" value="0" />
+ <input type="hidden" name="__SCROLLPOSITIONY" id="__SCROLLPOSITIONY" value="0" />
+ <input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="dummyvalidation" />
+</div>
+ <div id="UpdatePanel1">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$FV1$HF1" id="ContentPlaceHolder1_FV1_HF1" value="2" />
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$FVP$HF1" id="ContentPlaceHolder1_FVP_HF1" value="Yes" />
+ <div class="app-content content">
+ <div class="content-overlay"></div>
+ <div class="header-navbar-shadow"></div>
+ <div class="content-wrapper container-xxl p-0">
+ <div id="ContentPlaceHolder1_P_TOOLS">
+ <div class="content-body">
+ <div class="desktop-home-view">
+ <div class="home-header-row">
+ <div class="home-header-left">
+ <div class="home-header-left-inner">
+ <h5>Manage Leagues</h5>
+ <span class="home-league-count" id="desktopLeagueCount">0 leagues</span>
+ </div>
+ <div class="home-header-right">
+ <button class="home-import-btn" onclick="toggleImportDropdown(); return false;">Import League</button>
+ <div id="importDropdown" class="home-import-dropdown">
+ <a href="/import-v4/import-league-yahoo" class="yahoo">Yahoo</a>
+ <a href="/import-v4/import-league-espn" class="espn">ESPN</a>
+ <a href="/import-v4/import-league-fantrax-beta.aspx" class="fantrax">Fantrax</a>
+ <a href="/import-v4/import-league-fantrax.aspx" class="fantrax">Fantrax (Backup)</a>
+ <a href="/import-v4/import-league-sleeper" class="sleeper">Sleeper</a>
+ <a href="/import-v4/import-mock-sleeper" class="sleeper">Sleeper (Mock)</a>
+ <a href="/import-v4/create-league-custom.aspx" class="custom">Custom</a>
+ </div>
+ </div>
+ </div>
+ </div>
+ <div class="row align-items-start">
+ <div class="col-12 col-xl-9">
+ <div class="league-cards-container">
+ <div class="league-card draftkit">
+ <input type="radio" name="kitmode" id="kitCat" class="kit-radio" checked="checked" />
+ <input type="radio" name="kitmode" id="kitPts" class="kit-radio" />
+ <div class="league-card-header">
+ <div class="league-card-info">
+ <div class="league-card-name">The Playbook</div>
+ <div class="league-card-meta"><span>Prepare for the fantasy season with the playbook.</span></div>
+ </div>
+ <div class="adp-segmented">
+ <label for="kitCat" class="adp-segmented__btn kit-btn-cat">Categories</label>
+ <label for="kitPts" class="adp-segmented__btn kit-btn-pts">Points</label>
+ </div>
+ </div>
+ <div class="league-card-tools kit-panel kit-cat">
+ <a href="/import-v4/fantasy-basketball-draft-guide" class="league-tool-btn">Draft Guide</a>
+ <a href="fantasy-basketball-projections" class="league-tool-btn">2026-27 Projections</a>
+ <a href="fantasy-basketball-sleepers" class="league-tool-btn">2026-27 Sleepers</a>
+ <a href="fantasy-basketball-auction-values" class="league-tool-btn">Auction Values</a>
+ <a href="/import-v4/mock-draft" class="league-tool-btn">Mock Draft Simulator</a>
+ <a href="/import-v4/pressbox" class="league-tool-btn">Press Box <span class="tool-badge">BETA</span></a>
+ <a href="/import-v4/projections-adp" class="league-tool-btn">Draft Board</a>
+ <a href="/import-v4/compare-nba-players" class="league-tool-btn">Compare Players</a>
+ <a href="/rotations" class="league-tool-btn">Rotations</a>
+ <a href="/import-v4/notebook" class="league-tool-btn">Player Notes</a>
+ <a href="/nba-fantasy-schedule" class="league-tool-btn">Basic Grid</a>
+ <a href="/advanced-nba-schedule-grid" class="league-tool-btn">Advanced Grid</a>
+ <a href="/fantasy-basketball-playoff-schedule" class="league-tool-btn">Playoff Schedule</a>
+ <a href="/fantasy-basketball-dynasty-rankings" class="league-tool-btn">Dynasty Rankings</a>
+ <a href="/nba-depth-charts" class="league-tool-btn">Depth Charts</a>
+ </div>
+ <div class="league-card-tools kit-panel kit-pts">
+ <a href="fantasy-basketball-points-league-draft-guide" class="league-tool-btn">Draft Guide</a>
+ <a href="fantasy-basketball-points-league-projections" class="league-tool-btn">2026-27 Projections</a>
+ <a href="fantasy-basketball-points-league-sleepers" class="league-tool-btn">2026-27 Sleepers</a>
+ <a href="fantasy-basketball-points-league-auction-values" class="league-tool-btn">Auction Values</a>
+ <a href="/import-v4/pressbox" class="league-tool-btn">Press Box <span class="tool-badge">BETA</span></a>
+ <a href="/import-v4/projections-points-adp" class="league-tool-btn">Draft Board</a>
+ <a href="/import-v4/compare-nba-players" class="league-tool-btn">Compare Players</a>
+ <a href="/rotations" class="league-tool-btn">Rotations</a>
+ <a href="/import-v4/notebook" class="league-tool-btn">Player Notes</a>
+ <a href="/nba-fantasy-schedule" class="league-tool-btn">Basic Grid</a>
+ <a href="/advanced-nba-schedule-grid" class="league-tool-btn">Advanced Grid</a>
+ <a href="/fantasy-basketball-playoff-schedule" class="league-tool-btn">Playoff Schedule</a>
+ <a href="/fantasy-basketball-dynasty-rankings" class="league-tool-btn">Dynasty Rankings</a>
+ <a href="/nba-depth-charts" class="league-tool-btn">Depth Charts</a>
+ </div>
+ </div>
+ <div class="league-card yahoo">
+ <div class="league-card-header">
+ <div class="league-card-info">
+ <span class="platform-badge yahoo">Yahoo</span>
+ <div class="league-card-name">Test League</div>
+ <div class="league-card-meta">
+ <span>14 teams</span>
+ <span><a href="https://basketball.fantasysports.yahoo.com/b1/11111" target="_blank">11111</a></span>
+ <span>Today</span>
+ </div>
+ </div>
+ <div class="league-card-actions">
+ <a href="setting-cat-yahoo.aspx?lid=11111" class="league-action-btn" title="Settings"></a>
+ <a href="/import-v4/refresh-yahoo.aspx?lid=11111" class="league-action-btn refresh" title="Refresh"></a>
+ </div>
+ </div>
+ <div class="league-card-tools">
+ <a href="draft-cat-yahoo-v4.aspx?lid=11111" class="league-tool-btn">Draft Tracker</a>
+ <a href="grid-cat-yahoo.aspx?lid=11111&amp;w=2" class="league-tool-btn">Schedule Grid</a>
+ <a href="plan-cat-yahoo.aspx?lid=11111" class="league-tool-btn">H2H Planner</a>
+ <a href="beast-cat-yahoo.aspx?lid=11111" class="league-tool-btn">Beast Mode</a>
+ <a href="smash-cat-yahoo.aspx?lid=11111" class="league-tool-btn">Smash Mode</a>
+ <a href="waiver-cat-yahoo.aspx?lid=11111" class="league-tool-btn">Waiver Wire</a>
+ <a href="rank-cat-yahoo.aspx?lid=11111" class="league-tool-btn">Rankings</a>
+ <a href="trade-cat-yahoo.aspx?lid=11111" class="league-tool-btn">Trade Machine</a>
+ <a href="scouting-cat-yahoo.aspx?lid=11111" class="league-tool-btn">Scouting Report</a>
+ <a href="pressbox-yahoo.aspx?lid=11111" class="league-tool-btn">Press Box <span class="tool-badge">BETA</span></a>
+ <a href="notebook-yahoo.aspx?lid=11111" class="league-tool-btn">Player Notes</a>
+ <a id="ContentPlaceHolder1_RPY_Y3_0" class="league-tool-btn" href="waive-cat-yahoo.aspx?lid=11111"> Waiver Machine</a>
+ <a id="ContentPlaceHolder1_RPY_TFY_0" class="league-tool-btn" href="trade-finder-cat-yahoo.aspx?lid=11111"> Trade Finder</a>
+ </div>
+ </div>
+ </div>
+ </div>
+ <div class="col-12 col-xl-3">
+ <div class="youtube-card">
+ <div class="youtube-card-content">
+ <div class="youtube-card-header">
+ <span class="youtube-card-label">NEW TOOL: PRESS BOX</span>
+ </div>
+ <div class="youtube-card-title">A new tool in development that collects player quotes from official media availability uploaded to YouTube.</div>
+ </div>
+ </div>
+ <div class="card player-feed-card shadow-lg mb-1">
+ <div class="card-header player-feed-header">
+ <h5 class="mb-0">The Feed</h5>
+ </div>
+ <div class="card-body player-feed-body">
+ <div class="player-update-item">
+ <div class="player-update-text"><a href="https://hashtagbasketball.com/fantasy-basketball-points-league-rankings" target="_blank">2026-27 Fantasy Basketball Points League Rankings</a></div>
+ </div>
+ <div class="player-update-item">
+ <div class="player-update-text"><a href="https://hashtagbasketball.com/nba-game-flow-box-scores" target="_blank">NBA Game Flow Box Scores: 25 October</a></div>
+ </div>
+ <div class="player-update-item">
+ <div class="player-update-text"><a href="https://hashtagbasketball.com/advanced-nba-schedule-grid" target="_blank">Advanced NBA Schedule Grid: 26 October - 1 November</a></div>
+ </div>
+ </div>
+ </div>
+ <div class="card player-feed-card shadow-lg">
+ <div class="card-header player-feed-header d-flex align-items-center justify-content-between">
+ <h5 class="mb-0">Player Notes</h5>
+ <select name="ctl00$ContentPlaceHolder1$DDFEEDSRC" id="ContentPlaceHolder1_DDFEEDSRC" class="form-select form-select-sm w-auto">
+ <option selected="selected" value="">All</option>
+ <option value="notebook">Notebook Drop</option>
+ <option value="analyst">Erik's Notes</option>
+ </select>
+ </div>
+ <div class="card-body player-feed-body">
+ <div class="player-update-item">
+ <div class="player-update-header">
+ <div class="player-update-name">Precious Achiuwa (SAC) <span class="badge rounded-pill feed-src feed-src--analyst">Erik's Notes</span></div>
+ <div class="player-update-date">26 Oct 2026</div>
+ </div>
+ <div class="player-update-text">Precious Achiuwa started for Keegan Murray (ankle) on Sunday and scored 12 points, but went 0-for-6 from the line.</div>
+ </div>
+ <div class="player-update-item">
+ <div class="player-update-header">
+ <div class="player-update-name">Isaiah Stewart (MEM) <span class="badge rounded-pill feed-src feed-src--analyst">Erik's Notes</span></div>
+ <div class="player-update-date">26 Oct 2026</div>
+ </div>
+ <div class="player-update-text">Isaiah Stewart started on Sunday while Zach Edey sat out for injury management. He posted a solid line and can be picked up as he works his way back from injury. </div>
+ </div>
+ <div class="player-update-item">
+ <div class="player-update-header">
+ <div class="player-update-name">Jalen Suggs (ORL) <span class="badge rounded-pill feed-src feed-src--analyst">Erik's Notes</span></div>
+ <div class="player-update-date">25 Oct 2026</div>
+ </div>
+ <div class="player-update-text">Jalen Suggs suffered a non-contact knee injury on Sunday and had to be helped off the court. Anthony Black, who made his season debut tonight, figures to benefit from this development.</div>
+ </div>
+ <div class="player-update-item">
+ <div class="player-update-header">
+ <div class="player-update-name">Paul Reed (DET) <span class="badge rounded-pill feed-src feed-src--analyst">Erik's Notes</span></div>
+ <div class="player-update-date">25 Oct 2026</div>
+ </div>
+ <div class="player-update-text">Paul Reed started for an injured Jalen Duren (hamstring) on Sunday, but was slowed down by foul trouble. Reed is still a hold due to his upside. </div>
+ </div>
+ <div class="player-update-item">
+ <div class="player-update-header">
+ <div class="player-update-name">Ja'Kobe Walter (TOR) <span class="badge rounded-pill feed-src feed-src--analyst">Erik's Notes</span></div>
+ <div class="player-update-date">25 Oct 2026</div>
+ </div>
+ <div class="player-update-text">Ja'Kobe Walter started for a resting Kawhi Leonard on Sunday and put up a team-high 22 points with five 3s. He's worth spot-streaming every time Kawhi misses games. </div>
+ </div>
+ <div class="player-update-item">
+ <div class="player-update-header">
+ <div class="player-update-name">Ajay Mitchell (OKC) <span class="badge rounded-pill feed-src feed-src--notebook">Notebook Drop</span></div>
+ <div class="player-update-date">25 Oct 2026</div>
+ </div>
+ <div class="player-update-text">Should be playing starters minutes with the Williams injury.</div>
+ </div>
+ <div class="player-update-item">
+ <div class="player-update-header">
+ <div class="player-update-name">Scottie Barnes (TOR) <span class="badge rounded-pill feed-src feed-src--analyst">Erik's Notes</span></div>
+ <div class="player-update-date">25 Oct 2026</div>
+ </div>
+ <div class="player-update-text">Scottie Barnes had the worst shooting night of his career on Sunday, going 0-for-12 from the field for zero points. This is not something worth panicking over.</div>
+ </div>
+ <div class="player-update-item">
+ <div class="player-update-header">
+ <div class="player-update-name">Jalen Williams (OKC) <span class="badge rounded-pill feed-src feed-src--notebook">Notebook Drop</span></div>
+ <div class="player-update-date">25 Oct 2026</div>
+ </div>
+ <div class="player-update-text">Don't watch the replay. It was bad. Adjusting to 20 games as a placeholder, but I wouldn't be surprised if that's season-ending.</div>
+ </div>
+ </div>
+ </div>
+ </div>
+ </div>
+ </div>
+ <div class="mobile-home-view">
+ <div class="mobile-home-header">
+ <div class="mobile-home-header-top">
+ <h5>Leagues <span class="home-league-count" id="mobileLeagueCount">0</span></h5>
+ <div class="mobile-import-wrapper">
+ <button class="btn btn-sm btn-primary mobile-import-btn" onclick="toggleMobileImport(); return false;">Import</button>
+ </div>
+ </div>
+ <div id="mobileImportOverlay" class="mobile-import-overlay" onclick="closeMobileImport();"></div>
+ <div id="mobileImportSheet" class="mobile-import-sheet">
+ <div class="mobile-import-sheet-header">
+ <h6>Import League</h6>
+ <button class="mobile-import-close" onclick="closeMobileImport();"></button>
+ </div>
+ <div class="mobile-import-options">
+ <a href="/import-v4/import-league-yahoo" class="mobile-import-option yahoo">Yahoo</a>
+ <a href="/import-v4/import-league-espn" class="mobile-import-option espn">ESPN</a>
+ <a href="/import-v4/import-league-fantrax-beta.aspx" class="mobile-import-option fantrax">Fantrax</a>
+ <a href="/import-v4/import-league-sleeper" class="mobile-import-option sleeper">Sleeper</a>
+ <a href="/import-v4/import-mock-sleeper" class="mobile-import-option sleeper">Sleeper (Mock)</a>
+ <a href="/import-v4/create-league-custom.aspx" class="mobile-import-option custom">Custom</a>
+ </div>
+ </div>
+ <div class="mobile-youtube-banner">
+ <div class="mobile-youtube-banner-content">League tools are now open! Email <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="790a0c0909160b0d3911180a110d181e1f0a571a1614">[email protected]</a> if you notice something not working properly.</div>
+ </div>
+ </div>
+ <div class="mobile-playbook-card draftkit">
+ <button type="button" class="mobile-playbook-toggle" onclick="toggleMobilePlaybook(this); return false;" aria-expanded="false">
+ <span class="mobile-draftkit-head">
+ <span class="playbook-label">The Playbook</span>
+ <span class="mobile-draftkit-sub">Prepare for the fantasy season with the playbook.</span>
+ </span>
+ </button>
+ <div class="mobile-tools-collapse"><div>
+ <input type="radio" name="kitmodem" id="kitCatM" class="kit-radio" checked="checked" />
+ <input type="radio" name="kitmodem" id="kitPtsM" class="kit-radio" />
+ <div class="mobile-draftkit-toggle-row">
+ <div class="adp-segmented">
+ <label for="kitCatM" class="adp-segmented__btn kit-btn-cat">Categories</label>
+ <label for="kitPtsM" class="adp-segmented__btn kit-btn-pts">Points</label>
+ </div>
+ </div>
+ <div class="mobile-tools-grid kit-panel kit-cat">
+ <a href="/import-v4/fantasy-basketball-draft-guide" class="mobile-tool-btn">Draft Guide</a>
+ <a href="fantasy-basketball-projections" class="mobile-tool-btn">2026-27 Projections</a>
+ <a href="fantasy-basketball-sleepers" class="mobile-tool-btn">2026-27 Sleepers</a>
+ <a href="fantasy-basketball-auction-values" class="mobile-tool-btn">Auction Values</a>
+ <a href="/import-v4/mock-draft" class="mobile-tool-btn">Mock Draft Simulator</a>
+ <a href="/import-v4/pressbox" class="mobile-tool-btn">Press Box <span class="tool-badge">BETA</span></a>
+ <a href="/import-v4/projections-adp" class="mobile-tool-btn">Draft Board</a>
+ <a href="/import-v4/compare-nba-players" class="mobile-tool-btn">Compare Players</a>
+ <a href="/rotations" class="mobile-tool-btn">Rotations</a>
+ <a href="/import-v4/notebook" class="mobile-tool-btn">Player Notes</a>
+ <a href="/nba-fantasy-schedule" class="mobile-tool-btn">Basic Grid</a>
+ <a href="/advanced-nba-schedule-grid" class="mobile-tool-btn">Advanced Grid</a>
+ <a href="/fantasy-basketball-playoff-schedule" class="mobile-tool-btn">Playoff Schedule</a>
+ <a href="/fantasy-basketball-dynasty-rankings" class="mobile-tool-btn">Dynasty Rankings</a>
+ <a href="/nba-depth-charts" class="mobile-tool-btn">Depth Charts</a>
+ </div>
+ <div class="mobile-tools-grid kit-panel kit-pts">
+ <a href="fantasy-basketball-points-league-draft-guide" class="mobile-tool-btn">Draft Guide</a>
+ <a href="fantasy-basketball-points-league-projections" class="mobile-tool-btn">2026-27 Projections</a>
+ <a href="fantasy-basketball-points-league-sleepers" class="mobile-tool-btn">2026-27 Sleepers</a>
+ <a href="fantasy-basketball-points-league-auction-values" class="mobile-tool-btn">Auction Values</a>
+ <a href="/import-v4/pressbox" class="mobile-tool-btn">Press Box <span class="tool-badge">BETA</span></a>
+ <a href="/import-v4/projections-points-adp" class="mobile-tool-btn">Draft Board</a>
+ <a href="/import-v4/compare-nba-players" class="mobile-tool-btn">Compare Players</a>
+ <a href="/rotations" class="mobile-tool-btn">Rotations</a>
+ <a href="/import-v4/notebook" class="mobile-tool-btn">Player Notes</a>
+ <a href="/nba-fantasy-schedule" class="mobile-tool-btn">Basic Grid</a>
+ <a href="/advanced-nba-schedule-grid" class="mobile-tool-btn">Advanced Grid</a>
+ <a href="/fantasy-basketball-playoff-schedule" class="mobile-tool-btn">Playoff Schedule</a>
+ <a href="/fantasy-basketball-dynasty-rankings" class="mobile-tool-btn">Dynasty Rankings</a>
+ <a href="/nba-depth-charts" class="mobile-tool-btn">Depth Charts</a>
+ </div>
+ </div></div>
+ </div>
+ <div class="mobile-league-card yahoo">
+ <div class="mobile-league-header">
+ <div class="league-info">
+ <span class="platform-badge yahoo">Yahoo</span>
+ <div class="league-card-name">Test League</div>
+ <div class="league-card-meta">
+ <span>14 teams</span>
+ <span>11111</span>
+ <span>Today</span>
+ </div>
+ </div>
+ <div class="mobile-league-actions">
+ <a href="setting-cat-yahoo.aspx?lid=11111" class="league-action-btn" title="Settings"></a>
+ <a href="/import-v4/refresh-yahoo.aspx?lid=11111" class="league-action-btn refresh" title="Refresh"></a>
+ </div>
+ </div>
+ <div class="mobile-tools-grid">
+ <a href="draft-cat-yahoo-v4.aspx?lid=11111" class="mobile-tool-btn">Draft</a>
+ <a href="grid-cat-yahoo.aspx?lid=11111&amp;w=2" class="mobile-tool-btn">Schedule</a>
+ <a href="plan-cat-yahoo.aspx?lid=11111" class="mobile-tool-btn">H2H Planner</a>
+ <a href="beast-cat-yahoo.aspx?lid=11111" class="mobile-tool-btn">Beast</a>
+ <a href="smash-cat-yahoo.aspx?lid=11111" class="mobile-tool-btn">Smash</a>
+ <a href="waiver-cat-yahoo.aspx?lid=11111" class="mobile-tool-btn">Waiver Wire</a>
+ <a href="rank-cat-yahoo.aspx?lid=11111" class="mobile-tool-btn">Rankings</a>
+ <a href="trade-cat-yahoo.aspx?lid=11111" class="mobile-tool-btn">Trade</a>
+ <a id="ContentPlaceHolder1_RPYM_YM3_0" class="mobile-tool-btn" href="waive-cat-yahoo.aspx?lid=11111">Waiver</a>
+ <a id="ContentPlaceHolder1_RPYM_TFYM_0" class="mobile-tool-btn" href="trade-finder-cat-yahoo.aspx?lid=11111">Finder</a>
+ <a href="scouting-cat-yahoo.aspx?lid=11111" class="mobile-tool-btn">Scouting</a>
+ <a href="pressbox-yahoo.aspx?lid=11111" class="mobile-tool-btn">Press Box <span class="tool-badge">BETA</span></a>
+ <a href="notebook-yahoo.aspx?lid=11111" class="mobile-tool-btn">Player Notes</a>
+ </div>
+ </div>
+ </div>
+ </div>
+ </div>
+ </div>
+ </div>
+</div>
+ <div class="sidenav-overlay"></div>
+ <div class="drag-target"></div>
+ <button class="btn btn-primary btn-icon scroll-top d-none d-md-block" type="button">
+ </button>
+</form></body></html>

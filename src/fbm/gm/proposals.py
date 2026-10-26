@@ -9,7 +9,8 @@ awaiting_owner --owner confirms (confirm_done)--> done
  steps + a warning. A proposal that failed with a tool `error` (not a re-validation) keeps the owner's approval and can
  be re-run through proposal_steps until it expires.)
 awaiting_owner --owner changes their mind before making the move (owner decision, reject)--> rejected
-strategy proposals change only FBM's memory: approved --proposal_steps--> done
+strategy and policy proposals change only FBM's memory: approved --proposal_steps--> done (policy: re-validated
+ against the current settings first; invalid/oversized steps -> failed)
 any open state past expires_at --> expired   (no steps after expiry)
 (The `executed_at` column records when the proposal reached its outcome.)
 """
@@ -22,7 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-KINDS = ("add_drop", "waiver_claim", "trade", "strategy", "il_activation", "other")
+KINDS = ("add_drop", "waiver_claim", "trade", "strategy", "policy", "il_activation", "other")
 VERDICTS = ("AGREE", "DISAGREE", "SPLIT")
 OPEN = ("pending_review", "pending_approval", "approved")
 LIVE = (*OPEN, "awaiting_owner")  # every state in which a proposal still covers its move
@@ -55,6 +56,9 @@ def move_key(kind: str, payload: dict[str, Any], title: str = "") -> tuple | Non
         return ("trade", str(payload.get("partner")), _ids(payload, "give"), _ids(payload, "get"))
     if kind == "strategy":
         return ("strategy", _ids(payload, "punts"), _ids(payload, "targets"))
+    if kind == "policy":
+        changes = payload.get("changes") or {}
+        return ("policy", tuple(sorted((str(k), json.dumps(v, sort_keys=True)) for k, v in changes.items())))
     if payload:
         return ("other", json.dumps(payload, sort_keys=True, default=str))
     return ("other", title.strip().lower()) if title.strip() else None

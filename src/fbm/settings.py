@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from fbm.config import CONFIG_DIR
@@ -32,6 +33,10 @@ class Settings:
     email_enabled: bool = False
     recipients: tuple[str, ...] = field(default_factory=tuple)
     quiet_hours: str = ""
+    # Hashtag Basketball Premium (HT). When enabled HT is the only source of projections and matchup totals, and every
+    # suggestion tool refuses to suggest while HT is unhealthy (no fallback). Off = demo/ESPN engine.
+    hashtag_enabled: bool = False
+    hashtag_league_id: str = ""  # HT's league id (= the Yahoo league id, e.g. "30273")
 
 
 def load_settings(path: Path = SETTINGS_PATH) -> Settings:
@@ -42,8 +47,9 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
     proposals = raw.get("proposals", {}) or raw.get("autonomy", {})  # [autonomy] is the pre-1.0 name
     agent, review, notify = raw.get("agent", {}), raw.get("review", {}), raw.get("notify", {})
     automation = raw.get("automation", {})
+    hashtag = raw.get("hashtag", {})
     default = Settings()
-    return Settings(
+    settings = Settings(
         league_source=league.get("source", default.league_source),
         default_expiry_hours=float(
             proposals.get("expiry_hours", proposals.get("default_expiry_hours", default.default_expiry_hours))
@@ -59,4 +65,10 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
         email_enabled=notify.get("email_enabled", default.email_enabled),
         recipients=tuple(notify.get("recipients", ())),
         quiet_hours=notify.get("quiet_hours", ""),
+        hashtag_enabled=bool(hashtag.get("enabled", default.hashtag_enabled)),
+        hashtag_league_id=str(hashtag.get("league_id", default.hashtag_league_id) or ""),
     )
+    if path == SETTINGS_PATH and os.environ.get("FBM_HASHTAG_ENABLED") in ("0", "1"):
+        # Process-level override of the owner's file (the test suite forces "0"; also a manual kill switch).
+        settings = replace(settings, hashtag_enabled=os.environ["FBM_HASHTAG_ENABLED"] == "1")
+    return settings

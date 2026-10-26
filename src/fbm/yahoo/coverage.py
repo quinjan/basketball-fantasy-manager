@@ -125,19 +125,6 @@ def _pending(client: Any, ctx: Context) -> str:
     return f"{trades} pending trade(s), {len(txs) - trades} pending waiver claim(s)"
 
 
-def _draft(client: Any, ctx: Context) -> str:
-    from fbm.yahoo.draft import fetch_draftresults
-
-    picks = fetch_draftresults(client, ctx.league_key)
-    return f"{len(picks)} draft picks recorded"
-
-
-def _adp(client: Any, ctx: Context) -> str:
-    from fbm.yahoo.draft import fetch_adp
-
-    return f"{len(fetch_adp(client, ctx.league_key, 25))} players with Yahoo ADP (first page)"
-
-
 def _team_stats(client: Any, ctx: Context) -> str:
     fc = client.get(f"league/{ctx.league_key}/teams/stats;type=season")
     teams = as_list(((fc.get("league") or {}).get("teams") or {}).get("team"))
@@ -171,8 +158,6 @@ CHECKS: tuple[Check, ...] = (
     ("Free agents + % owned", CORE, "pickups, streaming, buy/sell", False, _free_agents),
     ("Transactions", CORE, "league intel, manager profiles", False, _transactions),
     ("Pending trades & claims", CORE, "`fbm offers`", True, _pending),
-    ("Draft results", CORE, "draft sync, retro", False, _draft),
-    ("Yahoo ADP", CORE, "draft board", False, _adp),
     ("Team season stats", EXTRA, "not used yet: true league category profile", False, _team_stats),
     ("Matchup history", EXTRA, "not used yet: full-season H2H results", True, _matchup_history),
     ("Player season stats (Yahoo)", EXTRA, "not used yet: Yahoo-scored player stats", True, _player_stats),

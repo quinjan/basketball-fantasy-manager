@@ -134,9 +134,11 @@ def build_player_models(
     rest_probs: Mapping[str, float] | None = None,
     b2b_dates: Mapping[str, frozenset] | None = None,
     return_dates: Mapping[str, date] | None = None,
+    anchor: float | None = None,
 ) -> dict[str, PlayerModel]:
     """Recent real games (most recent seasons first), re-centred on the projection's per-game means
-    (`sim.projection_anchor`); synthetic from projections when history is thin.
+    (`anchor`, default `sim.projection_anchor`; HT mode passes 1.0 so the means equal Hashtag's and the game logs
+    only supply the spread); synthetic from projections when history is thin.
 
     `play_probs` overrides the status-derived play probability per player (e.g. rest-of-season availability).
     `rest_probs` / `b2b_dates` add back-to-back rest risk on those dates (this-week sims only).
@@ -147,8 +149,11 @@ def build_player_models(
     rest_probs = rest_probs or {}
     b2b_dates = b2b_dates or {}
     return_dates = return_dates or {}
-    anchor = float(C("sim.projection_anchor"))
     lo, hi = float(C("sim.anchor_scale_min")), float(C("sim.anchor_scale_max"))
+    if anchor is None:
+        anchor = float(C("sim.projection_anchor"))
+    else:  # explicit anchor (HT mode): means follow the projection exactly, no scale clipping
+        anchor, lo, hi = float(anchor), 0.0, float("inf")
     form_sd = float(C("sim.form_sd"))
     models: dict[str, PlayerModel] = {}
     if not ids:

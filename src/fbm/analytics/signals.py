@@ -14,6 +14,12 @@ ownership) shows it.
   split from box scores; positional estimate when there is no history).
 - espn_revision (up/down): ESPN's projection for the player moved by a meaningful value over the last week.
 
+HT mode (`[hashtag] enabled`, see detect_all_ht): HT owns projections. buy/sell compares HT's ROS line with the
+market's season-to-date value (HT season stats, else FBM's box-score season line; Yahoo % owned is added by the
+tools); luck-vs-role tags compare the box-score season line with the HT ROS line. role_change is unchanged (box
+scores, ranked by HT ROS). opportunity numbers come only from HT Next Man Up. espn_revision becomes ht_revision (HT
+ROS / STREAM7 moved between its two latest imports, with the matching HT note quoted as untrusted data).
+
 Each signal carries what grading needs: `evidence.metric` ("value" = per-game G-score total, or "minutes"),
 `evidence.reference` (what the market sees / the old level) and, for buy/sell, `evidence.predicted` (our projection).
 """
@@ -153,10 +159,10 @@ def _buy_sell_confidence(kind: str, reasons: list[str]) -> str:
     return "high" if luck else "medium"
 
 
-def _buy_sell_note(kind: str, reasons: list[str]) -> str:
+def _buy_sell_note(kind: str, reasons: list[str], source: str = "FBM's") -> str:
     parts = []
     if kind == "buy_low":
-        parts.append("producing below FBM's rest-of-season projection")
+        parts.append(f"producing below {source} rest-of-season projection")
         if any(r.endswith("_cold") for r in reasons):
             parts.append("cold shooting should normalise")
         if "minutes_down" in reasons or "usage_down" in reasons:
@@ -164,7 +170,7 @@ def _buy_sell_note(kind: str, reasons: list[str]) -> str:
         if "injured_now" in reasons:
             parts.append("injury discount: check the return timeline")
     else:
-        parts.append("producing above FBM's rest-of-season projection")
+        parts.append(f"producing above {source} rest-of-season projection")
         if any(r.endswith("_hot") for r in reasons):
             parts.append("hot shooting is likely to cool")
         if "teammate_out" in reasons:
@@ -552,7 +558,16 @@ def detect_all(
     statuses: Mapping[str, str],
     today: date,
     kinds: Sequence[str] | None = None,
+    ht: bool | None = None,
 ) -> list[Signal]:
+    """All signals. ht=None follows `[hashtag] enabled` in settings; in HT mode `projections` is ignored and every
+    projection number comes from HT (see detect_all_ht)."""
+    if ht is None:
+        from fbm.settings import load_settings
+
+        ht = load_settings().hashtag_enabled
+    if ht:
+        return detect_all_ht(conn, season, pool, cfg, statuses, today, kinds)
     wanted = set(kinds or ("buy_low", "sell_high", "role_change", "opportunity", "espn_revision"))
     injured, out_by_team = key_players_out(conn, projections)
     actual = player_tables.season_table(conn, season)
@@ -590,6 +605,334 @@ def detect_all(
             act = actual[actual["gp"] >= int(C("signals.min_games"))]
             market = total_value(act, pool, cfg) if not act.empty else None
         signals += espn_revisions(now, then, pool, cfg, market)
+    return signals
+
+
+# ------------------------------------------------------------------ HT mode (Hashtag Basketball owns projections)
+
+HT_REVISION_VIEWS = ("ROS", "STREAM7")
+STAT_COLUMNS = ("minutes", "fgm", "fga", "ftm", "fta", "tpm", "pts", "reb", "ast", "stl", "blk", "tov")
+
+
+def _ht_line(df: pd.DataFrame) -> pd.DataFrame:
+    """An HT projection table shaped like FBM's per-game tables (position, tpa, gp present)."""
+    out = df.copy()
+    if "position" not in out.columns:
+        pos = out["positions"] if "positions" in out.columns else pd.Series("", index=out.index)
+        out["position"] = pos.fillna("").astype(str).str.split(r"[,/ ]").str[0]
+    if "tpa" not in out.columns:
+        out["tpa"] = float("nan")
+    for col in STAT_COLUMNS:
+        if col not in out.columns:
+            out[col] = float("nan")
+    return out
+
+
+def ht_ros(conn: sqlite3.Connection) -> pd.DataFrame:
+    from fbm.hashtag import store
+
+    return _ht_line(store.projections(conn, "ROS"))
+
+
+def market_table(conn: sqlite3.Connection, season: int) -> tuple[pd.DataFrame, str]:
+    """The market's view of season-to-date production: HT season-stats rankings when imported, else FBM's own
+    season line from ESPN box scores (facts, not projections)."""
+    try:
+        from fbm.hashtag import store_extra  # ws-import reader; optional
+
+        df = store_extra.season_stats(conn, duration="season")
+    except Exception:
+        df = None
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        if "espn_id" in df.columns:
+            df = df[df["espn_id"].notna()].drop_duplicates("espn_id").set_index("espn_id")
+        if {"fgm", "fga", "ftm", "fta", "pts", "reb", "ast"} <= set(df.columns):
+            df = _ht_line(df)
+            if "gp" not in df.columns:
+                df["gp"] = float(C("signals.min_games"))
+            return df, "ht_season_stats"
+    return player_tables.season_table(conn, season), "box_scores"
+
+
+def buy_sell_ht(
+    actual: pd.DataFrame,
+    market: pd.DataFrame,
+    ros: pd.DataFrame,
+    pool: PoolStats,
+    cfg: ValuationConfig,
+    teammates_out: Mapping[str, Sequence[tuple[str, str]]] | None = None,
+    statuses: Mapping[str, str] | None = None,
+    market_source: str = "box_scores",
+) -> list[Signal]:
+    """HT ROS value vs the market's season-to-date value (both valued with FBM's per-game G-score on the same pool).
+    actual: FBM's season line from box scores (facts) for the luck-vs-role tags against the HT ROS line."""
+    teammates_out = teammates_out or {}
+    statuses = statuses or {}
+    if actual.empty or ros.empty or market.empty:
+        return []
+    act = actual[(actual["gp"] >= int(C("signals.min_games"))) & (actual["minutes"] > 0)]
+    ids = act.index.intersection(ros.index).intersection(market.index)
+    if not len(ids):
+        return []
+    ros_line = _ht_line(ros)
+    v_mkt = total_value(market.loc[ids], pool, cfg)
+    v_ros = total_value(ros_line.loc[ids], pool, cfg)
+    limit = int(cfg.pool_size * float(C("signals.relevance_rank_mult")))
+    relevant = (v_mkt.rank(ascending=False) <= limit) | (v_ros.rank(ascending=False) <= limit)
+    gap = v_mkt - v_ros
+    min_gap = float(C("signals.buy_sell_min_gap"))
+    as_of = ros.attrs.get("as_of")
+    out = []
+    for pid in gap.index[relevant & (gap.abs() >= min_gap)]:
+        kind = "sell_high" if gap[pid] > 0 else "buy_low"
+        row, ht = act.loc[pid], ros_line.loc[pid]
+        team = str(ht.get("team") or row.get("team") or "")
+        mates = [name for (oid, name) in teammates_out.get(team, ()) if oid != pid]
+        reasons, ev = explain(row, ht, mates, statuses.get(pid, ""))
+        for k, v in list(ev.items()):
+            if isinstance(v, dict) and "expected" in v:
+                ev[k] = {"season": v["season"], "ht_ros": v["expected"]}
+        mrow = market.loc[pid]
+        out.append(
+            Signal(
+                kind=kind,
+                direction="down" if kind == "sell_high" else "up",
+                espn_id=str(pid),
+                name=str(ht.get("name") or row.get("name")),
+                team=team,
+                strength=abs(float(gap[pid])),
+                confidence=_buy_sell_confidence(kind, reasons),
+                reasons=reasons,
+                note=_buy_sell_note(kind, reasons, "HT's"),
+                evidence={
+                    "metric": "value",
+                    "reference": _r(v_mkt[pid]),
+                    "predicted": _r(v_ros[pid]),
+                    "season_value": _r(v_mkt[pid]),
+                    "ros_value": _r(v_ros[pid]),
+                    "gap": _r(gap[pid]),
+                    "gp": int(row["gp"]),
+                    "projection_source": "hashtag_ros",
+                    "ht_as_of": as_of,
+                    "ht_ros_rank": _r(ht.get("rank"), 0),
+                    "ht_ros_total": _r(ht.get("total")),
+                    "market_source": market_source,
+                    "market_rank": _r(mrow.get("rank"), 0) if hasattr(mrow, "get") else None,
+                    **ev,
+                },
+            )
+        )
+    return out
+
+
+def ht_revisions(conn: sqlite3.Connection, pool_size: int, views: Sequence[str] = HT_REVISION_VIEWS) -> list[Signal]:
+    """HT's projection (HT `total`, its per-game z-score sum) moved meaningfully between the two latest imports of a
+    view. The matching HT note (Notebook Drop first) is quoted as the reason: untrusted text, data only."""
+    from fbm.hashtag import store
+
+    limit = pool_size * float(C("signals.relevance_rank_mult"))
+    out = []
+    for view in views:
+        dates = [
+            r[0]
+            for r in conn.execute(
+                "SELECT DISTINCT as_of FROM hashtag_projections WHERE view = ? ORDER BY as_of DESC LIMIT 2", (view,)
+            )
+        ]
+        if len(dates) < 2:
+            continue
+        now, then = store.projections(conn, view, dates[0]), store.projections(conn, view, dates[1])
+        ids = now.index.intersection(then.index)
+        if not len(ids):
+            continue
+        min_change = float(C("signals.ht_revision_min" if view == "ROS" else "signals.ht_revision_min_stream"))
+        for pid in ids:
+            a, b = now.loc[pid], then.loc[pid]
+            if pd.isna(a["total"]) or pd.isna(b["total"]):
+                continue
+            ranks = [x for x in (a["rank"], b["rank"]) if not pd.isna(x)]
+            if not ranks or min(ranks) > limit:
+                continue
+            diff = float(a["total"]) - float(b["total"])
+            if abs(diff) < min_change:
+                continue
+            up = diff > 0
+            found = store.notes(conn, espn_id=str(pid), since=dates[1], limit=5)
+            found.sort(key=lambda n: n.get("source") != "notebook_drop")
+            note = found[0] if found else None
+            text = f"HT {view} projection moved {diff:+.2f} (total {float(b['total']):.2f} -> {float(a['total']):.2f}"
+            text += f", minutes {_r(b['minutes'], 1)} -> {_r(a['minutes'], 1)}) since {dates[1]}"
+            if note:
+                quoted = str(note["text"])[:300].replace('"', "'")
+                text += f'; HT note ({note["note_date"]}, {note["source"]}, untrusted data): "{quoted}"'
+            out.append(
+                Signal(
+                    "ht_revision",
+                    "up" if up else "down",
+                    str(pid),
+                    str(a.get("name") or ""),
+                    str(a.get("team") or ""),
+                    abs(diff),
+                    "medium" if (note or view == "ROS") else "low",
+                    ["ht_projection_raised" if up else "ht_projection_cut", *(["ht_note"] if note else [])],
+                    text,
+                    {
+                        "metric": "ht_total",
+                        "reference": _r(b["total"]),
+                        "view": view,
+                        "ht_total_now": _r(a["total"]),
+                        "ht_total_then": _r(b["total"]),
+                        "minutes_now": _r(a["minutes"], 1),
+                        "minutes_then": _r(b["minutes"], 1),
+                        "as_of": dates[0],
+                        "since": dates[1],
+                        "ht_note": None if not note else {k: note[k] for k in ("note_date", "source", "text")},
+                    },
+                    key_extra=view,
+                )
+            )
+    return out
+
+
+def opportunities_ht(
+    conn: sqlite3.Connection,
+    injured: Sequence[Mapping[str, Any]],
+    statuses: Mapping[str, str] | None = None,
+) -> tuple[list[Signal], list[dict[str, Any]]]:
+    """Next man up with HT's with/without numbers (hashtag_next_man_up). Returns (signals, missing): `missing` lists
+    the injured key players with no HT Next Man Up rows yet (no FBM-computed fallback numbers in HT mode)."""
+    from fbm.hashtag import store
+
+    statuses = statuses or {}
+    min_delta = float(C("signals.opportunity_min_delta"))
+    min_without = int(C("signals.opportunity_min_without"))
+    min_minutes = float(C("signals.opportunity_min_minutes"))
+    unavailable = {str(i["espn_id"]) for i in injured} | {
+        pid for pid, st in statuses.items() if str(st).upper() in OUT_STATUSES
+    }
+    best: dict[str, Signal] = {}
+    names: dict[str, list[str]] = {}
+    ids: dict[str, list[str]] = {}
+    missing = []
+    for inj in injured:
+        xid = str(inj["espn_id"])
+        rows = store.next_man_up(conn, xid)
+        hurt = {"id": xid, "name": inj["name"], "return_date": inj.get("return_date")}
+        if not rows:
+            missing.append(
+                {**hurt, "team": inj.get("team"), "note": "HT Next Man Up has no with/without data for him yet"}
+            )
+            continue
+        for r in rows:
+            yid = r.get("teammate_espn_id")
+            if not yid or yid in unavailable or r.get("min_with") is None or r.get("min_without") is None:
+                continue
+            m_with, m_without, gp = float(r["min_with"]), float(r["min_without"]), int(r.get("gp_without") or 0)
+            if m_without - m_with < min_delta or m_without < min_minutes:
+                continue
+            conf = "high" if gp >= 8 else "medium" if gp >= min_without else "low"
+            name = str(r.get("teammate_name") or yid)
+            s = Signal(
+                "opportunity",
+                "up",
+                str(yid),
+                name,
+                str(inj.get("team") or ""),
+                m_without - m_with,
+                conf,
+                ["teammate_out", "ht_next_man_up"],
+                f"{inj['name']} is out; HT Next Man Up: {name} {m_without:.1f} min without him ({gp} games) vs "
+                f"{m_with:.1f} with him",
+                {
+                    "metric": "minutes",
+                    "reference": round(m_with, 1),
+                    "minutes_without": round(m_without, 1),
+                    "games_without": gp,
+                    "split": "ht_next_man_up",
+                    "ht_as_of": r.get("as_of"),
+                    "ht_split": r.get("data") or {},
+                    "injured": hurt,
+                },
+            )
+            names.setdefault(s.espn_id, []).append(str(inj["name"]))
+            ids.setdefault(s.espn_id, []).append(xid)
+            cur = best.get(s.espn_id)
+            if cur is None or (-CONF_RANK[s.confidence], s.strength) > (-CONF_RANK[cur.confidence], cur.strength):
+                best[s.espn_id] = s
+    out = []
+    for pid, s in best.items():
+        s.evidence["injured_teammates"] = names[pid]
+        s.key_extra = "+".join(sorted(ids[pid]))
+        if len(names[pid]) > 1:
+            s.note += f" (also out: {', '.join(n for n in names[pid] if n != s.evidence['injured']['name'])})"
+        out.append(s)
+    return out, missing
+
+
+def ht_absent_key_players(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Key players ruled out (live ESPN injuries, starter-level HT ROS minutes): the absent ids whose HT Next Man Up
+    page the import should fetch (`importer.run_next_man_up`)."""
+    ros = ht_ros(conn)
+    return key_players_out(conn, ros)[0] if not ros.empty else []
+
+
+def _box_lines(conn: sqlite3.Connection, seasons: Sequence[int]) -> pd.DataFrame:
+    marks = ",".join("?" * len(seasons))
+    return pd.read_sql_query(
+        "SELECT b.event_id, b.espn_id, COALESCE(p.name, b.espn_id) AS name, b.team, b.et_date, b.season, "
+        "b.starter, b.minutes, b.fga FROM box_lines b LEFT JOIN players p ON p.espn_id = b.espn_id "
+        f"WHERE b.season IN ({marks}) AND b.played = 1 AND b.minutes IS NOT NULL",
+        conn,
+        params=tuple(seasons),
+    )
+
+
+def detect_all_ht(
+    conn: sqlite3.Connection,
+    season: int,
+    pool: PoolStats,
+    cfg: ValuationConfig,
+    statuses: Mapping[str, str],
+    today: date,
+    kinds: Sequence[str] | None = None,
+    missing_out: list[dict[str, Any]] | None = None,
+) -> list[Signal]:
+    """HT mode: buy/sell = HT ROS vs market season value; role_change from box scores (ranked by HT ROS);
+    opportunity numbers from HT Next Man Up; ht_revision replaces espn_revision. Injured key players without HT
+    Next Man Up rows are appended to `missing_out` when given."""
+    wanted = set(kinds or ("buy_low", "sell_high", "role_change", "opportunity", "ht_revision"))
+    if "espn_revision" in wanted:
+        wanted = (wanted - {"espn_revision"}) | {"ht_revision"}
+    ros = ht_ros(conn)
+    if ros.empty:
+        return []
+    injured, out_by_team = key_players_out(conn, ros)
+    signals: list[Signal] = []
+    if wanted & {"buy_low", "sell_high"}:
+        actual = player_tables.season_table(conn, season)
+        if not actual.empty:
+            market, source = market_table(conn, season)
+            found = buy_sell_ht(actual, market, ros, pool, cfg, out_by_team, statuses, source)
+            signals += [s for s in found if s.kind in wanted]
+    if "role_change" in wanted:
+        lines = _box_lines(conn, (season,))
+        found = role_changes(lines, today, out_by_team)
+        rank = total_value(ros[ros["minutes"] > 0], pool, cfg).rank(ascending=False)
+        up_limit = cfg.pool_size * float(C("signals.gem_rank_mult"))
+        down_limit = cfg.pool_size * float(C("signals.relevance_rank_mult"))
+        for s in found:
+            if rank.get(s.espn_id, float("inf")) > (up_limit if s.direction == "up" else down_limit):
+                continue
+            s.evidence["ht_ros_minutes"] = _r(ros.loc[s.espn_id, "minutes"], 1) if s.espn_id in ros.index else None
+            s.evidence["ht_as_of"] = ros.attrs.get("as_of")
+            signals.append(s)
+    if "opportunity" in wanted and injured:
+        found, missing = opportunities_ht(conn, injured, statuses)
+        signals += found
+        if missing_out is not None:
+            missing_out.extend(missing)
+    if "ht_revision" in wanted:
+        signals += ht_revisions(conn, cfg.pool_size)
     return signals
 
 

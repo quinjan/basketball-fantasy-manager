@@ -36,6 +36,9 @@ def call(fn, *args, **kwargs) -> Any:
     if isinstance(result, dict) and "error" in result:
         st.error(result["error"])
         st.stop()
+    if isinstance(result, dict) and result.get("error_code") == "HT_UNHEALTHY":
+        st.warning(result["message"] + "\n\n" + "\n".join(f"- {x}" for x in result.get("reasons", [])))
+        st.stop()
     return result
 
 
@@ -591,78 +594,6 @@ def page_learning() -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
-def draft_live_tab() -> None:
-    with st.form("start_draft"):
-        c1, c2, c3, c4 = st.columns(4)
-        teams = c1.number_input("Teams", 4, 20, 12)
-        slot = c2.number_input("My slot", 1, 20, 1)
-        rounds = c3.number_input("Rounds", 5, 20, 13)
-        punts = c4.multiselect("Punts", CAT_LABELS)
-        if st.form_submit_button("Start / restart draft"):
-            call(svc.draft_start, int(teams), int(slot), int(rounds), ",".join(punts))
-    try:
-        rec = svc.draft_recommend()
-    except FileNotFoundError:
-        st.info("No draft in progress.")
-        return
-    if rec.get("done"):
-        st.success("Draft complete: " + ", ".join(rec["my_team"]))
-        return
-    who = "**YOUR PICK**" if rec["is_my_pick"] else f"team {rec['on_clock']} on the clock"
-    st.markdown(f"Pick **{rec['overall']}** (round {rec['round']}) — {who} · my next picks {rec['my_next_picks']}")
-    st.dataframe(pd.DataFrame(rec["recommendations"]).drop(columns=["id"]), hide_index=True, use_container_width=True)
-    if rec["position_needs"]:
-        st.warning("Position needs: " + ", ".join(rec["position_needs"]))
-    c1, c2, c3 = st.columns([3, 1, 1])
-    name = c1.text_input("Player picked (by the team on the clock)")
-    if c2.button("Record pick", type="primary", disabled=not name):
-        call(svc.draft_pick, name)
-        st.rerun()
-    if c3.button("Undo last"):
-        call(svc.draft_undo)
-        st.rerun()
-    if rec["my_team"]:
-        st.write("My team:", ", ".join(f"{p['overall']}. {p['player']}" for p in rec["my_team"]))
-
-
-def page_draft() -> None:
-    tab_board, tab_live, tab_mock = st.tabs(["Board", "Live draft", "Mock drafts"])
-    with tab_board:
-        c1, c2, c3 = st.columns([3, 1, 1])
-        punts = c1.multiselect("Punt categories", CAT_LABELS, key="db_punts")
-        pos = c2.selectbox("Position", POSITIONS, key="db_pos")
-        top = c3.number_input("Rows", 20, 400, 150, step=10, key="db_top")
-        r = call(cached, "draft_board", int(top), ",".join(punts), None if pos == "All" else pos, True)
-        df = pd.DataFrame(r["players"]).drop(columns=["id"])
-        df["positions"] = df["positions"].map("/".join)
-        st.dataframe(
-            df.style.map(color_value, subset=["value"]).format(precision=2),
-            hide_index=True,
-            use_container_width=True,
-            height=560,
-        )
-        st.caption(r["notes"])
-    with tab_live:
-        draft_live_tab()
-    with tab_mock:
-        c1, c2, c3 = st.columns(3)
-        slot = c1.number_input("My slot", 1, 20, 1, key="mk_slot")
-        punts = c2.multiselect("Punts", CAT_LABELS, key="mk_punts")
-        runs = c3.number_input("Runs", 1, 10, 3, key="mk_runs")
-        if st.button("Run mock drafts", type="primary"):
-            r = call(svc.draft_mock, int(slot), 12, 13, ",".join(punts), int(runs))
-            st.metric("Average expected categories won", f"{r['avg_expected_cats']:.2f}")
-            for run in r["runs"]:
-                st.markdown(
-                    f"**Run {run['run']}** — {run['my_expected_cats']:.2f} expected cats, rank {run['rank_of_teams']}"
-                )
-                st.caption(" · ".join(run["my_picks"]))
-            st.caption(
-                "Optimistic by design (others draft by ADP; the model grades its own picks). Compare "
-                "strategies relative to each other."
-            )
-
-
 def page_memory() -> None:
     tabs = st.tabs(["Strategy", "Playbook", "Journal", "Managers"])
     with tabs[0]:
@@ -739,7 +670,6 @@ PAGES = {
     "Strategy": page_strategy,
     "Proposals": page_proposals,
     "Learning": page_learning,
-    "Draft": page_draft,
     "Memory": page_memory,
     "Playoffs": page_playoffs,
     "Constants": page_constants,

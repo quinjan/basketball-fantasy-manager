@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html><body><form method="post" action="./fantasy-basketball-projections" id="form1"><a id="LoginStatus2" href="javascript:__doPostBack(&#x27;ctl00$LoginStatus2$ctl00&#x27;,&#x27;&#x27;)">Logout</a>
+<div class="aspNetHidden">
+<input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="" />
+<input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="" />
+<input type="hidden" name="__LASTFOCUS" id="__LASTFOCUS" value="" />
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="dummyviewstate" />
+</div>
+<div class="aspNetHidden">
+ <input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="BC77D2EC" />
+ <input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="dummyvalidation" />
+</div>
+ <div id="UpdatePanel1">
+ <div class="app-content content">
+ <div class="content-overlay"></div>
+ <div class="header-navbar-shadow"></div>
+ <div class="content-wrapper container-xxl p-0">
+ <div class="content-body">
+ <div class="psg-header-row">
+ <h5>Fantasy Basketball Projections</h5>
+ <div class="psg-loading-inline" id="psg-loading">
+ <div class="psg-loading-inline__spinner"></div>
+ <span class="psg-loading-inline__text">Loading...</span>
+ </div>
+ </div>
+ <div class="d-flex justify-content-between align-items-center flex-wrap mb-1">
+ <span>Fantasy basketball projections and rest of season rankings for the 2026-27 NBA season with the ability to customize rankings by category and rank type.</span>
+ <span class="text-muted"><strong>Updated:</strong> 26 October 2026 by Joseph Mamone <span class="d-none d-sm-inline">(<a href="https://twitter.com/josephmamone"></a>)</span></span>
+ </div>
+ <div class="psg-filter-card">
+ <div class="psg-mobile-toggle" data-target="psg-filters-panel">
+ <span class="psg-mobile-toggle__label">Filter Options</span>
+ </div>
+ <div class="psg-section psg-section--toolbar psg-section--filters" id="psg-filters-panel">
+ <div class="psg-toolbar-row">
+ <div class="psg-control-group">
+ <span class="psg-control-label">Show</span>
+ <select name="ctl00$ContentPlaceHolder1$DDSHOW" id="ContentPlaceHolder1_DDSHOW" class="form-select form-select-sm">
+ <option value="50">50</option>
+ <option value="100">100</option>
+ <option value="200">Top 200</option>
+ <option value="300">300</option>
+ <option value="400">400</option>
+ <option selected="selected" value="900">All</option>
+ </select>
+ </div>
+ <div class="psg-control-group">
+ <span class="psg-control-label">Min GP</span>
+ <select name="ctl00$ContentPlaceHolder1$DDGAMES" id="ContentPlaceHolder1_DDGAMES" class="form-select form-select-sm">
+ <option value="0">0</option>
+ <option selected="selected" value="1">1</option>
+ <option value="2">2</option>
+ <option value="3">3</option>
+ <option value="5">5</option>
+ <option value="10">10</option>
+ <option value="15">15</option>
+ <option value="20">20</option>
+ <option value="30">30</option>
+ <option value="40">40</option>
+ <option value="50">50</option>
+ <option value="60">60</option>
+ <option value="70">70</option>
+ </select>
+ </div>
+ <div class="psg-control-group">
+ <span class="psg-control-label">Z Score</span>
+ <select name="ctl00$ContentPlaceHolder1$DropDownList1" id="ContentPlaceHolder1_DropDownList1" class="form-select form-select-sm">
+ <option value="On">On</option>
+ <option selected="selected" value="Off">Off</option>
+ </select>
+ </div>
+ <div class="psg-control-group">
+ <span class="psg-control-label">Position</span>
+ <select name="ctl00$ContentPlaceHolder1$DDPOS" id="ContentPlaceHolder1_DDPOS" class="form-select form-select-sm">
+ <option selected="selected" value="All">All</option>
+ <option value="PG">PG</option>
+ <option value="SG">SG</option>
+ <option value="SF">SF</option>
+ <option value="PF">PF</option>
+ <option value="C">C</option>
+ </select>
+ </div>
+ <div class="psg-control-group">
+ <span class="psg-control-label">Pos &amp; ADP</span>
+ <select name="ctl00$ContentPlaceHolder1$DDPOSFROM" id="ContentPlaceHolder1_DDPOSFROM" class="form-select form-select-sm">
+ <option selected="selected" value="1">Yahoo</option>
+ <option value="3">ESPN</option>
+ <option value="2">Fantrax</option>
+ </select>
+ </div>
+ <div class="psg-control-group">
+ <span class="psg-control-label">Team</span>
+ <select name="ctl00$ContentPlaceHolder1$DDTSUM" id="ContentPlaceHolder1_DDTSUM" class="form-select form-select-sm">
+ <option selected="selected" value="All">All</option>
+ <option value="ATL">ATL</option>
+ <option value="BKN">BKN</option>
+ <option value="BOS">BOS</option>
+ <option value="CHA">CHA</option>
+ <option value="CHI">CHI</option>
+ <option value="CLE">CLE</option>
+ <option value="DAL">DAL</option>
+ <option value="DEN">DEN</option>
+ <option value="DET">DET</option>
+ <option value="GS">GS</option>
+ <option value="HOU">HOU</option>
+ <option value="IND">IND</option>
+ <option value="LAC">LAC</option>
+ <option value="LAL">LAL</option>
+ <option value="MEM">MEM</option>
+ <option value="MIA">MIA</option>
+ <option value="MIL">MIL</option>
+ <option value="MIN">MIN</option>
+ <option value="NO">NO</option>
+ <option value="NY">NY</option>
+ <option value="OKC">OKC</option>
+ <option value="ORL">ORL</option>
+ <option value="PHI">PHI</option>
+ <option value="PHO">PHO</option>
+ <option value="POR">POR</option>
+ <option value="SA">SA</option>
+ <option value="SAC">SAC</option>
+ <option value="TOR">TOR</option>
+ <option value="UTA">UTA</option>
+ <option value="WAS">WAS</option>
+ </select>
+ </div>
+ <div class="psg-control-group">
+ <span class="psg-control-label">Data From</span>
+ <select name="ctl00$ContentPlaceHolder1$DDDURATION" id="ContentPlaceHolder1_DDDURATION" class="form-select form-select-sm">
+ <option value="0">2026-27 Rest of Season Projections</option>
+ <option value="77">2026-27 Rest of Season Projections (BLEND7)</option>
+ <option value="1414">2026-27 Rest of Season Projections (BLEND14)</option>
+ <option value="3030">2026-27 Rest of Season Projections (BLEND30)</option>
+ <option selected="selected" value="777">2026-27 Short Term Projections (STREAM7)</option>
+ <option value="141414">2026-27 Short Term Projections (STREAM14)</option>
+ <option value="303030">2026-27 Short Term Projections (STREAM30)</option>
+ </select>
+ </div>
+ <div class="psg-control-group">
+ <span class="psg-control-label">Based On</span>
+ <select name="ctl00$ContentPlaceHolder1$DDRANK" id="ContentPlaceHolder1_DDRANK" class="form-select form-select-sm">
+ <option value="TOT">Total</option>
+ <option selected="selected" value="AVG">Averages</option>
+ <option value="COM">Combined</option>
+ </select>
+ </div>
+ <div class="psg-control-group">
+ <span class="psg-control-label">Type</span>
+ <select name="ctl00$ContentPlaceHolder1$DDTYPE" id="ContentPlaceHolder1_DDTYPE" class="form-select form-select-sm">
+ <option value="STA">Standard</option>
+ <option selected="selected" value="H2H">H2H</option>
+ <option value="M1">Minus 1</option>
+ </select>
+ </div>
+ <div class="psg-control-group">
+ <span class="psg-control-label">GP Penalty</span>
+ <select name="ctl00$ContentPlaceHolder1$DDPEN" id="ContentPlaceHolder1_DDPEN" class="form-select form-select-sm">
+ <option value="0.00">Off</option>
+ <option value="0.10">10%</option>
+ <option selected="selected" value="0.20">20%</option>
+ <option value="0.30">30%</option>
+ </select>
+ </div>
+ </div>
+ </div>
+ <div class="psg-mobile-toggle" data-target="psg-categories-panel">
+ <span class="psg-mobile-toggle__label">Categories</span>
+ </div>
+ <div class="psg-section psg-section--categories" id="psg-categories-panel">
+ <div class="psg-control-group">
+ <span class="psg-control-label psg-control-label--desktop">Categories &amp; Multipliers</span>
+ <div class="psg-category-grid">
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBFGM" type="checkbox" name="ctl00$ContentPlaceHolder1$CBFGM" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBFGM\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBFGM">FGM</label>
+ <select name="ctl00$ContentPlaceHolder1$DDFGM" id="ContentPlaceHolder1_DDFGM" disabled="disabled" class="aspNetDisabled form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBFGP" type="checkbox" name="ctl00$ContentPlaceHolder1$CBFGP" checked="checked" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBFGP\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBFGP">FG%</label>
+ <select name="ctl00$ContentPlaceHolder1$DDFGP" id="ContentPlaceHolder1_DDFGP" class="form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBFTM" type="checkbox" name="ctl00$ContentPlaceHolder1$CBFTM" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBFTM\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBFTM">FTM</label>
+ <select name="ctl00$ContentPlaceHolder1$DDFTM" id="ContentPlaceHolder1_DDFTM" disabled="disabled" class="aspNetDisabled form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBFTP" type="checkbox" name="ctl00$ContentPlaceHolder1$CBFTP" checked="checked" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBFTP\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBFTP">FT%</label>
+ <select name="ctl00$ContentPlaceHolder1$DDFTP" id="ContentPlaceHolder1_DDFTP" class="form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CB3PM" type="checkbox" name="ctl00$ContentPlaceHolder1$CB3PM" checked="checked" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CB3PM\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CB3PM">3PM</label>
+ <select name="ctl00$ContentPlaceHolder1$DD3PM" id="ContentPlaceHolder1_DD3PM" class="form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CB3PP" type="checkbox" name="ctl00$ContentPlaceHolder1$CB3PP" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CB3PP\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CB3PP">3P%</label>
+ <select name="ctl00$ContentPlaceHolder1$DD3PP" id="ContentPlaceHolder1_DD3PP" disabled="disabled" class="aspNetDisabled form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBPTS" type="checkbox" name="ctl00$ContentPlaceHolder1$CBPTS" checked="checked" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBPTS\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBPTS">PTS</label>
+ <select name="ctl00$ContentPlaceHolder1$DDPTS" id="ContentPlaceHolder1_DDPTS" class="form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBATO" type="checkbox" name="ctl00$ContentPlaceHolder1$CBATO" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBATO\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBATO">A/TO</label>
+ <select name="ctl00$ContentPlaceHolder1$DDATO" id="ContentPlaceHolder1_DDATO" disabled="disabled" class="aspNetDisabled form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBDREB" type="checkbox" name="ctl00$ContentPlaceHolder1$CBDREB" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBDREB\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBDREB">DREB</label>
+ <select name="ctl00$ContentPlaceHolder1$DDDREB" id="ContentPlaceHolder1_DDDREB" disabled="disabled" class="aspNetDisabled form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBOREB" type="checkbox" name="ctl00$ContentPlaceHolder1$CBOREB" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBOREB\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBOREB">OREB</label>
+ <select name="ctl00$ContentPlaceHolder1$DDOREB" id="ContentPlaceHolder1_DDOREB" disabled="disabled" class="aspNetDisabled form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBREB" type="checkbox" name="ctl00$ContentPlaceHolder1$CBREB" checked="checked" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBREB\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBREB">TREB</label>
+ <select name="ctl00$ContentPlaceHolder1$DDREB" id="ContentPlaceHolder1_DDREB" class="form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBAST" type="checkbox" name="ctl00$ContentPlaceHolder1$CBAST" checked="checked" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBAST\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBAST">AST</label>
+ <select name="ctl00$ContentPlaceHolder1$DDAST" id="ContentPlaceHolder1_DDAST" class="form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBSTL" type="checkbox" name="ctl00$ContentPlaceHolder1$CBSTL" checked="checked" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBSTL\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBSTL">STL</label>
+ <select name="ctl00$ContentPlaceHolder1$DDSTL" id="ContentPlaceHolder1_DDSTL" class="form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBBLK" type="checkbox" name="ctl00$ContentPlaceHolder1$CBBLK" checked="checked" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBBLK\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBBLK">BLK</label>
+ <select name="ctl00$ContentPlaceHolder1$DDBLK" id="ContentPlaceHolder1_DDBLK" class="form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBTO" type="checkbox" name="ctl00$ContentPlaceHolder1$CBTO" checked="checked" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBTO\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBTO">TO</label>
+ <select name="ctl00$ContentPlaceHolder1$DDTO" id="ContentPlaceHolder1_DDTO" class="form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option selected="selected" value=".25">x 0.25</option>
+ </select>
+ </div>
+ <div class="psg-category-item">
+ <input id="ContentPlaceHolder1_CBDD" type="checkbox" name="ctl00$ContentPlaceHolder1$CBDD" onclick="javascript:setTimeout(&#x27;__doPostBack(\&#x27;ctl00$ContentPlaceHolder1$CBDD\&#x27;,\&#x27;\&#x27;)&#x27;, 0)" />
+ <label for="ContentPlaceHolder1_CBDD">DD</label>
+ <select name="ctl00$ContentPlaceHolder1$DDDD" id="ContentPlaceHolder1_DDDD" disabled="disabled" class="aspNetDisabled form-select">
+ <option value="3">x 3</option>
+ <option value="2.5">x 2.5</option>
+ <option value="2">x 2</option>
+ <option value="1.5">x 1.5</option>
+ <option value="1.25">x 1.25</option>
+ <option selected="selected" value="1">x 1</option>
+ <option value=".75">x 0.75</option>
+ <option value=".5">x 0.5</option>
+ <option value=".25">x 0.25</option>
+ </select>
+ </div>
+ </div>
+ </div>
+ </div>
+ <div class="psg-legend-row">
+ <div class="psg-legend-group">
+ <span class="psg-legend-label">Definitions:</span>
+ <div class="psg-legend-icons">
+ <span class="badge rounded-pill color-neutral" title="Fixture note text.">TOTAL</span>
+ <span class="badge rounded-pill color-neutral" title="Projected games to play">GP</span>
+ <span class="badge rounded-pill color-neutral" title="Fixture note text.">ADP</span>
+ <span class="icon-injured" title="Player is currently injured"></span>
+ <span class="icon-in-doubt" title="Player is in doubt"></span>
+ <span title="Rookie"></span>
+ <span class="text-success" title="Fixture note text."></span>
+ <span class="text-danger" title="Fixture note text."></span>
+ <span class="text-secondary" title="Fixture note text."></span>
+ </div>
+ </div>
+ <div class="psg-legend-group d-none d-sm-flex">
+ <span class="psg-legend-label">Data:</span>
+ <span class="badge rounded-pill color-neutral" title="Rest of season projections">PROJECTIONS</span>
+ <span class="badge rounded-pill color-neutral" title="Fixture note text.">BLEND</span>
+ <span class="badge rounded-pill color-neutral" title="Fixture note text.">STREAM</span>
+ </div>
+ <div class="psg-legend-group d-none d-sm-flex">
+ <span class="psg-legend-label">Types:</span>
+ <span class="badge rounded-pill color-neutral" title="Fixture note text.">STANDARD</span>
+ <span class="badge rounded-pill color-neutral" title="Fixture note text.">H2H</span>
+ <span class="badge rounded-pill color-neutral" title="Fixture note text.">MINUS 1</span>
+ </div>
+ <div class="psg-legend-group d-none d-sm-flex">
+ <span class="psg-legend-label">Performance:</span>
+ <span class="badge rounded-pill color-rating-6">Elite</span>
+ <span class="badge rounded-pill color-rating-5">Very Good</span>
+ <span class="badge rounded-pill color-rating-4">Good</span>
+ <span class="badge rounded-pill color-rating-3">Average</span>
+ <span class="badge rounded-pill color-rating-2">Below Avg</span>
+ <span class="badge rounded-pill color-rating-1">Not Good</span>
+ </div>
+ </div>
+ </div>
+ <div class="psg-data-card psg-data-card--flush">
+ <div class="card-body">
+ <div class="table-responsive">
+ <div>
+ <table class="table table-sm table-bordered table-striped table--statistics sticky-cols sticky-rank-pill" cellspacing="0" rules="all" border="1" id="ContentPlaceHolder1_GridView1">
+ <tr>
+ <th class="mw50" scope="col">R#</th><th class="mw220" scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$NAME&#x27;)">PLAYER</a></th><th class="mw50" scope="col">ADP</th><th scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$posm&#x27;)">POS</a></th><th scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$tsum&#x27;)">TEAM</a></th><th scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$GP&#x27;)">GP</a></th><th scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$MPG&#x27;)">MPG</a></th><th class="mw120" scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$fgp&#x27;)">FG%</a></th><th class="mw120" scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$ftp&#x27;)">FT%</a></th><th scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$tgm&#x27;)">3PM</a></th><th scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$pts&#x27;)">PTS</a></th><th scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$reb&#x27;)">TREB</a></th><th scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$ast&#x27;)">AST</a></th><th scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$stl&#x27;)">STL</a></th><th scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$blk&#x27;)">BLK</a></th><th scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$tur&#x27;)">TO</a></th><th scope="col"><a href="javascript:__doPostBack(&#x27;ctl00$ContentPlaceHolder1$GridView1&#x27;,&#x27;Sort$totalz&#x27;)">TOTAL</a></th>
+ </tr><tr>
+ <td>
+ 1
+ </td><td>
+ <a id="ContentPlaceHolder1_GridView1_HyperLink1_0" class="d-none d-sm-inline" href="/9196/player" target="_blank">Nikola Jokic</a><a id="ContentPlaceHolder1_GridView1_HyperLinkShort_0" class="d-inline d-sm-none" href="/9196/player" target="_blank">N.Jokic</a><span class="text-danger" title="Fixture note text."></span>
+ </td><td>
+ </td><td>C</td><td>DEN</td><td>72</td><td>39.5</td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFfgpzz" id="ContentPlaceHolder1_GridView1_HFfgpzz_0" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LFGP_0" class="float-start">0.488</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFFGP" id="ContentPlaceHolder1_GridView1_HFFGP_0" value="0.5449872000" />
+ <span class="float-end small">(10.2/20.8)</span>
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFftpzz" id="ContentPlaceHolder1_GridView1_HFftpzz_0" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LFTP_0" class="float-start">0.823</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFFTP" id="ContentPlaceHolder1_GridView1_HFFTP_0" value="0.9603471000" />
+ <span class="float-end small">(5.6/6.8)</span>
+ <br />
+ </td><td>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFtgmzz" id="ContentPlaceHolder1_GridView1_HFtgmzz_0" />
+ <span id="ContentPlaceHolder1_GridView1_LTGM_0">2.0</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFTGM" id="ContentPlaceHolder1_GridView1_HFTGM_0" value="0.4157116117" />
+ <br />
+ </td><td class="vgood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFptszz" id="ContentPlaceHolder1_GridView1_HFptszz_0" value="vgood" />
+ <span id="ContentPlaceHolder1_GridView1_LPTS_0">28.0</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFPTS" id="ContentPlaceHolder1_GridView1_HFPTS_0" value="2.0338776712" />
+ <br />
+ </td><td class="elite">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFrebzz" id="ContentPlaceHolder1_GridView1_HFrebzz_0" value="elite" />
+ <span id="ContentPlaceHolder1_GridView1_LREB_0">12.6</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFREB" id="ContentPlaceHolder1_GridView1_HFREB_0" value="3.0125976341" />
+ <br />
+ </td><td class="elite">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFastzz" id="ContentPlaceHolder1_GridView1_HFastzz_0" value="elite" />
+ <span id="ContentPlaceHolder1_GridView1_LAST_0">9.6</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFAST" id="ContentPlaceHolder1_GridView1_HFAST_0" value="3.3942665270" />
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFstlzz" id="ContentPlaceHolder1_GridView1_HFstlzz_0" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LSTL_0">1.7</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFSTL" id="ContentPlaceHolder1_GridView1_HFSTL_0" value="1.2889744720" />
+ <br />
+ </td><td class="vgood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFblkzz" id="ContentPlaceHolder1_GridView1_HFblkzz_0" value="vgood" />
+ <span id="ContentPlaceHolder1_GridView1_LBLK_0">1.4</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFBLK" id="ContentPlaceHolder1_GridView1_HFBLK_0" value="1.8333907179" />
+ <br />
+ </td><td class="ngood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFturzz" id="ContentPlaceHolder1_GridView1_HFturzz_0" value="ngood" />
+ <span id="ContentPlaceHolder1_GridView1_LTUR_0">4.0</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl02$HFTUR" id="ContentPlaceHolder1_GridView1_HFTUR_0" value="2.4215776560" />
+ <br />
+ </td><td>
+ <span id="ContentPlaceHolder1_GridView1_Label1_0">13.98</span>
+ </td>
+ </tr><tr>
+ <td>
+ 2
+ </td><td>
+ <a id="ContentPlaceHolder1_GridView1_HyperLink1_1" class="d-none d-sm-inline" href="/120207/player" target="_blank">Cooper Flagg</a><a id="ContentPlaceHolder1_GridView1_HyperLinkShort_1" class="d-inline d-sm-none" href="/120207/player" target="_blank">C.Flagg</a><span class="icon-in-doubt" title="Player is in doubt"></span><span class="text-success" title="Fixture note text."></span><span class="text-danger" title="Fixture note text."></span>
+ </td><td>
+ </td><td>SG,SF,PF</td><td>DAL</td><td>60</td><td>34.1</td><td class="vgood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFfgpzz" id="ContentPlaceHolder1_GridView1_HFfgpzz_1" value="vgood" />
+ <span id="ContentPlaceHolder1_GridView1_LFGP_1" class="float-start">0.536</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFFGP" id="ContentPlaceHolder1_GridView1_HFFGP_1" value="1.8061644000" />
+ <span class="float-end small">(9.2/17.1)</span>
+ <br />
+ </td><td class="elite">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFftpzz" id="ContentPlaceHolder1_GridView1_HFftpzz_1" value="elite" />
+ <span id="ContentPlaceHolder1_GridView1_LFTP_1" class="float-start">0.868</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFFTP" id="ContentPlaceHolder1_GridView1_HFFTP_1" value="2.5291502000" />
+ <span class="float-end small">(7.3/8.5)</span>
+ <br />
+ </td><td>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFtgmzz" id="ContentPlaceHolder1_GridView1_HFtgmzz_1" />
+ <span id="ContentPlaceHolder1_GridView1_LTGM_1">1.7</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFTGM" id="ContentPlaceHolder1_GridView1_HFTGM_1" value="0.0306555837" />
+ <br />
+ </td><td class="vgood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFptszz" id="ContentPlaceHolder1_GridView1_HFptszz_1" value="vgood" />
+ <span id="ContentPlaceHolder1_GridView1_LPTS_1">27.4</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFPTS" id="ContentPlaceHolder1_GridView1_HFPTS_1" value="1.9460984425" />
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFrebzz" id="ContentPlaceHolder1_GridView1_HFrebzz_1" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LREB_1">7.1</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFREB" id="ContentPlaceHolder1_GridView1_HFREB_1" value="0.8260050178" />
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFastzz" id="ContentPlaceHolder1_GridView1_HFastzz_1" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LAST_1">5.2</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFAST" id="ContentPlaceHolder1_GridView1_HFAST_1" value="1.0634058612" />
+ <br />
+ </td><td class="elite">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFstlzz" id="ContentPlaceHolder1_GridView1_HFstlzz_1" value="elite" />
+ <span id="ContentPlaceHolder1_GridView1_LSTL_1">2.7</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFSTL" id="ContentPlaceHolder1_GridView1_HFSTL_1" value="3.2247514812" />
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFblkzz" id="ContentPlaceHolder1_GridView1_HFblkzz_1" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LBLK_1">1.2</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFBLK" id="ContentPlaceHolder1_GridView1_HFBLK_1" value="1.3834471567" />
+ <br />
+ </td><td class="ngood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFturzz" id="ContentPlaceHolder1_GridView1_HFturzz_1" value="ngood" />
+ <span id="ContentPlaceHolder1_GridView1_LTUR_1">3.5</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl03$HFTUR" id="ContentPlaceHolder1_GridView1_HFTUR_1" value="1.9425207082" />
+ <br />
+ </td><td>
+ <span id="ContentPlaceHolder1_GridView1_Label1_1">13.31</span>
+ </td>
+ </tr><tr>
+ <td>
+ 3
+ </td><td>
+ <a id="ContentPlaceHolder1_GridView1_HyperLink1_2" class="d-none d-sm-inline" href="/15200/player" target="_blank">Luka Doncic</a><a id="ContentPlaceHolder1_GridView1_HyperLinkShort_2" class="d-inline d-sm-none" href="/15200/player" target="_blank">L.Doncic</a><span class="text-danger" title="Fixture note text."></span>
+ </td><td>
+ </td><td>PG,SG</td><td>LAL</td><td>68</td><td>35.1</td><td>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFfgpzz" id="ContentPlaceHolder1_GridView1_HFfgpzz_2" />
+ <span id="ContentPlaceHolder1_GridView1_LFGP_2" class="float-start">0.467</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFFGP" id="ContentPlaceHolder1_GridView1_HFFGP_2" value="-0.1814456000" />
+ <span class="float-end small">(10.8/23.2)</span>
+ <br />
+ </td><td class="vgood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFftpzz" id="ContentPlaceHolder1_GridView1_HFftpzz_2" value="vgood" />
+ <span id="ContentPlaceHolder1_GridView1_LFTP_2" class="float-start">0.833</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFFTP" id="ContentPlaceHolder1_GridView1_HFFTP_2" value="1.6425124000" />
+ <span class="float-end small">(7.7/9.3)</span>
+ <br />
+ </td><td class="elite">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFtgmzz" id="ContentPlaceHolder1_GridView1_HFtgmzz_2" value="elite" />
+ <span id="ContentPlaceHolder1_GridView1_LTGM_2">4.5</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFTGM" id="ContentPlaceHolder1_GridView1_HFTGM_2" value="3.1559923413" />
+ <br />
+ </td><td class="elite">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFptszz" id="ContentPlaceHolder1_GridView1_HFptszz_2" value="elite" />
+ <span id="ContentPlaceHolder1_GridView1_LPTS_2">33.8</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFPTS" id="ContentPlaceHolder1_GridView1_HFPTS_2" value="2.8865110492" />
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFrebzz" id="ContentPlaceHolder1_GridView1_HFrebzz_2" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LREB_2">8.0</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFREB" id="ContentPlaceHolder1_GridView1_HFREB_2" value="1.1772931518" />
+ <br />
+ </td><td class="elite">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFastzz" id="ContentPlaceHolder1_GridView1_HFastzz_2" value="elite" />
+ <span id="ContentPlaceHolder1_GridView1_LAST_2">8.5</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFAST" id="ContentPlaceHolder1_GridView1_HFAST_2" value="2.8313710639" />
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFstlzz" id="ContentPlaceHolder1_GridView1_HFstlzz_2" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LSTL_2">1.7</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFSTL" id="ContentPlaceHolder1_GridView1_HFSTL_2" value="1.3849205529" />
+ <br />
+ </td><td class="bavg">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFblkzz" id="ContentPlaceHolder1_GridView1_HFblkzz_2" value="bavg" />
+ <span id="ContentPlaceHolder1_GridView1_LBLK_2">0.4</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFBLK" id="ContentPlaceHolder1_GridView1_HFBLK_2" value="-0.3493096325" />
+ <br />
+ </td><td class="ngood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFturzz" id="ContentPlaceHolder1_GridView1_HFturzz_2" value="ngood" />
+ <span id="ContentPlaceHolder1_GridView1_LTUR_2">5.5</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl04$HFTUR" id="ContentPlaceHolder1_GridView1_HFTUR_2" value="4.0260766232" />
+ <br />
+ </td><td>
+ <span id="ContentPlaceHolder1_GridView1_Label1_2">13.05</span>
+ </td>
+ </tr><tr>
+ <td>
+ 4
+ </td><td>
+ <a id="ContentPlaceHolder1_GridView1_HyperLink1_3" class="d-none d-sm-inline" href="/10113/player" target="_blank">Domantas Sabonis</a><a id="ContentPlaceHolder1_GridView1_HyperLinkShort_3" class="d-inline d-sm-none" href="/10113/player" target="_blank">D.Sabonis</a><span class="text-success" title="Fixture note text."></span><span class="text-danger" title="Fixture note text."></span>
+ </td><td>
+ </td><td>PF,C</td><td>SAC</td><td>70</td><td>36.1</td><td class="elite">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFfgpzz" id="ContentPlaceHolder1_GridView1_HFfgpzz_3" value="elite" />
+ <span id="ContentPlaceHolder1_GridView1_LFGP_3" class="float-start">0.681</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFFGP" id="ContentPlaceHolder1_GridView1_HFFGP_3" value="3.8797822000" />
+ <span class="float-end small">(7.7/11.3)</span>
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFftpzz" id="ContentPlaceHolder1_GridView1_HFftpzz_3" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LFTP_3" class="float-start">0.838</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFFTP" id="ContentPlaceHolder1_GridView1_HFFTP_3" value="0.9387304000" />
+ <span class="float-end small">(4.2/5.0)</span>
+ <br />
+ </td><td class="ngood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFtgmzz" id="ContentPlaceHolder1_GridView1_HFtgmzz_3" value="ngood" />
+ <span id="ContentPlaceHolder1_GridView1_LTGM_3">0.7</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFTGM" id="ContentPlaceHolder1_GridView1_HFTGM_3" value="-1.0628728803" />
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFptszz" id="ContentPlaceHolder1_GridView1_HFptszz_3" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LPTS_3">20.2</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFPTS" id="ContentPlaceHolder1_GridView1_HFPTS_3" value="0.9062891968" />
+ <br />
+ </td><td class="elite">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFrebzz" id="ContentPlaceHolder1_GridView1_HFrebzz_3" value="elite" />
+ <span id="ContentPlaceHolder1_GridView1_LREB_3">16.5</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFREB" id="ContentPlaceHolder1_GridView1_HFREB_3" value="4.5302835204" />
+ <br />
+ </td><td class="vgood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFastzz" id="ContentPlaceHolder1_GridView1_HFastzz_3" value="vgood" />
+ <span id="ContentPlaceHolder1_GridView1_LAST_3">7.6</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFAST" id="ContentPlaceHolder1_GridView1_HFAST_3" value="2.3203219324" />
+ <br />
+ </td><td class="bavg">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFstlzz" id="ContentPlaceHolder1_GridView1_HFstlzz_3" value="bavg" />
+ <span id="ContentPlaceHolder1_GridView1_LSTL_3">0.7</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFSTL" id="ContentPlaceHolder1_GridView1_HFSTL_3" value="-0.5745651404" />
+ <br />
+ </td><td class="bavg">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFblkzz" id="ContentPlaceHolder1_GridView1_HFblkzz_3" value="bavg" />
+ <span id="ContentPlaceHolder1_GridView1_LBLK_3">0.2</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFBLK" id="ContentPlaceHolder1_GridView1_HFBLK_3" value="-0.8139065282" />
+ <br />
+ </td><td class="ngood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFturzz" id="ContentPlaceHolder1_GridView1_HFturzz_3" value="ngood" />
+ <span id="ContentPlaceHolder1_GridView1_LTUR_3">3.5</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl05$HFTUR" id="ContentPlaceHolder1_GridView1_HFTUR_3" value="1.9881652121" />
+ <br />
+ </td><td>
+ <span id="ContentPlaceHolder1_GridView1_Label1_3">10.62</span>
+ </td>
+ </tr><tr>
+ <td>
+ 5
+ <span class="small text-muted"> 1</span>
+ </td><td>
+ <a id="ContentPlaceHolder1_GridView1_HyperLink1_4" class="d-none d-sm-inline" href="/35041/player" target="_blank">Austin Reaves</a><a id="ContentPlaceHolder1_GridView1_HyperLinkShort_4" class="d-inline d-sm-none" href="/35041/player" target="_blank">A.Reaves</a><span class="text-danger" title="Fixture note text."></span>
+ </td><td>
+ </td><td>PG,SG,SF</td><td>LAL</td><td>70</td><td>35.4</td><td class="vgood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFfgpzz" id="ContentPlaceHolder1_GridView1_HFfgpzz_4" value="vgood" />
+ <span id="ContentPlaceHolder1_GridView1_LFGP_4" class="float-start">0.540</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFFGP" id="ContentPlaceHolder1_GridView1_HFFGP_4" value="1.6515454000" />
+ <span class="float-end small">(7.9/14.6)</span>
+ <br />
+ </td><td class="elite">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFftpzz" id="ContentPlaceHolder1_GridView1_HFftpzz_4" value="elite" />
+ <span id="ContentPlaceHolder1_GridView1_LFTP_4" class="float-start">0.886</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFFTP" id="ContentPlaceHolder1_GridView1_HFFTP_4" value="3.0816155000" />
+ <span class="float-end small">(7.5/8.5)</span>
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFtgmzz" id="ContentPlaceHolder1_GridView1_HFtgmzz_4" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LTGM_4">2.7</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFTGM" id="ContentPlaceHolder1_GridView1_HFTGM_4" value="1.1136735619" />
+ <br />
+ </td><td class="vgood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFptszz" id="ContentPlaceHolder1_GridView1_HFptszz_4" value="vgood" />
+ <span id="ContentPlaceHolder1_GridView1_LPTS_4">25.9</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFPTS" id="ContentPlaceHolder1_GridView1_HFPTS_4" value="1.7375681128" />
+ <br />
+ </td><td class="bavg">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFrebzz" id="ContentPlaceHolder1_GridView1_HFrebzz_4" value="bavg" />
+ <span id="ContentPlaceHolder1_GridView1_LREB_4">3.5</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFREB" id="ContentPlaceHolder1_GridView1_HFREB_4" value="-0.5736014845" />
+ <br />
+ </td><td class="vgood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFastzz" id="ContentPlaceHolder1_GridView1_HFastzz_4" value="vgood" />
+ <span id="ContentPlaceHolder1_GridView1_LAST_4">6.1</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFAST" id="ContentPlaceHolder1_GridView1_HFAST_4" value="1.5289636762" />
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFstlzz" id="ContentPlaceHolder1_GridView1_HFstlzz_4" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LSTL_4">1.4</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFSTL" id="ContentPlaceHolder1_GridView1_HFSTL_4" value="0.8446218699" />
+ <br />
+ </td><td>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFblkzz" id="ContentPlaceHolder1_GridView1_HFblkzz_4" />
+ <span id="ContentPlaceHolder1_GridView1_LBLK_4">0.7</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFBLK" id="ContentPlaceHolder1_GridView1_HFBLK_4" value="0.2475982528" />
+ <br />
+ </td><td class="ngood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFturzz" id="ContentPlaceHolder1_GridView1_HFturzz_4" value="ngood" />
+ <span id="ContentPlaceHolder1_GridView1_LTUR_4">3.7</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl06$HFTUR" id="ContentPlaceHolder1_GridView1_HFTUR_4" value="2.1276228439" />
+ <br />
+ </td><td>
+ <span id="ContentPlaceHolder1_GridView1_Label1_4">10.13</span>
+ </td>
+ </tr><tr>
+ <td>
+ 6
+ <span class="small text-muted"> 1</span>
+ </td><td>
+ <a id="ContentPlaceHolder1_GridView1_HyperLink1_5" class="d-none d-sm-inline" href="/110399/player" target="_blank">Victor Wembanyama</a><a id="ContentPlaceHolder1_GridView1_HyperLinkShort_5" class="d-inline d-sm-none" href="/110399/player" target="_blank">V.Wembanyama</a><span class="text-danger" title="Fixture note text."></span>
+ </td><td>
+ </td><td>C</td><td>SA</td><td>66</td><td>31.7</td><td class="ngood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFfgpzz" id="ContentPlaceHolder1_GridView1_HFfgpzz_5" value="ngood" />
+ <span id="ContentPlaceHolder1_GridView1_LFGP_5" class="float-start">0.436</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFFGP" id="ContentPlaceHolder1_GridView1_HFFGP_5" value="-1.0379470000" />
+ <span class="float-end small">(7.9/18.2)</span>
+ <br />
+ </td><td class="bavg">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFftpzz" id="ContentPlaceHolder1_GridView1_HFftpzz_5" value="bavg" />
+ <span id="ContentPlaceHolder1_GridView1_LFTP_5" class="float-start">0.770</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFFTP" id="ContentPlaceHolder1_GridView1_HFFTP_5" value="-0.3653571000" />
+ <span class="float-end small">(5.6/7.3)</span>
+ <br />
+ </td><td>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFtgmzz" id="ContentPlaceHolder1_GridView1_HFtgmzz_5" />
+ <span id="ContentPlaceHolder1_GridView1_LTGM_5">1.8</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFTGM" id="ContentPlaceHolder1_GridView1_HFTGM_5" value="0.1667444784" />
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFptszz" id="ContentPlaceHolder1_GridView1_HFptszz_5" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LPTS_5">23.3</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFPTS" id="ContentPlaceHolder1_GridView1_HFPTS_5" value="1.3595285420" />
+ <br />
+ </td><td class="elite">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFrebzz" id="ContentPlaceHolder1_GridView1_HFrebzz_5" value="elite" />
+ <span id="ContentPlaceHolder1_GridView1_LREB_5">11.7</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFREB" id="ContentPlaceHolder1_GridView1_HFREB_5" value="2.6345233374" />
+ <br />
+ </td><td>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFastzz" id="ContentPlaceHolder1_GridView1_HFastzz_5" />
+ <span id="ContentPlaceHolder1_GridView1_LAST_5">3.0</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFAST" id="ContentPlaceHolder1_GridView1_HFAST_5" value="-0.0729767568" />
+ <br />
+ </td><td>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFstlzz" id="ContentPlaceHolder1_GridView1_HFstlzz_5" />
+ <span id="ContentPlaceHolder1_GridView1_LSTL_5">0.9</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFSTL" id="ContentPlaceHolder1_GridView1_HFSTL_5" value="-0.0385266116" />
+ <br />
+ </td><td class="elite">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFblkzz" id="ContentPlaceHolder1_GridView1_HFblkzz_5" value="elite" />
+ <span id="ContentPlaceHolder1_GridView1_LBLK_5">3.7</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFBLK" id="ContentPlaceHolder1_GridView1_HFBLK_5" value="6.7095032196" />
+ <br />
+ </td><td class="bavg">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFturzz" id="ContentPlaceHolder1_GridView1_HFturzz_5" value="bavg" />
+ <span id="ContentPlaceHolder1_GridView1_LTUR_5">2.9</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl07$HFTUR" id="ContentPlaceHolder1_GridView1_HFTUR_5" value="1.2692116896" />
+ <br />
+ </td><td>
+ <span id="ContentPlaceHolder1_GridView1_Label1_5">9.86</span>
+ </td>
+ </tr><tr>
+ <td>
+ 7
+ <span class="small text-muted"> 2</span>
+ </td><td>
+ <a id="ContentPlaceHolder1_GridView1_HyperLink1_6" class="d-none d-sm-inline" href="/15208/player" target="_blank">Shai Gilgeous-Alexander</a><a id="ContentPlaceHolder1_GridView1_HyperLinkShort_6" class="d-inline d-sm-none" href="/15208/player" target="_blank">S.Gilgeous-Alexander</a><span class="text-danger" title="Fixture note text."></span>
+ </td><td>
+ </td><td>PG</td><td>OKC</td><td>71</td><td>35.3</td><td>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFfgpzz" id="ContentPlaceHolder1_GridView1_HFfgpzz_6" />
+ <span id="ContentPlaceHolder1_GridView1_LFGP_6" class="float-start">0.472</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFFGP" id="ContentPlaceHolder1_GridView1_HFFGP_6" value="0.0053653000" />
+ <span class="float-end small">(10.6/22.4)</span>
+ <br />
+ </td><td class="vgood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFftpzz" id="ContentPlaceHolder1_GridView1_HFftpzz_6" value="vgood" />
+ <span id="ContentPlaceHolder1_GridView1_LFTP_6" class="float-start">0.876</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFFTP" id="ContentPlaceHolder1_GridView1_HFFTP_6" value="2.0213357000" />
+ <span class="float-end small">(5.4/6.2)</span>
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFtgmzz" id="ContentPlaceHolder1_GridView1_HFtgmzz_6" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LTGM_6">2.5</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFTGM" id="ContentPlaceHolder1_GridView1_HFTGM_6" value="0.9548119478" />
+ <br />
+ </td><td class="vgood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFptszz" id="ContentPlaceHolder1_GridView1_HFptszz_6" value="vgood" />
+ <span id="ContentPlaceHolder1_GridView1_LPTS_6">29.1</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFPTS" id="ContentPlaceHolder1_GridView1_HFPTS_6" value="2.2048299784" />
+ <br />
+ </td><td>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFrebzz" id="ContentPlaceHolder1_GridView1_HFrebzz_6" />
+ <span id="ContentPlaceHolder1_GridView1_LREB_6">4.5</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFREB" id="ContentPlaceHolder1_GridView1_HFREB_6" value="-0.2004045507" />
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFastzz" id="ContentPlaceHolder1_GridView1_HFastzz_6" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LAST_6">5.2</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFAST" id="ContentPlaceHolder1_GridView1_HFAST_6" value="1.0644120719" />
+ <br />
+ </td><td class="good">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFstlzz" id="ContentPlaceHolder1_GridView1_HFstlzz_6" value="good" />
+ <span id="ContentPlaceHolder1_GridView1_LSTL_6">1.6</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFSTL" id="ContentPlaceHolder1_GridView1_HFSTL_6" value="1.1432031098" />
+ <br />
+ </td><td class="vgood">
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFblkzz" id="ContentPlaceHolder1_GridView1_HFblkzz_6" value="vgood" />
+ <span id="ContentPlaceHolder1_GridView1_LBLK_6">1.5</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFBLK" id="ContentPlaceHolder1_GridView1_HFBLK_6" value="1.9700115119" />
+ <br />
+ </td><td>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFturzz" id="ContentPlaceHolder1_GridView1_HFturzz_6" />
+ <span id="ContentPlaceHolder1_GridView1_LTUR_6">1.7</span>
+ <input type="hidden" name="ctl00$ContentPlaceHolder1$GridView1$ctl08$HFTUR" id="ContentPlaceHolder1_GridView1_HFTUR_6" value="0.0816132144" />
+ <br />
+ </td><td>
+ <span id="ContentPlaceHolder1_GridView1_Label1_6">9.66</span>
+ </td>
+ </tr>
+ </table>
+ </div>
+ </div>
+ </div>
+ </div>
+ </div>
+ </div>
+ </div>
+</div>
+ <div class="sidenav-overlay"></div>
+ <div class="drag-target"></div>
+ <button class="btn btn-primary btn-icon scroll-top d-none d-md-block" type="button">
+ </button>
+ </form></body></html>

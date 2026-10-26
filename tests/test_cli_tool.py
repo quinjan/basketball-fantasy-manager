@@ -45,7 +45,8 @@ def test_parse_arguments_pairs_and_stdin():
 def test_tool_list_and_call():
     runner = CliRunner()
     listed = runner.invoke(app, ["tool", "--list"])
-    assert listed.exit_code == 0 and "context_pack()" in listed.output and "lineup_steps(day, confirm)" in listed.output
+    assert listed.exit_code == 0 and "context_pack()" in listed.output
+    assert "lineup_steps(day, confirm, trigger)" in listed.output
     out = runner.invoke(app, ["tool", "constants"])
     assert out.exit_code == 0 and "constants" in json.loads(out.output)
     assert runner.invoke(app, ["tool", "no_such_tool"]).exit_code == 1

@@ -32,7 +32,7 @@ Then verify every data feed:
 
 ```sh
 uv run fbm yahoo check     # settings, teams, rosters, scoreboard, standings, waivers, FA % owned, transactions,
-                           # pending trades/claims, draft results, Yahoo ADP (+ a few extra resources)
+                           # pending trades/claims (+ a few extra resources)
 uv run fbm yahoo status    # which route is active, when the session was saved (no secrets shown)
 ```
 
@@ -105,6 +105,19 @@ FBM has no Yahoo write access by design; it only reads. Lineup and IL recommenda
 (`fbm lineup --done`, or `fbm proposals done REF` / `confirm_done` for proposals), and the next snapshot verifies
 the result.
 Pending trades and waiver claims are shown by `fbm offers`; accept or reject them in Yahoo yourself.
+
+## What FBM reads to grade its decisions
+
+The weekly retro grades decisions on what actually happened in Yahoo (read-only, `fbm.yahoo.lineups`):
+
+- **Daily lineups** — both teams' roster per ET day (`team/<key>/roster;date=<day>`), stored in
+  `yahoo_daily_lineups`. "Started" = any selected position other than BN / IL / IL+. Replay uses it to undo what
+  actually happened before applying each option FBM considered.
+- **Final matchup results** — the league scoreboard for a finished week (both teams' weekly stats incl. FGM/FGA and
+  FTM/FTA, and Yahoo's `stat_winners`), cached once Yahoo marks the matchup final (`postevent`). Weekly odds and every
+  replayed decision are graded against these FINAL results, never against the remaining days only.
+
+`replay_grade` and `weekly_retro_data` make these reads; nothing is written to Yahoo.
 
 ## Troubleshooting
 

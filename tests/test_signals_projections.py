@@ -128,17 +128,16 @@ def test_blend_espn_weights_only_shared_players():
     assert out.loc["a", "espn_weight"] == 0.25 and out.loc["b", "espn_weight"] == 0.0
 
 
-def test_espn_weight_precedence(conn, tmp_path, monkeypatch):
-    assert calib.resolve_espn_weight(conn) == (0.5, "default")
+def test_espn_weight_is_constant_or_override(conn, tmp_path, monkeypatch):
     conn.execute("INSERT INTO model_params(key, value, updated_at) VALUES ('projection.espn_weight', 0.7, 'x')")
-    assert calib.resolve_espn_weight(conn)[0] == 0.7
+    assert calib.resolve_espn_weight(conn) == (0.5, "default")  # measuring is retired
     path = tmp_path / "c.toml"
     path.write_text('"projection.espn_weight" = 0.2\n', encoding="utf-8")
     monkeypatch.setattr(constants, "OVERRIDES_PATH", path)
     assert calib.resolve_espn_weight(conn)[0] == 0.2
 
 
-# ------------------------------------------------------------------ calibration
+# ------------------------------------------------------------------ box-score helpers
 
 
 def _box(conn, pid, day, minutes, pts, season=2027, team="TM", starter=1, event=None):
@@ -148,39 +147,6 @@ def _box(conn, pid, day, minutes, pts, season=2027, team="TM", starter=1, event=
         f"VALUES (?,?,?,?,?,?,1,{','.join('?' * len(STATS))})",
         (event or f"{pid}{day}", pid, day, season, team, starter, *[vals[s] for s in STATS]),
     )
-
-
-def _forecasts(conn, as_of, engine_pts, espn_pts, actual_pts):
-    ids = [f"p{i}" for i in range(len(actual_pts))]
-    eng = pd.DataFrame({s: 1.0 for s in STATS}, index=ids).assign(minutes=30.0, pts=engine_pts)
-    esp = pd.DataFrame({s: 1.0 for s in STATS}, index=ids).assign(minutes=30.0, pts=espn_pts)
-    calib.log_forecasts(conn, 2027, as_of, eng, esp)
-    for pid, pts in zip(ids, actual_pts, strict=True):
-        for d in range(1, 5):
-            _box(conn, pid, (as_of + timedelta(days=d)).isoformat(), 30.0, pts)
-
-
-def test_calibration_finds_the_better_forecaster(conn):
-    start = date(2026, 11, 1)
-    for k in range(3):
-        _forecasts(conn, start + timedelta(days=7 * k), [10, 20, 30], [15, 15, 15], [10, 20, 30])
-    report = calib.grade(conn, 2027, date(2027, 1, 1), horizon=5, min_games=3)
-    assert report["dates_graded"] == 3
-    assert report["by_stat"]["pts"]["best_weight"] == 0.0
-    assert report["normalized_error"]["engine_only"] < report["normalized_error"]["espn_only"]
-
-
-def test_measured_weight_stored_after_enough_dates(conn, tmp_path, monkeypatch):
-    path = tmp_path / "c.toml"
-    path.write_text('"projection.calibration_min_dates" = 2\n"projection.calibration_horizon_days" = 5\n')
-    monkeypatch.setattr(constants, "OVERRIDES_PATH", path)
-    start = date(2026, 11, 1)
-    for k in range(2):
-        _forecasts(conn, start + timedelta(days=7 * k), [15, 15, 15], [10, 20, 30], [10, 20, 30])
-    out = calib.measure_and_store(conn, 2027, date(2027, 1, 1))
-    assert out["stored_measured_weight"] is True
-    assert out["espn_weight_in_use"] == 1.0
-    assert out["espn_weight_source"].startswith("measured")
 
 
 # ------------------------------------------------------------------ signals
@@ -322,13 +288,6 @@ def test_confidence_upgrade_starts_new_episode(conn):
     rows = feed.active(conn, now=t0 + timedelta(days=2), min_confidence="low")
     assert [(r["confidence"], r["first_seen_et"]) for r in rows] == [("high", "2026-11-03")]
     assert conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0] == 2
-
-
-def test_identical_forecasts_do_not_count_for_calibration(conn):
-    start = date(2026, 11, 1)
-    for k in range(3):
-        _forecasts(conn, start + timedelta(days=7 * k), [10, 20, 30], [10, 20, 30], [12, 18, 30])
-    assert calib.grade(conn, 2027, date(2027, 1, 1), horizon=5, min_games=3)["dates_graded"] == 0
 
 
 def test_grade_signals_by_direction_and_prediction(conn):

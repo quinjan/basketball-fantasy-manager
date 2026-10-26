@@ -1,0 +1,7 @@
+# Hashtag Basketball player id -> ESPN athlete id, only for players the automatic matcher misses or gets wrong.
+# Copy to config/hashtag_id_overrides.toml (gitignored).
+# The HT id is the number in the player's Hashtag link (hashtagbasketball.com/<HT id>/player).
+# Find ESPN ids in the URL of the player's ESPN page (espn.com/nba/player/_/id/<ESPN id>/...).
+# `fbm hashtag check` / `fbm hashtag status` list unmatched players.
+[players]
+# "9196" = "3112335"

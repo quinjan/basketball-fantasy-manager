@@ -152,8 +152,39 @@ def roster_player_from_values(pid: str, values, eligibility=None) -> RosterPlaye
     return roster_player(pid, values, eligibility)
 
 
-def owner_steps(p: Proposal, league: LeagueState, teamless: frozenset[str] = frozenset()) -> StepsResult:
-    """Approved proposal -> exact steps for the owner. Strategy changes are FBM memory only, recorded directly."""
+def policy_steps(p: Proposal, conn) -> StepsResult:
+    """Approved policy proposal -> re-validate every change against the CURRENT settings (bounds, max_step), then
+    write them as one new policy version. FBM memory only (no league change)."""
+    from fbm.gm import policy
+
+    pay = p.payload
+    clean, problems = policy.check_changes(conn, pay.get("changes"))
+    if problems:
+        return StepsResult("failed", {"revalidation": problems})
+    before = {k: policy.get(conn, k) for k in clean}
+    version = policy.apply_changes(
+        conn, clean, source=f"proposal:{p.ref}", proposal_ref=p.ref, evidence=pay.get("evidence")
+    )
+    return StepsResult(
+        "done",
+        {
+            "policy_version": version,
+            "changes": {k: {"old": before[k], "new": v} for k, v in clean.items()},
+            "note": "policy settings recorded in FBM memory (no league change)",
+        },
+    )
+
+
+def owner_steps(
+    p: Proposal, league: LeagueState | None, teamless: frozenset[str] = frozenset(), conn=None
+) -> StepsResult:
+    """Approved proposal -> exact steps for the owner. Strategy/policy changes are FBM memory only, recorded directly
+    (policy needs `conn`)."""
+    if effective_kind(p.kind, p.payload) == "policy":
+        if conn is None:
+            raise ValueError("policy proposals need a database connection")
+        return policy_steps(p, conn)
+    assert league is not None
     if already_made(p, league):
         return StepsResult(
             "awaiting_owner",

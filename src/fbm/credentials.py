@@ -14,6 +14,7 @@ YAHOO_CLIENT_ID = "yahoo_client_id"
 YAHOO_CLIENT_SECRET = "yahoo_client_secret"
 YAHOO_REFRESH_TOKEN = "yahoo_refresh_token"
 YAHOO_WEB_SESSION = "yahoo_web_session"
+HASHTAG_WEB_SESSION = "hashtag_web_session"  # Hashtag Basketball Premium sign-in cookies (put_large/get_large)
 GMAIL_ADDRESS = "gmail_address"
 GMAIL_APP_PASSWORD = "gmail_app_password"
 

@@ -8,11 +8,11 @@ description: Frequent, cheap lineup check during NBA game windows (hourly ~11:00
 Run as the `gm` agent but keep it short and cheap. No proposals, no market scan.
 
 1. `refresh_data`. It also detects early signals; note `early_signals.signals_new`.
-2. `optimize_lineup` for today's ET game day (`nba_game_day_et` from `league_overview`). Players whose games have
+2. `optimize_lineup(day, trigger="lineup-guard")` for today's ET game day (`nba_game_day_et` from `league_overview`). Players whose games have
    started are locked (`locked_game_started`); IL moves are included. Ties are broken by this week's
-   swing categories.
+   swing categories. `HT_UNHEALTHY` → no lineup suggestion: email the fix once (kind `alert`), not every hour.
 3. If the optimal lineup or IL moves differ from the current roster, or a rostered player's injury status changed:
-   `lineup_steps` for that day. It returns the recommended lineup and exact steps; FBM never changes the league, so
+   `lineup_steps(day, trigger="lineup-guard")` for that day. It returns the recommended lineup and exact steps; FBM never changes the league, so
    send them to the owner with the tip-off time in local time (the next `snapshot` shows whether they were done).
 4. If `il_moves_blocked` is non-empty, a healthy player is stuck in IL with a full roster (Yahoo blocks roster moves
    until fixed): alert the owner and draft an add/drop proposal on the next `daily-gm` run.

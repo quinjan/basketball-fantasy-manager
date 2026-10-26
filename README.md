@@ -26,22 +26,27 @@ make every move in Yahoo yourself. Everything runs on your machine.
 ## What it does
 
 - **Values players** with G-scores (a variance-aware improvement on Z-scores) and punt-aware rankings.
-- **Projects players** from this season, ESPN's preseason projection (else last season), recent form, minutes
-  trends, and injury status, blended with ESPN's current projection at a weight measured from graded forecasts.
+- **Uses Hashtag Basketball Premium as its data layer** (optional, if you subscribe): projections, weekly H2H
+  totals, waiver wire, Trade Finder ideas, notes and Next Man Up (`fbm hashtag login`, your own sign-in). FBM is
+  the decision layer on top. If Hashtag is enabled but unhealthy, FBM pauses suggestions rather than fall back.
+  Without Hashtag (and in the demo league) FBM projects players itself from ESPN data, recent form, minutes trends
+  and injury status.
 - **Catches early signals**: buy-low / sell-high, new starters and minutes spikes, next-man-up opportunities when a
-  key player is out, and ESPN projection revisions — refreshed by every data sync and graded afterwards.
-- **Simulates your matchup** (Monte Carlo, including stats already banked this week) for per-category win odds.
+  key player is out, and projection revisions — refreshed by every data sync and graded afterwards.
+- **Simulates your matchup** (Monte Carlo, including stats already banked this week) for per-category win odds
+  (with Hashtag: Hashtag's projected weekly totals plus FBM's simulated spread).
 - **Recommends the daily lineup** and IL moves with exact steps, respecting tip-off locks.
 - **Plans streaming** adds/drops within your weekly add limit.
 - **Decides rolling waivers**: claim now, wait for free agency, or pass.
 - **Evaluates and finds trades** for both sides; compares punt builds; looks ahead to the fantasy playoffs.
 - **Scouts opponents** from league transactions.
-- **Learns**: grades past decisions and signals, checks how well-calibrated its simulations are, and measures
-  whether FBM's engine or ESPN projects better.
-- **Drafts**: board, live recommendations (with live Yahoo draft sync), and mock drafts.
+- **Learns from decisions**: logs every lineup, stream, claim, drop, IL, trade and category-weight decision with the
+  options it considered, replays them on real box scores and Yahoo final results, checks how reliable its odds
+  are, and proposes decision-rule (`policy`) changes for your approval — nothing retunes itself.
+- **Drafts:** not in FBM — use Hashtag Basketball's Draft Tracker.
 - **Runs on a schedule** (optional) and keeps a local memory of strategy, playbook, and journal.
 
-Interfaces: an MCP server (54 tools), the `fbm` CLI, and a local Streamlit dashboard (14 pages).
+Interfaces: an MCP server (60 tools), the `fbm` CLI, and a local Streamlit dashboard.
 
 ## What it doesn't do (limitations)
 
@@ -56,6 +61,8 @@ Interfaces: an MCP server (54 tools), the `fbm` CLI, and a local Streamlit dashb
   Meanwhile you can connect with your own Yahoo sign-in (`fbm yahoo login`, read-only; an undocumented route Yahoo
   may change), or run on a realistic demo league (see [docs/yahoo.md](docs/yahoo.md)).
 - **Unofficial data sources.** NBA data comes from public, undocumented ESPN endpoints that may change or break.
+  Hashtag Basketball has no API: FBM reads its pages with your own signed-in session (personal use only; never
+  republished), and a site change pauses suggestions until FBM is updated.
 - **Platforms:** developed and tested on Windows. macOS and Linux run in CI but are less battle-tested.
 - **No guarantees.** Projections, simulations, and AI judgement can be wrong. You make the final call.
 
