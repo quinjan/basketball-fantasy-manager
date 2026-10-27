@@ -8,7 +8,16 @@ from fbm.analytics.bank import DrawBank
 from fbm.analytics.categories import NINE_CAT
 from fbm.analytics.simulation import COL, STATS, PlayerModel
 from fbm.analytics.streaming import InvalidPlan, Move, StreamContext, plan_streams, roster_by_day
-from fbm.analytics.trades import LeagueSim, evaluate_trade, find_trades, need_weights, screen_trades, verdict_for
+from fbm.analytics.trades import (
+    LeagueSim,
+    PartnerBuild,
+    evaluate_trade,
+    find_trades,
+    need_weights,
+    partner_weights,
+    screen_trades,
+    verdict_for,
+)
 from fbm.league.model import FantasyTeam, LeagueState, RosterPlayer, SlotSpec
 
 
@@ -177,3 +186,31 @@ def test_need_weights_and_verdicts():
     assert w["pts"] == 1.0 and w["reb"] < 0.5 and w["tov"] == 0.0
     assert verdict_for(0.3, 0.1) == "win-win" and verdict_for(0.0, 0.5) == "not worth it for us"
     assert verdict_for(0.3, 0.1, them_value_delta=-2.0) == "lopsided by rankings (unlikely to be accepted)"
+    pw = partner_weights({"pts": 0.5, "reb": 0.5, "tov": 0.5}, PartnerBuild(punts=("tov",), targets=("reb",)))
+    assert pw["pts"] == 1.0 and pw["tov"] == 0.0 and pw["reb"] > 1.0
+
+
+def test_partner_build_judges_their_side_without_punts():
+    sim = trade_league()
+    plain = evaluate_trade(sim, "t1", "t2", give=["a1"], get=["b1"], free_agents=["f1"])
+    assert plain.them.value_delta_build is None and plain.them.judged_value_delta == plain.them.value_delta
+    assert plain.them.expected_delta_build == pytest.approx(plain.them.expected_delta)
+    punts = ("pts", "ast", "tpm")  # a1's categories: worth nothing to a team that punts them
+    built = evaluate_trade(sim, "t1", "t2", give=["a1"], get=["b1"], free_agents=["f1"], partner=PartnerBuild(punts))
+    assert built.them.punts == punts and built.me.punts == ()
+    assert built.them.value_delta_build < plain.them.value_delta
+    assert built.them.value_delta_build == pytest.approx(
+        round(sim.above_replacement("a1", punts) - sim.above_replacement("b1", punts), 2)
+    )
+    deltas = {k: built.them.cats_after[k] - built.them.cats_before[k] for k in built.them.cats_before}
+    assert built.them.expected_delta_build == pytest.approx(sum(v for k, v in deltas.items() if k not in punts))
+    assert built.verdict == verdict_for(
+        built.me.expected_delta, built.them.expected_delta_build, built.them.value_delta_build
+    )
+    assert built.me.expected_delta == pytest.approx(plain.me.expected_delta)  # our side is unchanged
+    targeted = evaluate_trade(
+        sim, "t1", "t3", give=["a1"], get=["c2"], free_agents=["f1"], partner=PartnerBuild(targets=("pts", "ast"))
+    )
+    assert any("chasing on the waiver wire" in n for n in targeted.notes)
+    found = find_trades(sim, "t1", ["f1"], max_give=1, max_get=1, partner_builds={"t2": PartnerBuild(punts)})
+    assert all(r.them.expected_delta_build >= -0.05 for r in found)

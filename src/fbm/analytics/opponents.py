@@ -12,6 +12,10 @@ Pure functions over `fbm.yahoo.league_reads.Transaction` records (as stored by `
 - confidence by sample size (moves): low < C("intel.min_moves") <= medium < 3x <= high. Profiles with low
   confidence never replace engine defaults (`has_history` is False).
 - build: category win rates (league profile) -> strong / weak / likely punts.
+- wire lean: net category G per add over the last C("intel.wire_days") (added players' G minus dropped players' G,
+  current values, divided by scored adds). >= C("intel.wire_lean_g") -> a category they chase (`wire_targets`),
+  <= -that -> one they shed (`wire_sheds`); reported once C("intel.wire_min_adds") adds are scored.
+  `trade_punts` = likely punts + weak categories they shed: the build a trade partner is judged by.
 - trade partners: ranked by activity group (very active/active, then casual, then unknown, then inactive), then by
   complementary fit = sum over categories of (their surplus x my need) + (my surplus x their need), where surplus /
   need are distances above / below a 0.5 category win rate.
@@ -56,11 +60,20 @@ class ManagerProfile:
     weak_cats: list[str] = field(default_factory=list)
     likely_punts: list[str] = field(default_factory=list)
     cat_win_rate: dict[str, float] = field(default_factory=dict)
+    wire_adds_scored: int = 0
+    wire_cat_lean: dict[str, float] = field(default_factory=dict)  # net G per add, by category
+    wire_targets: list[str] = field(default_factory=list)
+    wire_sheds: list[str] = field(default_factory=list)
     model: ManagerModel | None = None  # empirical-Bayes behavior model (prior vs observed vs posterior)
 
     @property
     def has_history(self) -> bool:
         return self.confidence in ("medium", "high")
+
+    @property
+    def trade_punts(self) -> list[str]:
+        """Categories a trade partner is assumed not to value: likely punts, plus weak categories they shed."""
+        return [*self.likely_punts, *(k for k in self.wire_sheds if k in self.weak_cats and k not in self.likely_punts)]
 
     def typical_adds(self) -> int:
         """Adds to expect from this manager in a week: recent rate, rounded."""
@@ -70,6 +83,7 @@ class ManagerProfile:
         out = asdict(self)
         out["model"] = self.model.to_dict() if self.model else None
         out["has_history"] = self.has_history
+        out["trade_punts"] = self.trade_punts
         return out
 
 
@@ -108,6 +122,23 @@ def build_summary(rates: Mapping[str, float]) -> dict[str, list[str]]:
     }
 
 
+def wire_lean(
+    adds: Sequence[str], drops: Sequence[str], player_g: Mapping[str, Mapping[str, float]]
+) -> tuple[int, dict[str, float], list[str], list[str]]:
+    """(scored adds, net G per add by category, categories chased, categories shed) from one team's wire moves."""
+    scored = [player_g[p] for p in adds if p in player_g]
+    shed = [player_g[p] for p in drops if p in player_g]
+    if not scored:
+        return 0, {}, [], []
+    cats = list(scored[0])
+    lean = {k: round((sum(g.get(k, 0.0) for g in scored) - sum(g.get(k, 0.0) for g in shed)) / len(scored), 2)
+            for k in cats}  # fmt: skip
+    if len(scored) < int(C("intel.wire_min_adds")):
+        return len(scored), lean, [], []
+    thr = float(C("intel.wire_lean_g"))
+    return len(scored), lean, [k for k, v in lean.items() if v >= thr], [k for k, v in lean.items() if v <= -thr]
+
+
 def profile_teams(
     transactions: Iterable[Transaction],
     teams: Mapping[str, str],
@@ -116,10 +147,12 @@ def profile_teams(
     builds: Mapping[str, Mapping[str, float]] | None = None,
     league_start: datetime | None = None,
     max_weekly_adds: int | None = None,
+    player_g: Mapping[str, Mapping[str, float]] | None = None,
 ) -> dict[str, ManagerProfile]:
     """Profiles for every team in `teams` (team_key -> name). `season_start` defaults to the first transaction.
 
-    `league_start` / `max_weekly_adds` feed the empirical-Bayes behavior model (`ManagerProfile.model`)."""
+    `league_start` / `max_weekly_adds` feed the empirical-Bayes behavior model (`ManagerProfile.model`).
+    `player_g`: transaction player id -> G by category (same category names as `builds`) for the wire lean."""
     txs = sorted((t for t in transactions if t.timestamp is not None), key=lambda t: t.timestamp)
     models = estimate_managers(txs, teams, now, league_start, max_weekly_adds)
     start = season_start or (txs[0].timestamp if txs else now)
@@ -162,9 +195,13 @@ def profile_teams(
                 touch(p.source_team_key, ts)
 
     builds = builds or {}
+    wire_cut = now - timedelta(days=float(C("intel.wire_days")))
     out = {}
     for key, name in teams.items():
         a, d = adds[key], drops[key]
+        lean = wire_lean(
+            [pid for ts, pid, _ in a if ts >= wire_cut], [pid for ts, pid in d if ts >= wire_cut], player_g or {}
+        )
         streams = sum(1 for ts, pid, _ in a if any(pid == dp and ts < dts <= ts + stream_window for dts, dp in d))
         claims = [x for x in a if x[2] == "waivers"]
         claim_weeks = {int((ts - start).total_seconds() // (7 * 86400)) for ts, _, _ in claims}
@@ -193,6 +230,10 @@ def profile_teams(
             confidence=_confidence(moves),
             moves=moves,
             cat_win_rate=rates,
+            wire_adds_scored=lean[0],
+            wire_cat_lean=lean[1],
+            wire_targets=lean[2],
+            wire_sheds=lean[3],
             model=models[key],
             **build_summary(rates),
         )
@@ -291,6 +332,11 @@ def profile_markdown(p: ManagerProfile, as_of: str) -> str:
             f"- Strong cats: {', '.join(p.strong_cats) or '-'}; weak: {', '.join(p.weak_cats) or '-'}; "
             f"likely punts: {', '.join(p.likely_punts) or '-'}",
         ]
+    if p.wire_adds_scored:
+        lines.append(
+            f"- Wire lean (last {int(C('intel.wire_days'))} days, {p.wire_adds_scored} adds scored): chasing "
+            f"{', '.join(p.wire_targets) or '-'}; shedding {', '.join(p.wire_sheds) or '-'}"
+        )
     return "\n".join(lines)
 
 

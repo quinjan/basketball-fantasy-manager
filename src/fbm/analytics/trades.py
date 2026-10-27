@@ -9,6 +9,12 @@ How a partner judges an offer by rankings uses value above replacement (the last
 a player they would cut anyway is worth ~0 to them, so a forced drop is never counted as a gain. The search also
 asks for a partner's expendable players (lowest value to their own build) so a 2-for-1 can be offered as a
 roster-neutral 2-for-2 that takes their likely cut off their hands.
+
+The partner's build (`PartnerBuild`: likely punts and the categories they chase on the waiver wire, from
+`fbm.analytics.opponents`) shapes how their side is judged: punted categories don't count toward their gain
+(`expected_delta_build`) or their ranking value (`value_delta_build`, above a punt-aware replacement level), their
+forced drops follow their build, and the search weights categories they chase more. The raw all-category numbers
+are kept next to the build-aware ones.
 """
 
 from __future__ import annotations
@@ -34,6 +40,22 @@ def need_weights(win_rates: Mapping[str, float], punts: Sequence[str] = ()) -> d
     return {k: 0.0 if k in punts else max(floor, 1.0 - abs(p - 0.5) * slope) for k, p in win_rates.items()}
 
 
+@dataclass(frozen=True)
+class PartnerBuild:
+    """How a trade partner values categories: punts (ignored) and wire targets (weighted up), category keys."""
+
+    punts: tuple[str, ...] = ()
+    targets: tuple[str, ...] = ()
+
+
+def partner_weights(win_rates: Mapping[str, float], build: PartnerBuild | None = None) -> dict[str, float]:
+    """The partner's need weights: punts at 0, categories they chase on the wire boosted by trade.wire_target_bonus."""
+    build = build or PartnerBuild()
+    w = need_weights(win_rates, build.punts)
+    bonus = 1.0 + float(C("trade.wire_target_bonus"))
+    return {k: v * bonus if k in build.targets else v for k, v in w.items()}
+
+
 class LeagueSim:
     def __init__(self, league: LeagueState, bank: DrawBank, values: pd.DataFrame):
         self.league = league
@@ -46,12 +68,28 @@ class LeagueSim:
         self.totals = {k: self.team_totals(ids) for k, ids in self.active.items()}
         self._base_profiles: dict[str, tuple[dict[str, float], float]] = {}
         g = values["g_total"].astype(float) if "g_total" in values.columns else pd.Series(dtype=float)
-        pool = max(1, self.capacity * len(league.teams))
-        self.replacement = float(g.nlargest(pool).min()) if len(g) else 0.0
+        self._pool = max(1, self.capacity * len(league.teams))
+        self.replacement = float(g.nlargest(self._pool).min()) if len(g) else 0.0
+        self._replacement_by_punts: dict[tuple[str, ...], float] = {}
 
-    def above_replacement(self, pid: str) -> float:
-        """Overall value above the league's replacement level (0 for anyone a team would cut)."""
-        return max(_g(self.values, pid, "g_total") - self.replacement, 0.0) if pid in self.values.index else 0.0
+    def replacement_for(self, punts: Sequence[str] = ()) -> float:
+        """Replacement level (the last rostered player in the league) for a build that ignores `punts`."""
+        key = tuple(sorted(punts))
+        if not key:
+            return self.replacement
+        if key not in self._replacement_by_punts:
+            cols = [f"g_{c.key}" for c in self.categories if c.key not in key and f"g_{c.key}" in self.values.columns]
+            g = self.values[cols].astype(float).sum(axis=1) if cols else pd.Series(dtype=float)
+            self._replacement_by_punts[key] = float(g.nlargest(self._pool).min()) if len(g) else 0.0
+        return self._replacement_by_punts[key]
+
+    def above_replacement(self, pid: str, punts: Sequence[str] = ()) -> float:
+        """Value above the league's replacement level (0 for anyone a team would cut); `punts` = a build's punts."""
+        if pid not in self.values.index:
+            return 0.0
+        if not punts:
+            return max(_g(self.values, pid, "g_total") - self.replacement, 0.0)
+        return max(_rank_value(self.values, pid, punts, self.categories) - self.replacement_for(punts), 0.0)
 
     def team_totals(self, ids: Sequence[str]) -> np.ndarray:
         if not ids:
@@ -98,10 +136,22 @@ class TradeSide:
     expected_after: float = 0.0
     value_delta: float = 0.0  # G-score value above replacement in minus out, incl. drops/fills (ranking lens)
     g_delta_by_cat: dict[str, float] = field(default_factory=dict)
+    punts: tuple[str, ...] = ()  # the build this side is judged by (partner: likely punts; empty = all categories)
+    targets: tuple[str, ...] = ()  # categories this side chases on the waiver wire (partner only)
+    value_delta_build: float | None = None  # value_delta over non-punted categories (punt-aware replacement level)
 
     @property
     def expected_delta(self) -> float:
         return self.expected_after - self.expected_before
+
+    @property
+    def expected_delta_build(self) -> float:
+        """Change in expected categories won per week, counting only categories this side doesn't punt."""
+        return sum(self.cats_after[k] - self.cats_before[k] for k in self.cats_before if k not in self.punts)
+
+    @property
+    def judged_value_delta(self) -> float:
+        return self.value_delta if self.value_delta_build is None else self.value_delta_build
 
 
 @dataclass
@@ -167,8 +217,12 @@ def evaluate_trade(
     get: Sequence[str],
     free_agents: Sequence[str],
     my_punts: Sequence[str] = (),
+    partner: PartnerBuild | None = None,
 ) -> TradeEval:
+    """Season-level evaluation for both sides. `partner` = the partner's build (likely punts, wire targets): their
+    forced drops follow it and the verdict judges their side by it (`expected_delta_build`, `value_delta_build`)."""
     league = sim.league
+    build = partner or PartnerBuild()
     mine_ids, their_ids = list(sim.active[my_key]), list(sim.active[partner_key])
     mine_all = {p.player_id for p in league.team(my_key).players}
     their_all = {p.player_id for p in league.team(partner_key).players}
@@ -190,14 +244,14 @@ def evaluate_trade(
     )
     my_drops = [*my_cuts, *my_drops]
     new_theirs, their_drops, their_adds = _rebalance(
-        new_theirs, set(give), sim.capacity, sim.values, (), sim.categories, fas, taken
+        new_theirs, set(give), sim.capacity, sim.values, build.punts, sim.categories, fas, taken
     )
     overrides = {my_key: sim.team_totals(new_mine), partner_key: sim.team_totals(new_theirs)}
 
     sides = []
-    for key, gives, gets, drops, adds in (
-        (my_key, give, get, my_drops, my_adds),
-        (partner_key, get, give, their_drops, their_adds),
+    for key, gives, gets, drops, adds, punts in (
+        (my_key, give, get, my_drops, my_adds, ()),
+        (partner_key, get, give, their_drops, their_adds, build.punts),
     ):
         before_cats, before_exp = sim.profile(key)
         after_cats, after_exp = sim.profile(key, overrides)
@@ -227,14 +281,37 @@ def evaluate_trade(
                     2,
                 ),
                 g_delta,
+                tuple(punts),
+                build.targets if key == partner_key else (),
+                round(
+                    sum(sim.above_replacement(p, punts) for p in incoming)
+                    - sum(sim.above_replacement(p, punts) for p in outgoing),
+                    2,
+                )
+                if punts
+                else None,
             )
         )
     me, them = sides
+    labels = {c.key: c.label for c in sim.categories}
     notes = []
-    if them.value_delta >= 0:
+    if them.judged_value_delta >= 0:
         notes.append("Looks fair or better to them by overall rankings (helps acceptance).")
-    elif them.value_delta < -1.0:
+    elif them.judged_value_delta < -1.0:
         notes.append("They lose overall ranking value; expect pushback unless it fixes a clear need.")
+    if build.punts:
+        noise = them.expected_delta - them.expected_delta_build
+        if abs(noise) >= 0.02:
+            notes.append(
+                f"Judged by their build (likely punts {', '.join(labels.get(k, k) for k in build.punts)}): "
+                f"{them.expected_delta_build:+.2f} exp cats vs {them.expected_delta:+.2f} counting every category."
+            )
+    helped = [k for k in build.targets if them.cats_after.get(k, 0.0) - them.cats_before.get(k, 0.0) >= 0.02]
+    if helped:
+        notes.append(
+            f"Helps {', '.join(labels.get(k, k) for k in helped)}, which they've been chasing on the waiver wire "
+            "(better odds they accept)."
+        )
     if my_drops:
         notes.append(f"We must drop {len(my_drops)} player(s) to make room.")
     if my_adds:
@@ -248,7 +325,9 @@ def evaluate_trade(
                     f"{who} is a roster-balance piece (below replacement; their likely cut): he keeps their roster "
                     "count even; we cut him for the best free agent (already counted)."
                 )
-    return TradeEval(me, them, verdict_for(me.expected_delta, them.expected_delta, them.value_delta), notes)
+    return TradeEval(
+        me, them, verdict_for(me.expected_delta, them.expected_delta_build, them.judged_value_delta), notes
+    )
 
 
 @dataclass(frozen=True)
@@ -270,10 +349,13 @@ def screen_trades(
     max_get: int = 2,
     top_k: int = 10,
     max_their_value_loss: float | None = None,
+    partner_builds: Mapping[str, PartnerBuild] | None = None,
 ) -> list[TradeCandidate]:
-    """Cheap need-weighted G-score screen of 1-1, 2-1, 1-2 (and 2-2) packages."""
+    """Cheap need-weighted G-score screen of 1-1, 2-1, 1-2 (and 2-2) packages. Each partner is weighted by its own
+    build (`partner_builds`: likely punts at 0, wire targets boosted)."""
     league, values = sim.league, sim.values
     keys = [c.key for c in sim.categories]
+    partner_builds = partner_builds or {}
 
     def vec(pid: str) -> np.ndarray:
         return np.array([_g(values, pid, f"g_{k}") for k in keys])
@@ -293,8 +375,8 @@ def screen_trades(
         rest = [p for p in sim.active[team_key] if p not in exclude and p in values.index]  # unknown ≠ worthless
         return sorted(rest, key=lambda p: float(weights @ gmat[p]))[:n_expendable]
 
-    def vorp(ids: Sequence[str]) -> float:
-        return sum(sim.above_replacement(p) for p in ids)
+    def vorp(ids: Sequence[str], punts: Sequence[str] = ()) -> float:
+        return sum(sim.above_replacement(p, punts) for p in ids)
 
     n_expendable = int(C("trade.expendable_pool"))
     out: list[TradeCandidate] = []
@@ -304,10 +386,11 @@ def screen_trades(
     best_fa = max(free_agents, key=lambda p: _g(values, p, "g_total"), default=None)
     replacement = vec(best_fa) if best_fa else np.zeros(len(keys))
     for partner in partners:
-        their_w = np.array([need_weights(sim.profile(partner)[0])[k] for k in keys])
-        their_top = top(partner, ())
+        build = partner_builds.get(partner) or PartnerBuild()
+        their_w = np.array([partner_weights(sim.profile(partner)[0], build)[k] for k in keys])
+        their_top = top(partner, build.punts)
         spare = expendable(partner, their_w, their_top)
-        their_worst = worst_vec(partner, ())
+        their_worst = worst_vec(partner, build.punts)
         for ng in range(1, max_give + 1):
             for nr in range(1, max_get + 1):
                 for give in combinations(mine_top, ng):
@@ -330,7 +413,10 @@ def screen_trades(
                             their_delta = their_delta - (ng - nr) * their_worst
                         s_me = float(my_w @ mine_delta)
                         s_them = float(their_w @ their_delta)
-                        if max_their_value_loss is not None and vorp(give) - vorp(get) < -max_their_value_loss - 0.5:
+                        if (
+                            max_their_value_loss is not None
+                            and vorp(give, build.punts) - vorp(get, build.punts) < -max_their_value_loss - 0.5
+                        ):
                             continue
                         if s_me > 0 and s_them > -1.0:
                             out.append(TradeCandidate(partner, give, get, s_me, s_them))
@@ -349,19 +435,37 @@ def find_trades(
     confirm: int = 40,
     limit: int = 8,
     max_their_value_loss: float | None = None,
+    partner_builds: Mapping[str, PartnerBuild] | None = None,
 ) -> list[TradeEval]:
     """Trades that help us, don't hurt them in simulation, and don't cost them more than `max_their_value_loss`
-    in overall ranking value (real managers judge offers largely by rankings)."""
+    in overall ranking value (real managers judge offers largely by rankings). The partner's side is judged by its
+    build (`partner_builds`): punted categories don't count for them."""
     if max_their_value_loss is None:
         max_their_value_loss = float(C("trade.max_their_value_loss"))
+    partner_builds = partner_builds or {}
     candidates = screen_trades(
-        sim, my_key, my_punts, free_agents, partners, max_give, max_get, max_their_value_loss=max_their_value_loss
+        sim,
+        my_key,
+        my_punts,
+        free_agents,
+        partners,
+        max_give,
+        max_get,
+        max_their_value_loss=max_their_value_loss,
+        partner_builds=partner_builds,
     )[:confirm]
-    results = [evaluate_trade(sim, my_key, c.partner_key, c.give, c.get, free_agents, my_punts) for c in candidates]
+    results = [
+        evaluate_trade(
+            sim, my_key, c.partner_key, c.give, c.get, free_agents, my_punts, partner_builds.get(c.partner_key)
+        )
+        for c in candidates
+    ]
     good = [
         r
         for r in results
-        if r.me.expected_delta > 0.02 and r.them.expected_delta >= -0.05 and r.them.value_delta >= -max_their_value_loss
+        if r.me.expected_delta > 0.02
+        and r.them.expected_delta_build >= -0.05
+        and r.them.judged_value_delta >= -max_their_value_loss
     ]
-    good.sort(key=lambda r: -(r.me.expected_delta + 0.25 * min(r.them.expected_delta, 0.0)))
+    good.sort(key=lambda r: -(r.me.expected_delta + 0.25 * min(r.them.expected_delta_build, 0.0)))
     return good[:limit]

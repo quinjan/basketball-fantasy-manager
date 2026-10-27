@@ -17,6 +17,8 @@ History syncs on every `snapshot` (and `refresh_data`) in a live Yahoo league. O
 1. `manager_profile(team="X")`.
 2. Report: tier + confidence (+ moves / weeks observed), adds per week (season vs recent), waiver claims vs free-agent
    adds, streaming propensity, trades completed / proposed, last activity, strong / weak cats and likely punts,
+   the wire lean (`wire_targets` / `wire_sheds`: categories their recent adds and drops chase or shed, from
+   `wire_cat_lean`; empty until enough adds are scored), `trade_punts` (what trade tools assume they don't value),
    `complementary_fit_with_me`, and the last few `recent_moves`. Lead with the `model` block: it is an empirical-Bayes
    estimate (observed rates shrunk toward the league-wide rate, recency-weighted). For each of adds/week, claim
    participation and stream fraction give prior vs observed vs posterior, and say how much is evidence
@@ -33,7 +35,8 @@ History syncs on every `snapshot` (and `refresh_data`) in a live Yahoo league. O
 
 ## Which managers are the best trade partners?
 1. `league_intel()` → `best_trade_partners` (ordered by activity group, then complementary fit; see `partner_order`).
-2. For concrete packages: `find_trades(partner=...)` for the top 1–3; each trade carries `partner_intel`.
+2. For concrete packages: `find_trades(partner=...)` for the top 1–3; each trade carries `partner_intel`
+   (including `wire_targets` and `trade_punts_assumed`). Offers that feed what they chase are easier to sell.
 3. Prefer active managers with high fit; flag inactive ones (offers may sit unanswered).
 
 ## Scout my next opponent

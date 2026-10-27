@@ -63,6 +63,23 @@ def test_demo_fallback_no_history():
     assert (p[A].strong_cats, p[A].weak_cats, p[A].likely_punts) == (["PTS"], ["REB"], ["AST"])
 
 
+def test_wire_lean_targets_sheds_and_trade_punts():
+    blk = {"PTS": -1.0, "BLK": 2.0, "AST": 0.0}
+    zero = {"PTS": 0.0, "BLK": 0.0, "AST": 0.0}
+    g = {"1": zero, "2": zero, "5": zero, "3": blk, "4": blk, "6": blk, "9": {**zero, "PTS": 1.0}, "8": blk}
+    builds = {A: {"PTS": 0.35, "BLK": 0.5, "AST": 0.2}}
+    p = op.profile_teams(history(), TEAMS, NOW, NOW - timedelta(days=28), builds, player_g=g)
+    a, b = p[A], p[B]
+    # 6 adds scored; BLK (3 x 2.0 - 0) / 6 = +1.0; PTS (-3 - (+1 dropped)) / 6 = -0.67
+    assert a.wire_adds_scored == 6 and a.wire_cat_lean == {"PTS": -0.67, "BLK": 1.0, "AST": 0.0}
+    assert a.wire_targets == ["BLK"] and a.wire_sheds == ["PTS"]
+    assert a.likely_punts == ["AST"] and a.weak_cats == ["PTS"]
+    assert a.trade_punts == ["AST", "PTS"]  # likely punt + a weak category they shed on the wire
+    assert b.wire_adds_scored == 1 and b.wire_targets == [] and b.wire_sheds == []  # too few adds to read a lean
+    assert "Wire lean" in op.profile_markdown(a, "now") and a.to_dict()["trade_punts"] == ["AST", "PTS"]
+    assert op.profile_teams(history(), TEAMS, NOW)[A].wire_adds_scored == 0  # no player values: no lean
+
+
 def test_partner_ranking_and_fit():
     mine = {"PTS": 0.3, "AST": 0.7}
     builds = {A: mine, B: {"PTS": 0.8, "AST": 0.2}, Z: {"PTS": 0.6, "AST": 0.4}}

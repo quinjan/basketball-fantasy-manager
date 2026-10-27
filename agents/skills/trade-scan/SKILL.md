@@ -21,7 +21,10 @@ Run as the `gm` agent. Trades are never sent without the owner's explicit approv
    are targets. Test those packages with `evaluate_trade`; a role change that may stick (low confidence) is not a
    sell.
 4. For promising ideas of your own (or the owner's), use `evaluate_trade(partner, give, get)`. Read both sides:
-   expected categories before/after, category win-rate deltas, forced drops / free-agent fills, verdict.
+   expected categories before/after, category win-rate deltas, forced drops / free-agent fills, verdict. The
+   partner's side is judged by their build (`them.judged_by_their_build`: their likely punts and weak categories
+   they shed on the wire don't count; the verdict uses it); notes flag when a trade feeds categories they chase on
+   the wire.
 5. Judgment on top of the numbers: injuries, the trade's `playoff_outlook` (playoff games and value delta, with a
    suggested weight that grows toward the playoffs; check `playoff_outlook` for schedules), roster/position fit,
    and whether the partner's manager is active. Prefer win-win and "favors us (defensible)" verdicts.

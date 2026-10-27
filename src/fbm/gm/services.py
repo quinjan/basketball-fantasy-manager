@@ -2283,7 +2283,7 @@ def _resolve_on_team(query: str, team: FantasyTeam) -> str:
 
 def _trade_dict(ev, c: AnalyticsContext) -> dict[str, Any]:
     def side(s) -> dict[str, Any]:
-        return {
+        out = {
             "team": s.name,
             "team_key": s.team_key,
             "gives": _names(c, s.gives),
@@ -2297,6 +2297,14 @@ def _trade_dict(ev, c: AnalyticsContext) -> dict[str, Any]:
             "cat_win_rate_delta": {k: _r(s.cats_after[k] - s.cats_before[k], 3) for k in s.cats_before},
             "g_delta_by_cat": s.g_delta_by_cat,
         }
+        if s.punts or s.targets:
+            out["judged_by_their_build"] = {
+                "punts_assumed": [_CAT_LABEL.get(k, k) for k in s.punts],
+                "wire_targets": [_CAT_LABEL.get(k, k) for k in s.targets],
+                "expected_cats_delta": _r(s.expected_delta_build, 3),
+                "ranking_value_delta": s.judged_value_delta,
+            }
+        return out
 
     return {
         "verdict": ev.verdict,
@@ -2319,9 +2327,14 @@ def evaluate_trade_tool(partner: str, give: str, get: str, n: int = 1500, trigge
     give_ids = [_resolve_on_team(x, league.my_team) for x in give.split(",") if x.strip()]
     get_ids = [_resolve_on_team(x, team) for x in get.split(",") if x.strip()]
     sim, fa = _league_sim(n)
-    ev = evaluate_trade(sim, league.my_team_key, team.team_key, give_ids, get_ids, fa, _strategy_punts(None))
+    profile = _manager_profiles(league, {team.team_key: dict(sim.profile(team.team_key)[0])}, labels=False)
+    build = _partner_build(profile.get(team.team_key))
+    ev = evaluate_trade(sim, league.my_team_key, team.team_key, give_ids, get_ids, fa, _strategy_punts(None), build)
     out = _trade_dict(ev, c)
-    out["method"] = "season-level: typical week vs every team, before/after; rosters rebalanced"
+    out["method"] = (
+        "season-level: typical week vs every team, before/after; rosters rebalanced; their side judged by their "
+        "build (likely punts + weak categories they shed on the wire don't count; see them.judged_by_their_build)"
+    )
     rec, did = _log_choice(
         "trade",
         trigger,
@@ -2368,7 +2381,9 @@ def _find_trades_ht(league: LeagueState, partner: str | None, limit: int, n: int
         source = f"hashtag trade finder (stored ideas; live run unavailable: {type(err).__name__})"
     sim, fa = _league_sim(n)
     mine = dict(sim.profile(league.my_team_key)[0])
-    profiles = _manager_profiles(league, {t.team_key: dict(sim.profile(t.team_key)[0]) for t in league.teams})
+    profiles = _manager_profiles(
+        league, {t.team_key: dict(sim.profile(t.team_key)[0]) for t in league.teams}, labels=False
+    )
     keys = {t.team_key for t in league.teams}
     trades, skipped = [], 0
     for idea in ideas:
@@ -2378,7 +2393,9 @@ def _find_trades_ht(league: LeagueState, partner: str | None, limit: int, n: int
             skipped += 1
             continue
         try:
-            ev = evaluate_trade(sim, league.my_team_key, pkey, give, get, fa, _strategy_punts(None))
+            ev = evaluate_trade(
+                sim, league.my_team_key, pkey, give, get, fa, _strategy_punts(None), _partner_build(profiles.get(pkey))
+            )
         except Exception:  # noqa: BLE001 - stale idea (roster changed)
             skipped += 1
             continue
@@ -2395,7 +2412,8 @@ def _find_trades_ht(league: LeagueState, partner: str | None, limit: int, n: int
         "ideas_skipped": skipped,
         "candidate_source": source,
         "my_category_win_rates": {k: _r(v) for k, v in mine.items()},
-        "method": "HT Trade Finder candidates, each evaluated season-level for my build (evaluate_trade)",
+        "method": "HT Trade Finder candidates, each evaluated season-level for my build (evaluate_trade); the "
+        "partner's side is judged by their build (likely punts + weak categories they shed on the wire)",
     }
 
 
@@ -2410,11 +2428,24 @@ def find_trades_tool(
         return _find_trades_ht(league, partner, limit, n)
     partners = [_team(league, partner).team_key] if partner else None
     sim, fa = _league_sim(n)
-    results = find_trades(sim, league.my_team_key, fa, _strategy_punts(None), partners, max_give, max_get, limit=limit)
     from fbm.analytics.opponents import complementary_fit, partner_rank_key
 
+    profiles = _manager_profiles(
+        league, {t.team_key: dict(sim.profile(t.team_key)[0]) for t in league.teams}, labels=False
+    )
+    builds = {k: _partner_build(p) for k, p in profiles.items() if k != league.my_team_key}
+    results = find_trades(
+        sim,
+        league.my_team_key,
+        fa,
+        _strategy_punts(None),
+        partners,
+        max_give,
+        max_get,
+        limit=limit,
+        partner_builds=builds,
+    )
     mine = dict(sim.profile(league.my_team_key)[0])
-    profiles = _manager_profiles(league, {t.team_key: dict(sim.profile(t.team_key)[0]) for t in league.teams})
     trades = []
     for r in results:
         d = _trade_dict(r, c)
@@ -2431,8 +2462,9 @@ def find_trades_tool(
         "trades": trades,
         "my_category_win_rates": {k: _r(v) for k, v in sim.profile(league.my_team_key)[0].items()},
         "method": "need-weighted G-score screen of 1-1/2-1/1-2/2-2 packages, top candidates confirmed by "
-        "simulation; keeps trades that help us and are defensible for them; ordered by partner activity group "
-        "(active first, inactive last; see partner_intel), then by our gain",
+        "simulation; keeps trades that help us and are defensible for them judged by their build (likely punts + "
+        "weak categories they shed on the wire don't count; categories they chase weigh more); ordered by partner "
+        "activity group (active first, inactive last; see partner_intel), then by our gain",
     }
 
 
@@ -3198,7 +3230,29 @@ def _claim_basis(p) -> str:
     )
 
 
-def _manager_profiles(league: LeagueState, builds: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
+def _player_g(labels: bool = True) -> dict[str, dict[str, float]]:
+    """Yahoo player id -> current G by category (labels like 'FG%' or keys like 'fg_pct'): scores managers' wire
+    moves. Empty when the Yahoo id map or the engine context is unavailable (demo league)."""
+    try:
+        ymap, c = _own_history.yahoo_to_espn(_conn()), ctx()
+    except Exception:  # noqa: BLE001 - wire lean is optional intel
+        return {}
+    vals, cats = c.values, list(c.cfg.categories)
+    cols = [f"g_{cat.key}" for cat in cats]
+    if any(col not in vals.columns for col in cols):
+        return {}
+    names = [cat.label if labels else cat.key for cat in cats]
+    return {
+        yid: dict(zip(names, (float(v) for v in vals.loc[eid, cols]), strict=True))
+        for yid, eid in ymap.items()
+        if eid in vals.index
+    }
+
+
+def _manager_profiles(
+    league: LeagueState, builds: dict[str, dict[str, float]] | None = None, labels: bool = True
+) -> dict[str, Any]:
+    """Manager profiles. `labels` = category naming of `builds` (True: 'FG%'; False: engine keys 'fg_pct')."""
     from fbm.analytics.opponents import profile_teams
 
     teams = {t.team_key: t.name for t in league.teams}
@@ -3210,7 +3264,17 @@ def _manager_profiles(league: LeagueState, builds: dict[str, dict[str, float]] |
         builds,
         league_start=_league_start(league),
         max_weekly_adds=getattr(league, "max_weekly_adds", None),
+        player_g=_player_g(labels),
     )
+
+
+def _partner_build(p) -> Any:
+    """A key-named manager profile -> the trade engine's PartnerBuild (likely punts + wire-shed weak cats; targets)."""
+    from fbm.analytics.trades import PartnerBuild
+
+    if p is None:
+        return PartnerBuild()
+    return PartnerBuild(tuple(p.trade_punts), tuple(p.wire_targets))
 
 
 def _league_start(league: LeagueState) -> datetime | None:
@@ -3285,10 +3349,18 @@ def _intel_row(p, fit: float | None = None) -> dict[str, Any]:
     }
     if p.model is not None:
         row["model"] = p.model.summary()
+
+    def lab(cats: list[str]) -> list[str]:
+        return [_CAT_LABEL.get(k, k) for k in cats]
+
+    row["wire_targets"] = lab(p.wire_targets)
+    row["wire_sheds"] = lab(p.wire_sheds)
     if fit is not None:
         row["complementary_fit"] = fit
-        row["their_strong_cats"] = p.strong_cats
-        row["their_weak_cats"] = p.weak_cats
+        row["their_strong_cats"] = lab(p.strong_cats)
+        row["their_weak_cats"] = lab(p.weak_cats)
+        row["their_likely_punts"] = lab(p.likely_punts)
+        row["trade_punts_assumed"] = lab(p.trade_punts)
     return row
 
 
