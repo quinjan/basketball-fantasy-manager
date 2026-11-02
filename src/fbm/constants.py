@@ -1206,6 +1206,24 @@ _ALL = [
         "Two weeks: long enough to see value, short enough to stay attributable to the decision.",
         "heuristic",
     ),
+    Constant(
+        "verify.claim_window_hours",
+        72,
+        "hours",
+        "How long after the owner confirms an add/drop, waiver claim or IL activation Yahoo may still show it before "
+        "an unseen move is judged not executed.",
+        "Rolling-waiver claims process overnight and can take a couple of days; three days covers that.",
+        "heuristic",
+    ),
+    Constant(
+        "verify.trade_window_hours",
+        96,
+        "hours",
+        "How long after the owner confirms a trade offer the trade may still complete before an unseen trade is "
+        "judged not executed (rejected, withdrawn or vetoed).",
+        "Acceptance plus the ~2-day league review/veto period, with a day of slack.",
+        "heuristic",
+    ),
     # policy (ws-policy: add new policy.* meta constants inside this section only; the policy values themselves
     # live in fbm.gm.policy and change only via owner-approved policy proposals)
     Constant(

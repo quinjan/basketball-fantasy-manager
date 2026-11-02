@@ -3,6 +3,11 @@
 pending_review --record_review--> pending_approval --owner decision--> approved | rejected
 approved --proposal_steps (re-validated)--> awaiting_owner (steps handed to the owner) | failed
 awaiting_owner --owner confirms (confirm_done)--> done
+done --Yahoo verification: the move is not in the league (verification.py)--> not_executed
+not_executed --Yahoo later shows the move (transaction evidence)--> done
+(`done` means the OWNER said they made the move; the verification state (verified | pending | not_executed) lives in
+ execution["verification"] and is refreshed from the stored Yahoo transactions/rosters on every snapshot. Only
+ verified moves are graded. `not_executed` is terminal for graders: the move never happened in Yahoo.)
 (a move the league already shows is not a failure: proposal_steps -> awaiting_owner; a proposal that `failed` only
  because the owner made the move first can still be confirmed done once the league shows it)
 (`failed` is for re-validation problems. A kind with no step template is not a failure: proposal_steps returns generic
@@ -104,6 +109,7 @@ class Proposal:
     def as_dict(self) -> dict[str, Any]:
         d = dict(self.__dict__)
         d["ref"] = self.ref
+        d["verification"] = (self.execution or {}).get("verification")
         return d
 
 
@@ -299,6 +305,23 @@ def confirm_done(
         raise ProposalError(f"{p.ref} is {p.status}, not awaiting_owner.")
     result = {**(p.execution or {}), **(extra or {}), "owner_confirmation": note}
     return record_outcome(conn, p.id, "done", result)
+
+
+def record_verification(conn: sqlite3.Connection, ref: str | int, verification: dict[str, Any]) -> Proposal:
+    """Store the Yahoo verification of a move the owner confirmed. `not_executed` moves the proposal to the
+    `not_executed` status; any other state keeps/returns it to `done`. Only done/not_executed proposals qualify."""
+    p = get(conn, ref)
+    if p.status not in ("done", "not_executed"):
+        raise ProposalError(f"{p.ref} is {p.status}; only done proposals are verified.")
+    state = verification.get("state")
+    status = "not_executed" if state == "not_executed" else "done"
+    execution = {**(p.execution or {}), "verification": verification}
+    conn.execute("UPDATE proposals SET status=?, execution=? WHERE id=?", (status, json.dumps(execution), p.id))
+    before = (p.execution or {}).get("verification") or {}
+    if before.get("state") != state or p.status != status:
+        _event(conn, p.id, f"verification_{state}", str(verification.get("reason") or "")[:300])
+    conn.commit()
+    return get(conn, p.id)
 
 
 def list_proposals(conn: sqlite3.Connection, status: str | None = None, limit: int = 20) -> list[Proposal]:

@@ -111,6 +111,7 @@ def test_grade_done_add_drop(conn):
     props.record_owner_decision(conn, p.ref, True, "yes")
     executed = datetime(2026, 10, 20, 16, 0, tzinfo=UTC).isoformat()  # 12:00 ET Oct 20
     conn.execute("UPDATE proposals SET status='done', executed_at=? WHERE id=?", (executed, p.id))
+    props.record_verification(conn, p.ref, {"state": "verified", "credited": {"in": ["x"], "out": ["y"]}})
     for i, day in enumerate(("2026-10-20", "2026-10-22", "2026-10-24")):
         add_game(conn, f"g{i}", day)
         add_line(conn, f"g{i}", "x", day, pts=22, reb=8, ast=4, stl=1, blk=1, tov=2, tpm=2, fgm=8, fga=15, ftm=4, fta=5)

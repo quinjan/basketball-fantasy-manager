@@ -106,6 +106,30 @@ def test_stream_undo_chosen_and_ros(conn):
     )
 
 
+def test_slot_count_accepts_names_counts_and_nothing():
+    assert replay.slot_count(["PG", "SG", "G", "UTIL"]) == 4
+    assert replay.slot_count(10) == 10 and replay.slot_count("3") == 3
+    assert replay.slot_count(None) == 0 and replay.slot_count([]) == 0 and replay.slot_count("n/a") == 0
+
+
+# None falls back to the most starters seen in Yahoo's lineups (2): no open slot, so y cannot start
+@pytest.mark.parametrize(
+    ("slots", "added"), [(["PG", "SG", "G"], True), (["PG", "SG"], False), (3, True), (None, False)]
+)
+def test_replay_handles_logged_starting_slots_list(conn, slots, added):
+    """Regression: decision logging stores starting_slots as the list of slot names; replay crashed on int(list)."""
+    setup_week(conn)
+    add = {"id": "add", "label": "add y", "spec": {"moves": [{"add": "y", "drop": None, "date": DAY}]}}
+    add_line(conn, "g1", "y", DAY, pts=30, stl=5, fgm=10, fga=15)
+    did = dlog.log(
+        conn, kind="stream_plan", trigger="daily-gm", et_date=DAY,
+        situation={"team_key": "me", "starting_slots": slots}, options=[add], recommended="add",
+    )  # fmt: skip
+    r = replay.replay_option(conn, dlog.get(conn, did), add, pool=POOL, today=TODAY)
+    assert (r["cat_results"]["pts"] == 1.0) is added
+    assert replay.grade_pending(conn, TODAY)[0]["id"] == did
+
+
 def test_chase_concede_carries_cat_results(conn):
     setup_week(conn)
     opt = {"id": "plan", "label": "p", "spec": {"status": {"pts": "chase", "reb": "concede"}}}

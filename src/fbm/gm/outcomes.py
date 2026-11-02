@@ -315,6 +315,33 @@ def _et_date(iso: str) -> date:
     return datetime.fromisoformat(iso).astimezone(ET).date()
 
 
+def _graded_candidates(conn: sqlite3.Connection, lookback_days: int) -> list[props.Proposal]:
+    cutoff = (datetime.now(UTC) - timedelta(days=lookback_days)).isoformat(timespec="seconds")
+    rows = [*props.list_proposals(conn, "done", 500), *props.list_proposals(conn, "not_executed", 500)]
+    return [
+        p
+        for p in sorted(rows, key=lambda x: x.id)
+        if props.effective_kind(p.kind, p.payload) in GRADED_KINDS and p.executed_at and p.executed_at >= cutoff
+    ]
+
+
+def ungraded_moves(conn: sqlite3.Connection, lookback_days: int = 28) -> list[dict[str, Any]]:
+    """Confirmed moves that are NOT graded because Yahoo does not (yet) show them: `not_executed` (contradicted) or
+    still pending/unverified. Fictional moves must never reach the grader."""
+    from fbm.gm import verification
+
+    out = []
+    for p in _graded_candidates(conn, lookback_days):
+        if verification.credited_moves(p) is not None:
+            continue
+        ver = (p.execution or {}).get("verification")
+        out.append(
+            {"ref": p.ref, "kind": p.kind, "title": p.title, "status": p.status, **verification.brief(ver)}
+            | {"confirmed_at": p.executed_at}
+        )
+    return out
+
+
 def grade_decisions(
     conn: sqlite3.Connection,
     pool: PoolStats,
@@ -323,20 +350,31 @@ def grade_decisions(
     punts: Sequence[str] = (),
     lookback_days: int = 28,
     names: Mapping[str, str] | None = None,
+    verified_only: bool = True,
 ) -> list[dict[str, Any]]:
+    """Grade the owner-confirmed moves of the last `lookback_days`. Only moves Yahoo shows (verification `verified`)
+    are graded, on the players and date Yahoo credits; see `ungraded_moves` for the rest."""
+    from fbm.gm import verification
+
     names = names or {}
-    cutoff = (datetime.now(UTC) - timedelta(days=lookback_days)).isoformat(timespec="seconds")
     out = []
-    for p in props.list_proposals(conn, "done", 500):
-        if props.effective_kind(p.kind, p.payload) not in GRADED_KINDS or not p.executed_at or p.executed_at < cutoff:
+    for p in _graded_candidates(conn, lookback_days):
+        moves = verification.credited_moves(p)
+        if verified_only and moves is None:
             continue
-        start = _et_date(p.executed_at)
+        if not verified_only and p.status != "done":
+            continue
+        ver = (p.execution or {}).get("verification") or {}
+        start = date.fromisoformat(ver["effective_et"]) if moves is not None and ver.get("effective_et") else None
+        start = start or _et_date(p.executed_at)
         end = today - timedelta(days=1)
         if end < start:
             end = start
         pay = p.payload
         kind = props.effective_kind(p.kind, pay)
-        if kind == "il_activation":
+        if moves is not None:
+            ins, outs = moves
+        elif kind == "il_activation":
             ins, outs = [pay["activate"]], ([pay["drop"]] if pay.get("drop") else [])
         elif kind == "trade":
             ins, outs = list(pay.get("get", [])), list(pay.get("give", []))
@@ -371,6 +409,7 @@ def grade_decisions(
                 "acquired": got,
                 "gave_up": gave,
                 "expected_at_proposal": p.evidence or {},
+                "verification": verification.brief(ver or None) | {"transactions": ver.get("transactions") or []},
             }
         )
     return out
@@ -403,12 +442,14 @@ def weekly_retro_data(
     return {
         "week_et": f"{week_start}..{week_end}",
         "decisions": grade_decisions(conn, pool, categories, today, punts, lookback_days=35, names=names),
+        "decisions_not_graded": ungraded_moves(conn, 35),
         "proposals_this_week": [
             {
                 "ref": p.ref,
                 "kind": p.kind,
                 "title": p.title,
                 "status": p.status,
+                "verification": ((p.execution or {}).get("verification") or {}).get("state"),
                 "review": p.review_verdict,
                 "owner_quote": p.owner_quote,
             }

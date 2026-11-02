@@ -1967,8 +1967,76 @@ def proposal_steps(ref: str) -> dict[str, Any]:
     return p.as_dict()
 
 
+def _yahoo_view(league: LeagueState):
+    """What Yahoo shows right now (rosters, stored transactions, my daily lineups) for the move verifier."""
+    from datetime import date as _date
+
+    from fbm.gm import verification
+    from fbm.league import tx_history
+    from fbm.yahoo import lineups
+
+    conn = _conn()
+    live = league.source != "demo"
+    as_of = datetime.now(UTC)
+    txs: list = []
+    resolve = verification._no_resolve
+    if live:
+        txs = tx_history.load(conn)
+        stamps = [
+            datetime.fromisoformat(s)
+            for s in (league.fetched_at, conn.execute("SELECT MAX(fetched_at) FROM league_transactions").fetchone()[0])
+            if s
+        ]
+        as_of = min((s if s.tzinfo else s.replace(tzinfo=UTC) for s in stamps), default=as_of)
+        mapper = _yahoo_mapper(league)
+
+        def resolve(tp):
+            try:
+                return mapper(tp.player_id, tp.name, tp.nba_team)
+            except Exception:  # an unmatched player falls back to name matching
+                return None
+
+    me = league.my_team_key
+    return verification.YahooView(
+        my_team_key=me,
+        owners={p.player_id: t.team_key for t in league.teams for p in t.players},
+        my_slots={p.player_id: p.selected for p in league.my_team.players},
+        as_of=as_of,
+        transactions=txs,
+        resolve=resolve,
+        team_names={t.team_key: t.name for t in league.teams},
+        lineups=lineups.daily_lineups(conn, me, _date(2000, 1, 1), _date(2100, 1, 1)) if live else {},
+    )
+
+
+def verify_moves(sync_first: bool = False) -> dict[str, Any]:
+    """Reconcile every owner-confirmed move (done / not_executed proposals) against Yahoo: stored league
+    transactions, current rosters and my daily lineup history. Read-only; updates only FBM's proposal records."""
+    from fbm.gm import verification
+
+    if sync_first and _is_yahoo():
+        try:
+            sync_transactions_tool(write_memory=False)
+        except GMError:
+            pass  # verify on what is already stored
+    rows = verification.verify_all(_conn(), _yahoo_view(active_league()))
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["verification"]] = counts.get(r["verification"], 0) + 1
+    return {"counts": counts, "moves": rows}
+
+
+_VERIFY_WARNING = {
+    "pending": "PENDING VERIFICATION: Yahoo does not show this move yet. It is recorded as done on the owner's word, "
+    "re-checked on every snapshot, and NOT graded until Yahoo shows it. Tell the owner it is unverified.",
+    "not_executed": "NOT EXECUTED: Yahoo contradicts this move. It is excluded from grading; tell the owner and "
+    "re-propose if it is still right.",
+}
+
+
 def confirm_done(ref: str, note: str) -> dict[str, Any]:
-    """The owner says they made the move in Yahoo (demo league: the demo roster is updated to match)."""
+    """The owner says they made the move in Yahoo (demo league: the demo roster is updated to match). The move is
+    then checked against Yahoo; a trade/claim not visible yet is allowed but flagged as pending verification."""
     conn = _conn()
     p = props.get(conn, ref)
     league = active_league()
@@ -1979,7 +2047,17 @@ def confirm_done(ref: str, note: str) -> dict[str, Any]:
     p = props.confirm_done(conn, ref, note, extra, move_on_roster=on_roster)
     memory.journal_append("owner", f"{p.ref} done by owner", note)
     _CTX_CACHE.clear()
-    return p.as_dict()
+    out = p.as_dict()
+    try:
+        verify_moves(sync_first=True)
+        p = props.get(conn, p.id)
+        out = p.as_dict()
+        ver = out.get("verification")
+        if ver and ver["state"] in _VERIFY_WARNING:
+            out["verification_warning"] = f"{_VERIFY_WARNING[ver['state']]} ({ver['reason']})"
+    except Exception as err:  # the owner's confirmation stands even if verification cannot run
+        out["verification_warning"] = f"verification could not run: {type(err).__name__}: {err}"
+    return out
 
 
 def list_proposals(status: str | None = "open", limit: int = 20) -> dict[str, Any]:
@@ -2359,61 +2437,179 @@ def _idea_ids(side: Any) -> list[str]:
     return out
 
 
-def _find_trades_ht(league: LeagueState, partner: str | None, limit: int, n: int) -> dict[str, Any]:
-    """HT mode: HT Trade Finder candidates (FBM multipliers), each evaluated for my build + partner tendencies."""
-    from fbm.analytics.opponents import complementary_fit
-    from fbm.analytics.trades import evaluate_trade
+HT_TRADE_FAIRNESS = ("fair", "10")  # HT Trade Finder: "Within fair margin", "Up to 10% my way"
 
-    conn, c = _conn(), ctx()
-    part = _team(league, partner) if partner else None
+
+def _ht_partner_key(league: LeagueState, idea: dict[str, Any]) -> str | None:
+    key = idea.get("partner_team_key")
+    if key:
+        return key
+    name = _norm(str(idea.get("partner_name") or ""))
+    return next((t.team_key for t in league.teams if _norm(t.name) == name), None)
+
+
+def _ht_trade_ideas(league: LeagueState, part: FantasyTeam | None) -> tuple[list[dict], list[str]]:
+    """Live HT Trade Finder runs (FBM multipliers) at each fairness in HT_TRADE_FAIRNESS; today's stored ideas when
+    every live run fails."""
+    from fbm.hashtag import importer
+    from fbm.hashtag import store as ht_store
+
+    conn = _conn()
     mult = _category_multipliers() or {}
-    try:
-        from fbm.hashtag import importer
+    weights = mult.get("combined") or mult.get("season") or {}
+    ideas: list[dict] = []
+    notes: list[str] = []
+    for fair in HT_TRADE_FAIRNESS:
+        try:
+            ideas += importer.run_trade_finder(
+                conn, weights=weights, fairness=fair, partner=part.team_key if part else None, league=league
+            )
+        except Exception as err:  # noqa: BLE001 - reported; stored ideas are the fallback (still HT's)
+            notes.append(f"HT Trade Finder ({fair}) live run failed: {type(err).__name__}: {err}")
+    if ideas:
+        return ideas, [f"hashtag trade finder (live, fairness {', '.join(HT_TRADE_FAIRNESS)})", *notes]
+    stored = ht_store.trade_ideas(conn, since=nba_today().isoformat())
+    return stored, [f"hashtag trade finder (today's stored ideas: {len(stored)})", *notes]
 
-        ideas = importer.run_trade_finder(
-            conn, weights=mult.get("combined") or mult.get("season") or {}, partner=part.team_key if part else None
-        )
-        source = "hashtag trade finder (live run)"
-    except Exception as err:  # noqa: BLE001 - fall back to today's stored ideas (still HT's)
-        from fbm.hashtag import store as ht_store
 
-        ideas = ht_store.trade_ideas(conn, since=nba_today().isoformat())
-        source = f"hashtag trade finder (stored ideas; live run unavailable: {type(err).__name__})"
+def _ht_value_read(ros: pd.DataFrame, c: AnalyticsContext, give: list[str], get: list[str]) -> dict[str, Any]:
+    """HT ROS total value received minus sent (unweighted, players traded only; each player floored at 0 because a
+    below-replacement throw-in is a drop, not value): a market-fairness read."""
+
+    def total(ids: list[str]) -> float:
+        return sum(max(float(ros.at[i, "total"]), 0.0) for i in ids if i in ros.index and pd.notna(ros.at[i, "total"]))
+
+    sent, received = total(give), total(get)
+    out: dict[str, Any] = {"sent": _r(sent), "received": _r(received), "received_minus_sent": _r(received - sent)}
+    out["pct_of_sent"] = _r((received - sent) / abs(sent) * 100, 1) if sent else None
+    missing = [i for i in [*give, *get] if i not in ros.index]
+    if missing:
+        out["missing_from_ht"] = _names(c, missing)
+    return out
+
+
+def _trade_key(partner: str, give, get) -> tuple:
+    return partner, tuple(sorted(str(x) for x in give)), tuple(sorted(str(x) for x in get))
+
+
+def _trade_setup(league: LeagueState, n: int):
     sim, fa = _league_sim(n)
-    mine = dict(sim.profile(league.my_team_key)[0])
     profiles = _manager_profiles(
         league, {t.team_key: dict(sim.profile(t.team_key)[0]) for t in league.teams}, labels=False
     )
-    keys = {t.team_key for t in league.teams}
-    trades, skipped = [], 0
+    builds = {k: _partner_build(p) for k, p in profiles.items() if k != league.my_team_key}
+    return sim, fa, profiles, builds
+
+
+def _find_trades_ht(
+    league: LeagueState, partner: str | None, max_give: int, max_get: int, limit: int, n: int
+) -> dict[str, Any]:
+    """HT mode: two candidate pools, both judged by FBM. HT Trade Finder ideas (value-fair by HT's ROS rankings, FBM
+    multipliers) + FBM's own search (H2H category gain, partner judged by their build). Every candidate is evaluated
+    with evaluate_trade and tagged with its sources and an HT ROS value-fairness read."""
+    from fbm.analytics.opponents import complementary_fit
+    from fbm.analytics.trades import evaluate_trade, find_trades
+    from fbm.hashtag import store as ht_store
+
+    c = ctx()
+    part = _team(league, partner) if partner else None
+    sim, fa, profiles, builds = _trade_setup(league, n)
+    mine = dict(sim.profile(league.my_team_key)[0])
+    punts = _strategy_punts(None)
+    ros = ht_store.projections(_conn(), "ROS")
+    keys = {t.team_key for t in league.teams} - {league.my_team_key}
+
+    cands: dict[tuple, dict[str, Any]] = {}  # key -> {ev, sources, ht}
+    ideas, source_notes = _ht_trade_ideas(league, part)
+    ht_rows: list[dict[str, Any]] = []
+    skipped = 0
     for idea in ideas:
-        pkey = idea.get("partner_key") or idea.get("partner")
+        pkey = _ht_partner_key(league, idea)
         give, get = _idea_ids(idea.get("give")), _idea_ids(idea.get("get"))
-        if pkey not in keys or not give or not get or (part and pkey != part.team_key):
+        names = {"give": [p.get("name") for p in idea.get("give") or []],
+                 "get": [p.get("name") for p in idea.get("get") or []]}  # fmt: skip
+        data = idea.get("data") or {}
+        fair = (idea.get("settings") or {}).get("fairness")
+        ht = {
+            "fairness_settings": [fair] if fair else [],
+            "badges": data.get("badges"),
+            "ht_value_delta_weighted": idea.get("my_delta"),
+            "category_ranks_now": data.get("ranks_now"),
+            "category_ranks_after": data.get("ranks_after"),
+        }
+        row = {"partner": idea.get("partner_name"), **names, **ht}
+        if pkey not in keys or len(give) != len(names["give"]) or len(get) != len(names["get"]):
+            row["skipped"] = "partner or player not matched to the Yahoo league"
             skipped += 1
+            ht_rows.append(row)
+            continue
+        if part and pkey != part.team_key:
+            continue
+        k = _trade_key(pkey, give, get)
+        if k in cands:  # same idea from another fairness run
+            seen = cands[k]["ht"]["fairness_settings"]
+            seen += [f for f in ht["fairness_settings"] if f not in seen]
             continue
         try:
-            ev = evaluate_trade(
-                sim, league.my_team_key, pkey, give, get, fa, _strategy_punts(None), _partner_build(profiles.get(pkey))
-            )
-        except Exception:  # noqa: BLE001 - stale idea (roster changed)
+            ev = evaluate_trade(sim, league.my_team_key, pkey, give, get, fa, punts, builds.get(pkey))
+        except Exception as err:  # noqa: BLE001 - stale idea (roster changed)
+            row["skipped"] = f"not evaluable: {type(err).__name__}"
             skipped += 1
+            ht_rows.append(row)
             continue
+        cands[k] = {"ev": ev, "sources": ["hashtag"], "ht": ht, "row": row}
+
+    partners = [part.team_key] if part else None
+    engine = find_trades(
+        sim, league.my_team_key, fa, punts, partners, max_give, max_get, limit=max(limit, 8), partner_builds=builds
+    )
+    for ev in engine:
+        k = _trade_key(ev.them.team_key, ev.me.gives, ev.me.gets)
+        if k in cands:
+            cands[k]["sources"].append("fbm")
+        else:
+            cands[k] = {"ev": ev, "sources": ["fbm"], "ht": None, "row": None}
+
+    trades = []
+    for cand in cands.values():
+        ev = cand["ev"]
         d = _trade_dict(ev, c)
-        d["ht_idea"] = {k: idea.get(k) for k in ("id", "pulled_at", "data") if k in idea}
-        p = profiles.get(pkey)
+        d["sources"] = cand["sources"]
+        d["consensus"] = len(cand["sources"]) == 2
+        d["ht_value"] = _ht_value_read(ros, c, list(ev.me.gives), list(ev.me.gets))
+        if cand["ht"]:
+            d["ht_idea"] = cand["ht"]
+            cand["row"].update({
+                "fbm_verdict": d["verdict"],
+                "fbm_my_expected_cats_delta": d["me"]["expected_cats_delta"],
+                "fbm_their_expected_cats_delta": d["them"]["expected_cats_delta"],
+                "also_found_by_fbm": "fbm" in cand["sources"],
+            })  # fmt: skip
+            ht_rows.append(cand["row"])
+        p = profiles.get(ev.them.team_key)
         if p is not None:
             d["partner_intel"] = _intel_row(p, complementary_fit(mine, p.cat_win_rate))
-        trades.append(d)
-    trades.sort(key=lambda d: -float(d["me"]["expected_cats_delta"]))
+        if "fbm" in cand["sources"] or float(d["me"]["expected_cats_delta"]) > 0:
+            trades.append(d)
+    trades.sort(key=lambda d: (not d["consensus"], -float(d["me"]["expected_cats_delta"])))
+    ht_rows.sort(key=lambda r: -float(r.get("fbm_my_expected_cats_delta") or -9))
     return {
         "trades": trades[:limit],
-        "ideas_considered": len(ideas),
-        "ideas_skipped": skipped,
-        "candidate_source": source,
+        "ht_ideas": ht_rows,
+        "counts": {
+            "ht_ideas": len(ideas),
+            "ht_ideas_skipped": skipped,
+            "fbm_candidates": len(engine),
+            "consensus": sum(1 for x in cands.values() if len(x["sources"]) == 2),
+        },
+        "candidate_sources": source_notes,
         "my_category_win_rates": {k: _r(v) for k, v in mine.items()},
-        "method": "HT Trade Finder candidates, each evaluated season-level for my build (evaluate_trade); the "
-        "partner's side is judged by their build (likely punts + weak categories they shed on the wire)",
+        "method": "Two candidate pools judged by FBM: HT Trade Finder ideas (value-fair by HT ROS rankings with FBM "
+        "multipliers; 1-for-1/2-for-2) and FBM's own search (H2H category gain for us, partner judged by their build; "
+        "up to 2-for-2 incl. uneven). Each candidate is evaluated season-level (evaluate_trade). `trades`: consensus "
+        "first, then by our expected-cats gain; HT ideas that don't help us are only in `ht_ideas` (every HT idea "
+        "with FBM's verdict). `ht_value` = HT ROS total value received minus sent (unweighted, players traded only): "
+        "a market-fairness read for acceptance; HT ideas also carry HT's own badges.",
     }
 
 
@@ -2421,19 +2617,14 @@ def _find_trades_ht(league: LeagueState, partner: str | None, limit: int, n: int
 def find_trades_tool(
     partner: str | None = None, max_give: int = 2, max_get: int = 2, limit: int = 6, n: int = 1200
 ) -> dict[str, Any]:
+    from fbm.analytics.opponents import complementary_fit, partner_rank_key
     from fbm.analytics.trades import find_trades
 
     league, c = active_league(), ctx()
     if c.hashtag:
-        return _find_trades_ht(league, partner, limit, n)
+        return _find_trades_ht(league, partner, max_give, max_get, limit, n)
     partners = [_team(league, partner).team_key] if partner else None
-    sim, fa = _league_sim(n)
-    from fbm.analytics.opponents import complementary_fit, partner_rank_key
-
-    profiles = _manager_profiles(
-        league, {t.team_key: dict(sim.profile(t.team_key)[0]) for t in league.teams}, labels=False
-    )
-    builds = {k: _partner_build(p) for k, p in profiles.items() if k != league.my_team_key}
+    sim, fa, profiles, builds = _trade_setup(league, n)
     results = find_trades(
         sim,
         league.my_team_key,
@@ -2473,6 +2664,10 @@ def find_trades_tool(
 
 def grade_decisions_tool(lookback_days: int = 28) -> dict[str, Any]:
     c = _grading_ctx()
+    try:
+        verify_moves()  # only moves Yahoo shows are graded
+    except Exception:  # noqa: BLE001 - grade on the verification already stored
+        pass
     graded = outcomes.grade_decisions(
         _conn(),
         c.pool,
@@ -2482,7 +2677,12 @@ def grade_decisions_tool(lookback_days: int = 28) -> dict[str, Any]:
         lookback_days,
         names=c.projections["name"].to_dict(),
     )
-    out = {"decisions": graded, "scale": "std units = team-week SDs per category (+0.5 good, -0.5 bad)"}
+    out = {
+        "decisions": graded,
+        "not_graded": outcomes.ungraded_moves(_conn(), lookback_days),
+        "scale": "std units = team-week SDs per category (+0.5 good, -0.5 bad); not_graded = confirmed moves Yahoo "
+        "does not (yet) show: never graded",
+    }
     try:
         from fbm.gm import decision_services
 
@@ -2532,6 +2732,10 @@ def weekly_retro_data_tool(week_start: str | None = None) -> dict[str, Any]:
     c = _grading_ctx()
     start = parse_date(week_start) if week_start else fantasy_week(nba_today() - timedelta(days=7))[0]
     sync = decision_services.sync_yahoo_results()
+    try:
+        verify_moves(sync_first=True)  # only moves Yahoo shows are graded
+    except Exception:  # noqa: BLE001 - retro on the verification already stored
+        pass
     data = outcomes.weekly_retro_data(
         _conn(),
         c.pool,
@@ -3091,6 +3295,14 @@ def snapshot_tool() -> dict[str, Any]:
         transactions = sync_transactions_tool()
     except GMError as err:  # intel history is additive; never fail the snapshot over it
         transactions = {"error": str(err)}
+    try:
+        moves = verify_moves()
+        verification_summary: dict[str, Any] = {
+            "counts": moves["counts"],
+            "attention": [m for m in moves["moves"] if m["verification"] != "verified"],
+        }
+    except Exception as err:  # verification is additive; never fail the snapshot over it
+        verification_summary = {"error": f"{type(err).__name__}: {err}"}
     return {
         "league": league.name,
         "week": league.week,
@@ -3103,6 +3315,7 @@ def snapshot_tool() -> dict[str, Any]:
         "unmatched_players": [{"yahoo_id": m.yahoo_id, "name": m.name, "team": m.team} for m in unmatched],
         "how_to_fix_unmatched": _OVERRIDE_HELP if unmatched else None,
         "transactions": transactions,
+        "move_verification": verification_summary,
     }
 
 

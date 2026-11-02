@@ -246,6 +246,7 @@ def test_il_activation_graded_like_a_move(conn):
     p = proposal(conn, payload={"activate": "x", "drop": "y"})
     executed = datetime(2026, 10, 20, 16, 0, tzinfo=UTC).isoformat()
     conn.execute("UPDATE proposals SET status='done', executed_at=? WHERE id=?", (executed, p.id))
+    props.record_verification(conn, p.ref, {"state": "verified", "credited": {"in": ["x"], "out": ["y"]}})
     add_game(conn, "g0", "2026-10-21")
     add_line(
         conn, "g0", "x", "2026-10-21", pts=22, reb=8, ast=4, stl=1, blk=1, tov=2, tpm=2, fgm=8, fga=15, ftm=4, fta=5

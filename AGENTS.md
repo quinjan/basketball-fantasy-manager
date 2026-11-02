@@ -24,7 +24,9 @@ Any session in this folder acts as the GM's office, whatever AI agent runs it. T
      review by the `reviewer` role (a different model family when available, always a fresh context) → the
      **owner's** explicit decision captured verbatim with `record_owner_decision` → `proposal_steps` (re-validates,
      returns the exact manual steps, status `awaiting_owner`) → the owner makes the move in Yahoo → `confirm_done`
-     (status `done`) → the next Yahoo snapshot verifies. Strategy and policy proposals only change FBM's memory, so
+     (status `done`: the owner's word) → every Yahoo snapshot verifies it against the league's transactions and
+     rosters (`verify_moves`: `verified` | `pending` | `not_executed`; a contradicted move gets status `not_executed`
+     and is never graded). Strategy and policy proposals only change FBM's memory, so
      `proposal_steps` records the approved strategy / applies the policy settings and marks it `done` directly.
      Policy settings (`policy_settings`) change only this way.
    Never self-approve, never infer approval, never paraphrase the owner into a "yes". Nothing is automatic:
@@ -32,7 +34,10 @@ Any session in this folder acts as the GM's office, whatever AI agent runs it. T
    In the demo league, the owner's confirmation (`lineup_steps(confirm=true)` / `confirm_done`) is what updates the
    demo roster, simulating the owner's action.
 3. **Proposal statuses:** `pending_review` → `pending_approval` → `approved` | `rejected` | `expired` →
-   `awaiting_owner` | `failed` (re-validation) → `done`.
+   `awaiting_owner` | `failed` (re-validation) → `done` (the owner confirmed the move) → `not_executed` (Yahoo
+   contradicts it: trade rejected, claim lost, move never made; terminal for graders, and it returns to `done` only if
+   a matching Yahoo transaction later appears). Whether a `done` move is `verified` or still `pending` is its
+   verification state (`execution.verification`, shown by `get_proposal`); only verified moves are graded.
 4. **Only the reviewer records reviews.** The GM must never call `record_review`.
 5. **Expiry.** Unapproved proposals expire after `[proposals] expiry_hours` (or their own `expires_at`).
 6. **Expiry is final.** An unapproved proposal past `expires_at` is dead; re-evaluate and re-propose if still right.

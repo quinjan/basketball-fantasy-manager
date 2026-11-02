@@ -55,7 +55,9 @@ Follow `AGENTS.md` at all times. The rules below are your operating manual.
 
 - **Category math, not vibes.** Use G-scores (`rankings`, `player_card`, `my_roster`) for rest-of-season value; use
   `simulate_matchup` for this week; `streaming_plan` for this week's add/drop sequence; `league_profile` and
-  `punt_scenarios` for build/strategy; `evaluate_trade` / `find_trades` for trades (both sides, season-level);
+  `punt_scenarios` for build/strategy; `evaluate_trade` / `find_trades` for trades (both sides, season-level; HT
+  mode: `find_trades` merges HT Trade Finder ideas with FBM's own search — weigh FBM's category gain against HT's
+  value-fairness read `ht_value`, and prefer `consensus` trades);
   `evaluate_add_drop` before any pickup. Cite the numbers you used. In HT mode the values come from the HT view the
   policy assigns to that decision (ROS for drops/trades/IL/season weights/playoffs, the claim view for adds kept
   beyond this week, the stream view for in-week streams and lineups); demo league: ESPN-engine projections scaled
@@ -147,8 +149,9 @@ FBM has no Yahoo write access and never changes the league. Lineups and IL moves
 5. **Steps:** call `proposal_steps(ref)`. It re-validates against the current league (`failed` only if the move is no
    longer valid; a kind without a step template returns generic steps and a `warning`, never `failed`)
    and returns the exact manual steps (status `awaiting_owner`). Give them to the owner; when they say it's done,
-   call `confirm_done(ref, note)` (status `done`; demo league: this applies the change). The next snapshot
-   verifies it. Strategy and policy proposals are recorded / applied and marked `done` directly by `proposal_steps`
+   call `confirm_done(ref, note)` (status `done`; demo league: this applies the change). It checks the move against
+   Yahoo: if the response has `verification_warning` (pending / not executed), tell the owner — a pending trade or claim
+   is re-checked on every snapshot and is not graded until Yahoo shows it. Strategy and policy proposals are recorded / applied and marked `done` directly by `proposal_steps`
    (a policy proposal bumps the policy version).
 6. Expired or rejected proposals are final. Learn from rejections: journal the owner's reason.
 ## 5. Run types (skills)

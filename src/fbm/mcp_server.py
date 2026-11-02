@@ -342,7 +342,10 @@ def evaluate_trade(partner: str, give: str, get: str) -> dict:
 def find_trades(partner: str | None = None, max_give: int = 2, max_get: int = 2, limit: int = 6) -> dict:
     """Search the league (or one partner) for trades that improve our expected categories and are defensible for
     the other team judged by their build (their likely punts don't count; categories they chase on the wire weigh
-    more). Returns evaluated candidates with payload ids ready for a trade proposal."""
+    more). Returns evaluated candidates with payload ids ready for a trade proposal. HT mode: merges HT Trade Finder
+    ideas (fairness 'fair' + 'up to 10% my way', FBM multipliers) with FBM's own search; every trade carries
+    `sources` (hashtag/fbm), `consensus`, `ht_value` (HT ROS value received minus sent: acceptance read) and HT's
+    badges/category ranks; `ht_ideas` lists every HT idea with FBM's verdict."""
     return svc.find_trades_tool(partner, max_give, max_get, limit)
 
 
@@ -352,7 +355,8 @@ def find_trades(partner: str | None = None, max_give: int = 2, max_get: int = 2,
 @tool()
 def grade_decisions(lookback_days: int = 28) -> dict:
     """Grade executed add/drop, waiver, and trade proposals by realized production since execution (acquired minus
-    given up, in team-week SD units per category): good / neutral / bad / too early."""
+    given up, in team-week SD units per category): good / neutral / bad / too early. Only moves Yahoo shows
+    (verified) are graded; `not_graded` lists confirmed moves that are pending or not executed, with the reason."""
     return svc.grade_decisions_tool(lookback_days)
 
 
@@ -515,20 +519,32 @@ def proposal_steps(ref: str) -> dict:
 @tool(WRITE)
 def confirm_done(ref: str, note: str) -> dict:
     """Only after the OWNER says they made the move in Yahoo: mark the proposal done (demo league: updates the demo
-    roster to match). The next Yahoo snapshot verifies it."""
+    roster to match), then check it against Yahoo. A trade/claim Yahoo does not show yet is still recorded but comes
+    back with `verification_warning` (pending verification: not graded until Yahoo shows it). Every Yahoo snapshot
+    re-verifies; see verify_moves."""
     return svc.confirm_done(ref, note)
+
+
+@tool(WRITE)
+def verify_moves(sync_first: bool = True) -> dict:
+    """Reconcile every owner-confirmed move (add/drop, waiver claim, trade, IL activation) with Yahoo: stored league
+    transactions, current rosters and lineup history. Each gets verified | pending | not_executed (with the reason);
+    not_executed moves get proposal status `not_executed` and are never graded. One Yahoo transaction is credited to
+    one proposal. Reads Yahoo (read-only); writes only FBM's proposal records."""
+    return svc.verify_moves(sync_first)
 
 
 @tool()
 def list_proposals(status: str | None = "open", limit: int = 20) -> dict:
     """Proposals by status: open (default) | pending_review | pending_approval | approved | rejected | expired |
-    awaiting_owner | done | failed | null for all."""
+    awaiting_owner | done | not_executed | failed | null for all. Done moves carry `verification`."""
     return svc.list_proposals(status, limit)
 
 
 @tool()
 def get_proposal(ref: str) -> dict:
-    """One proposal with its full event history."""
+    """One proposal with its full event history and, for confirmed moves, its Yahoo `verification` (state, reason,
+    transactions credited)."""
     return svc.get_proposal(ref)
 
 

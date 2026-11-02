@@ -949,7 +949,7 @@ app.add_typer(proposals_app, name="proposals")
 
 @proposals_app.command("list")
 def proposals_list(
-    status: str = typer.Option("open", help="open | pending_approval | awaiting_owner | done | all"),
+    status: str = typer.Option("open", help="open | pending_approval | awaiting_owner | done | not_executed | all"),
 ) -> None:
     """List proposals."""
     from fbm.gm import proposals as props
@@ -1027,6 +1027,8 @@ def proposals_done(ref: str, note: str = typer.Option("done", help="What you did
     try:
         p = svc.confirm_done(ref, note)
         console.print(f"{p['ref']} → [bold]{p['status']}[/]")
+        if p.get("verification_warning"):
+            console.print(p["verification_warning"], style="yellow", markup=False, highlight=False)
     except ProposalError as err:
         _fail(str(err))
 

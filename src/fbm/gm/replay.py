@@ -84,6 +84,17 @@ def _summary(results: Mapping[str, float], margins: Mapping[str, float], ros, co
     }
 
 
+def slot_count(value: Any) -> int:
+    """Number of starting slots from a logged situation: a count, a numeric string, or the list of slot names
+    (e.g. ["PG", "SG", ..., "UTIL"]) that decision logging stores. 0 when unknown."""
+    if isinstance(value, (list, tuple, set)):
+        return len(value)
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _default_team_key() -> str | None:
     try:
         from fbm.config import load_league_config
@@ -118,7 +129,7 @@ class _Week:
         self.days = [(self.start + timedelta(days=i)).isoformat() for i in range((self.end - self.start).days + 1)]
         self.started = lineups.started_days(conn, self.team_key, self.start, self.end)
         observed = [len(s) for s in self.started.values()]
-        self.slots = int(sit.get("starting_slots") or (max(observed) if observed else 0))
+        self.slots = slot_count(sit.get("starting_slots")) or (max(observed) if observed else 0)
         if not final["final"]:
             self.reason = "week not final in Yahoo yet"
         elif self.end >= today or not outcomes.window_complete(conn, self.start.isoformat(), self.end.isoformat()):
@@ -334,9 +345,9 @@ def infer_chosen(
     except Exception:
         return None
     stand = next((o for o in options if o.get("stand_pat")), None)
-    if p.status in ("rejected", "expired"):
+    if p.status in ("rejected", "expired", "not_executed"):  # the move never happened in Yahoo: stand pat
         return (str(stand["id"]), "proposal") if stand else None
-    if p.status != "done":
+    if p.status != "done" or ((p.execution or {}).get("verification") or {}).get("state") != "verified":
         return None
     pay = p.payload or {}
     want = {str(x) for x in [pay.get("add"), pay.get("drop"), pay.get("activate"), *(pay.get("get") or [])] if x}

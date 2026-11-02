@@ -69,7 +69,7 @@ grading.
 | `evaluate_il_activation` | `(activate, drop=None, opponent=None, effective=None, play_prob=None)`: move one of my IL players to active (dropping `drop` when the roster is full). Same output shape as `evaluate_add_drop` (expected cats and P(win) before/after, per-category P(win) change, ROS deltas, games gained/lost). He only counts from `effective` (ET date, default today) and, when Out, from his ESPN return date at the GTD play probability (`activate_injury` shows status, return date, probability used and the basis); `play_prob` overrides. Before/after share common random numbers |
 | `streaming_plan` | Best sequence of streaming add/drops for the rest of this week within remaining adds. Players on waivers are scheduled only from the day they clear: `via_waivers: true`, `waivers_clear_et`, `add_effective_et` and the `waiver_decision` verdict (`waiver_verdict`); `include_waivers=false` drops them from the candidate pool. Waiver status comes from the latest Yahoo snapshot; the league exposes no add-lock setting, so free agents are addable the same day |
 | `evaluate_trade` | Evaluate a trade for both sides (season-level expected categories before/after); logged as a trade decision |
-| `find_trades` | Search the league (or one partner) for trades that help us and are defensible for them. Hashtag mode: candidates are HT Trade Finder ideas (FBM's category multipliers), each re-evaluated with `evaluate_trade` |
+| `find_trades` | Search the league (or one partner) for trades that help us and are defensible for them. Hashtag mode: two candidate pools judged by FBM — HT Trade Finder ideas (FBM's category multipliers, fairness "fair" and "up to 10% my way") and FBM's own search — each evaluated with `evaluate_trade`; `trades` (consensus first, then our gain) carry `sources`, `consensus`, `ht_value` (HT ROS value received minus sent) and HT badges/category ranks; `ht_ideas` lists every HT idea with FBM's verdict |
 
 ## Early signals
 
@@ -89,10 +89,10 @@ FBM calibrates decisions, not projections (Hashtag owns projection accuracy).
 | `decisions_log` | `decisions_log(kind=None, since=None, limit=...)`: each logged decision's options, recommendation, what was actually chosen, policy version and replay grade (best option, regret in categories). Kinds: lineup, stream_plan, waiver_claim, il, trade, drop, chase_concede, category_weights |
 | `replay_grade` | `replay_grade(lookback_days=...)`: replay recent decisions on real box scores + Yahoo FINAL week totals (every option, opponent held at what they did); fills in what was chosen, saves complete grades, returns regret by kind |
 | `odds_reliability` | `odds_reliability(scale=None, view=None)`: official weekly odds vs Yahoo final results: Brier vs coin flip, reliability buckets, per-category Brier, expected vs actual categories, per HT view; `scale` recomputes the odds for another spread scale |
-| `grade_decisions` | Grade completed (`done`) add/drop, waiver, trade and IL-activation proposals by realized production |
+| `grade_decisions` | Grade completed (`done`) add/drop, waiver, trade and IL-activation proposals by realized production. Only moves Yahoo shows (`verified`) are graded, on the players and day Yahoo credits; `not_graded` lists pending / `not_executed` moves with the reason |
 | `prediction_calibration` | Grade finished matchup predictions against Yahoo FINAL results: Brier score vs coin flip, reliability (`legacy` = pre-Hashtag simulator forecasts) |
 | `signal_grades` | Grade finished signals: hit rate by kind and confidence, ownership move after the signal; Hashtag mode: lead time over HT's projection and % owned, how often FBM acted, replay grade of those decisions |
-| `weekly_retro_data` | Everything the weekly retro needs for a fantasy week (default: last completed): graded decisions, proposals, graded predictions, decision retro (replay regret by kind, `odds_reliability`, `per_view` table) and signal grades |
+| `weekly_retro_data` | Everything the weekly retro needs for a fantasy week (default: last completed): graded decisions (verified moves only), `decisions_not_graded` (pending / `not_executed` moves with the reason), proposals (with verification state), graded predictions, decision retro (replay regret by kind, `odds_reliability`, `per_view` table) and signal grades |
 
 ## Policy (decision rules)
 
@@ -115,7 +115,8 @@ FBM never changes the league. These tools return recommendations and exact steps
 | `record_review` | Record the independent reviewer's verdict (AGREE / DISAGREE / SPLIT) |
 | `record_owner_decision` | Record the owner's decision, only with the owner's own words from the conversation |
 | `proposal_steps` | Re-validate an approved, unexpired proposal and return the exact manual steps (`awaiting_owner`, or `failed` only for a re-validation problem); a kind with no step template gets generic steps plus a `warning` (never `failed`), and a proposal that failed with a tool `error` can be re-run; strategy proposals are recorded and policy proposals applied (new policy version), both marked `done` |
-| `confirm_done` | Owner confirms they made the move in Yahoo (`done`; demo league: applies the change) |
-| `list_proposals` | Proposals by status (open, pending_review, pending_approval, approved, rejected, expired, awaiting_owner, failed, done) |
-| `get_proposal` | One proposal with its full event history |
+| `confirm_done` | Owner confirms they made the move in Yahoo (`done`; demo league: applies the change), then checks it against Yahoo; a trade/claim Yahoo does not show yet is still recorded but returns `verification_warning` (pending verification) |
+| `verify_moves` | Reconcile every owner-confirmed move (add/drop, waiver claim, trade, IL activation) with Yahoo's stored transactions, current rosters and lineup history: `verified` / `pending` / `not_executed` with the reason; one transaction is credited to one proposal; `not_executed` sets that status. Runs automatically on every snapshot, `confirm_done` and the retro |
+| `list_proposals` | Proposals by status (open, pending_review, pending_approval, approved, rejected, expired, awaiting_owner, failed, done, not_executed) |
+| `get_proposal` | One proposal with its full event history and, for confirmed moves, its Yahoo `verification` (state, reason, legs, transactions credited) |
 | `send_email` | Email the owner (Gmail): report, approval, alert, or retro |

@@ -16,7 +16,9 @@ description: Walk the owner through pending GM proposals and capture their decis
 4. `record_owner_decision(ref, approved, owner_quote=<the owner's exact words>)`. Never paraphrase or infer.
 5. If approved: `proposal_steps(ref)` (re-validates first). Report the result:
    - `awaiting_owner` → show the manual steps exactly; the owner makes the move in Yahoo. When they say done,
-     `confirm_done(ref, note)` (status `done`; demo league: this applies the change). The next snapshot verifies.
+     `confirm_done(ref, note)` (status `done`; demo league: this applies the change). It then checks the move against
+     Yahoo: a `verification_warning` means it is pending (trade vote / waiver processing) or not executed — tell the
+     owner; every snapshot re-verifies, and only verified moves are graded.
    - `done` (strategy / policy proposals) → confirm the approved strategy was recorded, or the policy settings were
      applied (new policy version in `policy_settings`).
    - `failed` → explain the re-validation problem and whether a revised proposal makes sense.
