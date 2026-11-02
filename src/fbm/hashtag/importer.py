@@ -530,7 +530,8 @@ def _trade_finder(
         players = [p for idea in parsed["ideas"] for p in idea["give"] + idea["get"]]
         mapping = ht_ids.map_players(run.conn, players, commit=False)
         pulled = _iso(run.now())
-        settings = json.dumps({**parsed["settings"], "fairness": fairness, "partner": partner}, sort_keys=True)
+        settings_d = {**parsed["settings"], "fairness": fairness, "partner": partner}
+        settings = json.dumps(settings_d, sort_keys=True)
         for idea in parsed["ideas"]:
             give = [{"ht_id": p["ht_id"], "espn_id": mapping.get(p["ht_id"]), "name": p["name"]} for p in idea["give"]]
             get = [{"ht_id": p["ht_id"], "espn_id": mapping.get(p["ht_id"]), "name": p["name"]} for p in idea["get"]]
@@ -543,7 +544,7 @@ def _trade_finder(
                 (pulled, settings, tkey, idea["partner_name"], json.dumps(give), json.dumps(get), idea["my_delta"],
                  idea["their_delta"], json.dumps(data)),
             )  # fmt: skip
-            out.append({"id": cur.lastrowid, "pulled_at": pulled, "partner_team_key": tkey,
+            out.append({"id": cur.lastrowid, "pulled_at": pulled, "settings": settings_d, "partner_team_key": tkey,
                         "partner_name": idea["partner_name"], "give": give, "get": get,
                         "my_delta": idea["my_delta"], "their_delta": idea["their_delta"], "data": data})  # fmt: skip
         return len(parsed["ideas"])

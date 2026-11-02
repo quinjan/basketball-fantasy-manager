@@ -211,6 +211,9 @@ def test_trade_finder_and_next_man_up(conn):
         client=client, league=make_league(), now=NOW, league_id="11111",
     )  # fmt: skip
     assert len(ideas) == 2 and ideas[0]["give"] and ideas[0]["get"]
+    assert ideas[0]["settings"]["fairness"] == "fair"
+    league_keys = {t.name: t.team_key for t in make_league().teams}
+    assert all(i["partner_team_key"] == league_keys.get(i["partner_name"]) for i in ideas)
     assert store.trade_ideas(conn)[0]["partner_name"].startswith("Team")
     posted = [f for m, p, f in fake.requests if m == "POST" and "trade-finder" in p][0]
     assert posted["ctl00$ContentPlaceHolder1$DDAST"] == ["1.25"]

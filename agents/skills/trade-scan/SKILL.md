@@ -8,10 +8,15 @@ description: League-wide trade search (twice weekly). Find mutually beneficial t
 Run as the `gm` agent. Trades are never sent without the owner's explicit approval.
 
 1. `context_pack`. Read `memory/managers/` for tendencies (activity, what they overvalue, past trades).
-2. `find_trades` (whole league; optionally `partner=` for a targeted look). Hashtag mode: candidates are HT
-   Trade Finder ideas (run with FBM's category multipliers; `candidate_source` says live run or stored ideas), each
-   evaluated season-level for our build with `evaluate_trade` plus partner intel; `HT_UNHEALTHY` → no trade
-   suggestions or proposals, report the fix. Demo league: it screens 1-1, 2-1, 1-2, 2-2 packages
+2. `find_trades` (whole league; optionally `partner=` for a targeted look). Hashtag mode: two candidate pools,
+   both judged by FBM with `evaluate_trade` plus partner intel — HT Trade Finder ideas (run with FBM's category
+   multipliers at fairness "fair" and "up to 10% my way"; HT only does 1-for-1 / 2-for-2 on its ROS view) and FBM's
+   own search (H2H category gain, incl. uneven packages). Read every trade's `sources` and `consensus` (both found
+   it = strongest), `ht_value` (HT ROS value received minus sent: a large positive % means HT's market sees it as
+   lopsided our way → low acceptance odds, whatever FBM's partner-build view says) and HT's `badges`/category
+   ranks. `ht_ideas` lists every HT idea with FBM's verdict: when FBM rejects an HT idea, say why (category deltas).
+   `candidate_sources` says live run or stored ideas; `HT_UNHEALTHY` → no trade suggestions or proposals, report
+   the fix. Demo league: it screens 1-1, 2-1, 1-2, 2-2 packages
    by need-weighted G-scores, confirms the best with season-level simulation, and keeps only trades that raise our
    expected categories per week, don't hurt the partner in simulation, and cost them at most ~1.0 ranking value
    (managers judge offers by rankings).
