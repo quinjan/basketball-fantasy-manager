@@ -18,11 +18,11 @@ Dates are **US/Eastern** NBA game days (`YYYY-MM-DD`).
 
 | Command | Purpose |
 |---|---|
-| `fbm agent install [--agent NAME] [--dry-run]` | Generate your agent's MCP config, role agents, skills and instructions file. NAME: `copilot`, `claude-code`, `codex`, `cursor`, `gemini`, `generic` |
-| `fbm agent status [--timeout 120]` | Show installed agent files and check the MCP server starts and lists its tools |
+| `fbm agent install [--agent NAME] [--dry-run]` | Generate your agent's role agents, skills, instructions file and shell allow-list (and remove MCP-era `fbm` server entries). NAME: `copilot`, `claude-code`, `codex`, `cursor`, `gemini`, `generic` |
+| `fbm agent status [--timeout 120]` | Show installed agent files and check that `uv run fbm tool --list` works |
 | `fbm agent uninstall [--agent NAME]` | Remove only the files FBM generated (tracked in `data/agent_install.json`) |
 | `fbm agent sync-setup-skill` | Maintainers: copy `agents/skills/setup-fbm/SKILL.md` into the committed per-agent copies |
-| `fbm tool [NAME] [key=value ...] [--stdin] [--list]` | Call any fbm MCP tool from the shell: same validation and JSON output as the MCP server. Fallback when an agent session can't reach the server. String arguments stay raw; others parse as JSON; `--stdin` reads a JSON object of arguments. Exits 1 on a tool error |
+| `fbm tool [NAME] [key=value ...] [--stdin] [--list] [--doc] [--pretty]` | How agents call FBM ([docs/tools.md](tools.md)): runs one tool and prints compact JSON. `--list` names every tool, `--doc` shows one tool's arguments and description, `--pretty` indents the JSON. String arguments stay raw; numbers/booleans are parsed; `--stdin` reads a JSON object of arguments. Exits 1 on a tool error or invalid arguments |
 
 ## Automation (`fbm automation`)
 
@@ -119,7 +119,7 @@ fallback). HT content is personal-use only.
 | `fbm learn retro [--week-start D]` | Retro data for a fantasy week (JSON) |
 | `fbm learn signals` | Grade finished early signals; hit rate by kind and the ownership move after each signal (JSON) |
 
-Decision replay, odds reliability and policy settings have no dedicated CLI commands: use the MCP tools or
+Decision replay, odds reliability and policy settings have no dedicated CLI commands: use
 `fbm tool replay_grade`, `fbm tool decisions_log`, `fbm tool odds_reliability`, `fbm tool policy_settings`,
 `fbm tool policy_suggestions`. Policy changes go through a `policy` proposal (`fbm proposals approve`).
 

@@ -32,16 +32,24 @@ adversarial rubric and no access to the GM's reasoning — a weaker check. The g
 
 ## Per-agent details
 
+Agents call FBM through the shell — `uv run fbm tool <name> key=value ...` prints the tool's compact JSON (there is no
+MCP server). Where an agent has a project-level shell allow-list, the install pre-approves that one command; list
+values are merged with yours, never replaced.
+
 | Agent | Files written | Roles become | Skills folder |
 |---|---|---|---|
-| `copilot` (Copilot app, CLI, VS Code) | `.github/mcp.json`, `.vscode/mcp.json` | `.github/agents/<role>.agent.md` (with `model`) | `.github/skills/` |
-| `claude-code` | `.mcp.json`, `CLAUDE.md` (imports `AGENTS.md`) | `.claude/agents/<role>.md` (with tool allow-list and `model`) | `.claude/skills/` |
-| `codex` | `.codex/config.toml` (managed MCP block) | skills `fbm-gm`, `fbm-reviewer`, `fbm-scout` | `.agents/skills/` |
-| `cursor` | `.cursor/mcp.json`, `.cursor/rules/fbm.mdc` | `.cursor/agents/<role>.md` (`model` or `inherit`) | `.agents/skills/` |
-| `gemini` | `.gemini/settings.json`, `GEMINI.md` (imports `AGENTS.md`) | skills `fbm-gm`, `fbm-reviewer`, `fbm-scout` | `.agents/skills/` |
-| `generic` | Nothing — prints the stdio MCP server config and instructions to add by hand | — | — |
+| `copilot` (Copilot app, CLI, VS Code) | — (approve `uv run fbm tool` when asked, e.g. for the session) | `.github/agents/<role>.agent.md` (with `model`) | `.github/skills/` |
+| `claude-code` | `.claude/settings.json` (allows `Bash(uv run fbm tool:*)`), `CLAUDE.md` (imports `AGENTS.md`) | `.claude/agents/<role>.md` (with tool allow-list and `model`) | `.claude/skills/` |
+| `codex` | `.codex/config.toml` (managed block: sandbox network access, which `fbm tool` needs) | skills `fbm-gm`, `fbm-reviewer`, `fbm-scout` | `.agents/skills/` |
+| `cursor` | `.cursor/cli.json` (allows `Shell(uv)`), `.cursor/rules/fbm.mdc` | `.cursor/agents/<role>.md` (`model` or `inherit`) | `.agents/skills/` |
+| `gemini` | `.gemini/settings.json` (allows `run_shell_command(uv run fbm tool)`), `GEMINI.md` (imports `AGENTS.md`) | skills `fbm-gm`, `fbm-reviewer`, `fbm-scout` | `.agents/skills/` |
+| `generic` | Nothing — prints instructions to set up by hand | — | — |
 
-Check the install with `uv run fbm agent status` (lists files and verifies the MCP server starts and lists its tools).
+Roles with a restricted tool list (reviewer, scout) get a generated "FBM tools you may use" section naming them.
+Re-running `fbm agent install` removes the `fbm` MCP server entries an older install wrote (`.github/mcp.json`,
+`.vscode/mcp.json`, `.mcp.json`, `.cursor/mcp.json`, `.gemini/settings.json`, the Codex `[mcp_servers.fbm]` block).
+
+Check the install with `uv run fbm agent status` (lists files and verifies `uv run fbm tool --list` works).
 
 ## Automation
 
@@ -72,15 +80,16 @@ jobs only run while your computer is on.
 ### Headless commands and safety flags (`scheduler` mode)
 
 Scheduled AI runs are **read-only plus FBM tools**: they produce insights, lineup recommendations and draft
-proposals, but never act on the league and never approve — approval always needs your words.
+proposals, but never act on the league and never approve — approval always needs your words. The prompt allows only
+`uv run fbm tool ...` shell commands; the flags below enforce as much of that as each CLI supports.
 
 | Agent | Command FBM schedules |
 |---|---|
-| `copilot` | `copilot -p <prompt> -s --no-ask-user --allow-tool=fbm --deny-tool=shell --deny-tool=write` |
-| `claude-code` | `claude -p <prompt> --allowedTools=mcp__fbm,Read,Grep,Glob --disallowedTools=Bash,Edit,Write,NotebookEdit` |
-| `codex` | `codex exec --sandbox read-only [--model M] <prompt>` |
-| `cursor` | `cursor-agent -p --output-format text --approve-mcps [--model M] <prompt>` (print mode without `--force` only proposes file changes) |
-| `gemini` | `gemini --approval-mode default --allowed-mcp-server-names fbm [--model M] -p <prompt>` |
+| `copilot` | `copilot -p <prompt> -s --no-ask-user --allow-tool=shell(uv:*) --deny-tool=write` (Copilot's narrowest documented shell filter is the command name) |
+| `claude-code` | `claude -p <prompt> --allowedTools=Bash(uv run fbm tool:*),Read,Grep,Glob --disallowedTools=Edit,Write,NotebookEdit` |
+| `codex` | `codex exec --sandbox workspace-write -c sandbox_workspace_write.network_access=true [--model M] <prompt>` (`fbm tool` writes FBM's own records and reads ESPN/Yahoo/Hashtag) |
+| `cursor` | `cursor-agent -p --output-format text [--model M] <prompt>` (without `--force` only allow-listed shell commands run: `Shell(uv)` from `.cursor/cli.json`) |
+| `gemini` | `gemini --approval-mode default --allowed-tools run_shell_command(uv run fbm tool) [--model M] -p <prompt>` |
 
 `--model <name>` is added (for every agent) when a model is configured for the job's role.
 

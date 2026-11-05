@@ -8,8 +8,8 @@
 > send improvements back), or simply `git clone` it. Your personal league data never lives in the repo, so any of
 > the three works.
 
-FBM turns the AI agent you already use (GitHub Copilot, Claude Code, Codex, Cursor, Gemini CLI, or any MCP-capable
-agent) into a general manager for **one** Yahoo Fantasy Basketball league. **Hashtag Basketball Premium** supplies
+FBM turns the AI agent you already use (GitHub Copilot, Claude Code, Codex, Cursor, Gemini CLI, or any agent that can
+run shell commands) into a general manager for **one** Yahoo Fantasy Basketball league. **Hashtag Basketball Premium** supplies
 the numbers (player projections, weekly head-to-head totals, waiver wire, trade ideas); FBM's deterministic Python
 engine is the decision layer on top — matchup odds, lineups, streaming, waivers, trades, IL moves — exposed to your
 agent as tools. The AI reasons over those numbers, drafts proposals, has them independently reviewed, and asks for
@@ -53,7 +53,8 @@ every move in Yahoo yourself. Everything runs on your machine.
   projections and G-scores), so its numbers differ from what your real league will use.
 - **Runs on a schedule** (optional) and keeps a local memory of strategy, playbook, and journal.
 
-Interfaces: an MCP server (60 tools), the `fbm` CLI, and a local Streamlit dashboard.
+Interfaces: 60 agent tools behind one shell command (`uv run fbm tool NAME key=value`, compact JSON), the `fbm` CLI,
+and a local Streamlit dashboard.
 
 ## What it doesn't do (limitations)
 
@@ -80,7 +81,7 @@ Interfaces: an MCP server (60 tools), the `fbm` CLI, and a local Streamlit dashb
 
 - Python 3.12+ and [uv](https://docs.astral.sh/uv/)
 - git
-- An MCP-capable AI agent (see [Supported agents](#supported-agents))
+- An AI agent that can run shell commands (see [Supported agents](#supported-agents))
 - Microsoft Edge or Google Chrome (the Yahoo and Hashtag sign-ins open a browser window)
 - For your real league:
   - a Yahoo Fantasy Basketball league, plus either approved Yahoo Fantasy Sports API access or your Yahoo sign-in
@@ -131,12 +132,12 @@ health checks. **The demo league works immediately.** Then connect your real lea
 
 | Agent | What `fbm agent install` writes | Automation options | Cross-family reviewer |
 |---|---|---|---|
-| GitHub Copilot (app / CLI / VS Code) — `copilot` | `.github/mcp.json`, `.vscode/mcp.json`, `.github/agents/*.agent.md`, `.github/skills/` | agent-app (Copilot app Automations), scheduler (`copilot -p`), engine-only | Yes |
-| Claude Code — `claude-code` | `.mcp.json`, `CLAUDE.md`, `.claude/agents/`, `.claude/skills/` | scheduler (`claude -p`), engine-only | No (fresh-context Claude reviewer) |
+| GitHub Copilot (app / CLI / VS Code) — `copilot` | `.github/agents/*.agent.md`, `.github/skills/` | agent-app (Copilot app Automations), scheduler (`copilot -p`), engine-only | Yes |
+| Claude Code — `claude-code` | `.claude/settings.json` (shell allow-list), `CLAUDE.md`, `.claude/agents/`, `.claude/skills/` | scheduler (`claude -p`), engine-only | No (fresh-context Claude reviewer) |
 | OpenAI Codex CLI — `codex` | `.codex/config.toml`, `.agents/skills/` (roles as `fbm-*` skills) | scheduler (`codex exec`), engine-only | No (fresh-context OpenAI reviewer) |
-| Cursor — `cursor` | `.cursor/mcp.json`, `.cursor/rules/fbm.mdc`, `.cursor/agents/`, `.agents/skills/` | scheduler (`cursor-agent -p`), engine-only | Yes |
+| Cursor — `cursor` | `.cursor/cli.json` (shell allow-list), `.cursor/rules/fbm.mdc`, `.cursor/agents/`, `.agents/skills/` | scheduler (`cursor-agent -p`), engine-only | Yes |
 | Gemini CLI — `gemini` | `.gemini/settings.json`, `GEMINI.md`, `.agents/skills/` (roles as `fbm-*` skills) | scheduler (`gemini`), engine-only | No (fresh-context Gemini reviewer) |
-| Any other MCP agent — `generic` | Nothing; prints the MCP server config and instructions to set up by hand | engine-only, or your agent's own scheduler | Depends on your agent |
+| Any other agent that can run shell commands — `generic` | Nothing; prints instructions to set up by hand | engine-only, or your agent's own scheduler | Depends on your agent |
 
 Any agent can also use `agent-app` mode if its app supports scheduled prompts, or `none`. Details, safety flags,
 and switching agents: [docs/agents.md](docs/agents.md).
@@ -209,7 +210,7 @@ Open a pull request (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 ## Documentation
 
 - [docs/commands.md](docs/commands.md) — every CLI command
-- [docs/mcp-tools.md](docs/mcp-tools.md) — every MCP tool
+- [docs/tools.md](docs/tools.md) — every agent tool (`fbm tool`)
 - [docs/analytics.md](docs/analytics.md) — how the numbers are made
 - [docs/agents.md](docs/agents.md) — per-agent setup, roles, models, automation
 - [docs/yahoo.md](docs/yahoo.md) — getting Yahoo access and connecting your league

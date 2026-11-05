@@ -6,8 +6,9 @@ description: Set up FBM (your AI fantasy basketball GM) from a fresh clone, or c
 # Set up FBM
 
 You are installing FBM for the user: an AI front office for one Yahoo Fantasy Basketball league (9-cat H2H).
-The deterministic engine is the `fbm` CLI + MCP server; you only collect choices, run `fbm setup`, and fix
-what fails. Works the same in any agent (Copilot, Claude Code, Codex, Cursor, Gemini, or another MCP agent).
+The deterministic engine is the `fbm` CLI (agents call its tools with `uv run fbm tool`); you only collect choices,
+run `fbm setup`, and fix what fails. Works the same in any agent (Copilot, Claude Code, Codex, Cursor, Gemini, or
+another agent that can run shell commands).
 
 ## Rules for this conversation
 
@@ -30,7 +31,7 @@ what fails. Works the same in any agent (Copilot, Claude Code, Codex, Cursor, Ge
 ## 1. Questions (one at a time, in this order)
 
 1. **Agent + OS.** "Which AI agent are you using?" — copilot (GitHub Copilot app/CLI/VS Code), claude-code,
-   codex, cursor, gemini, or generic (anything else with MCP). If it's obvious (you know which agent you are),
+   codex, cursor, gemini, or generic (anything else that can run shell commands). If it's obvious (you know which agent you are),
    state it and ask them to confirm. Detect the OS yourself if you can; otherwise ask (Windows/macOS/Linux).
 2. **Models per role** (names exactly as their agent spells them; empty = agent default):
    - GM (`--gm-model`): their best frontier model — it makes the decisions.
@@ -97,6 +98,7 @@ NBA data (one-time prior-season backfill + sync; several minutes the first time)
 - Yahoo approved: the user runs `uv run fbm auth` (types Client ID/Secret into its prompts), then you run
   `uv run fbm league select`, `uv run fbm settings`, `uv run fbm setup --yes --league-source yahoo`,
   `uv run fbm snapshot`, `uv run fbm ids`.
-- If the FBM MCP tools aren't available in this session yet, tell the user to **restart the agent in this folder**
-  so it loads the MCP server, then ask: "Open the GM office". Otherwise run the GM's first steps now:
-  `context_pack`, then `health_check`, and summarize what is configured and what is pending.
+- If the generated GM agent/skills aren't loaded in this session yet, tell the user to **restart the agent in this
+  folder**, then ask: "Open the GM office". Otherwise run the GM's first steps now:
+  `uv run fbm tool context_pack`, then `uv run fbm tool health_check`, and summarize what is configured and what is
+  pending.

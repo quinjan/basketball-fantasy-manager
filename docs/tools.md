@@ -1,10 +1,21 @@
-# MCP tools
+# Tools
 
-The `fbm` MCP server (`fbm-mcp`, wired into your agent by `fbm agent install`) exposes **60 tools** over the engine
-(`uv run fbm tool --list` prints them with their arguments).
-Descriptions are summarized from each tool's docstring in `src/fbm/mcp_server.py`. Dates are US/Eastern game days.
-If a session can't reach the server, `uv run fbm tool NAME key=value ...` calls the same tool from the shell (the
-generated automation prompts allow this as the only shell command).
+FBM exposes **60 tools** over the engine through one shell command, `uv run fbm tool NAME key=value ...` (there is
+no MCP server: agents run the command and read its JSON). `uv run fbm tool --list` prints every tool with its
+arguments (`[write]` = writes FBM's own records); `uv run fbm tool NAME --doc` prints one tool's arguments, defaults
+and full description, so an agent loads only the docs it needs. Descriptions below are summarized from each tool's
+docstring in `src/fbm/tools.py`. Dates are US/Eastern game days.
+
+Output is compact JSON on stdout (`--pretty` indents it for people); the exit code is 1 when the tool returns
+`{"error": ...}` or the arguments don't validate. String arguments stay raw; numbers and booleans are parsed
+(`true`/`false`); `null` clears an optional argument; `--stdin` reads a JSON object of arguments (handy for
+`payload_json`).
+
+**Output size.** List-heavy tools have tight defaults so a session's context stays small; raise them only when you
+need more: `signals(top=15)`, `buy_sell(top=8)`, `find_trades(limit=4)` (also caps `ht_ideas`),
+`ownership_trends(top=10)`, `decisions_log(limit=15)`, `grade_decisions(limit=10)` / `replay_grade(limit=10)` (most
+recent rows; totals and `regret_by_kind` cover everything; `0` = all), `transactions(count=15)`, `news(limit=10)`,
+`context_pack(notes_chars=300, signals_top=8)` (full manager notes: `manager_profile`).
 
 **Hashtag mode** (`[hashtag] enabled = true`): projections, weekly totals, the waiver wire and trade ideas come from
 Hashtag Basketball (see [analytics](analytics.md#hashtag-basketball-data-layer)). Suggestion tools (`free_agents`,

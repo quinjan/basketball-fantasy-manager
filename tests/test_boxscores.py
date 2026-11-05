@@ -200,13 +200,7 @@ def test_season_roles_helper_in_services(conn, monkeypatch):
 
 
 def test_tools_registered():
-    import anyio
+    from fbm.tools import TOOLS
 
-    from fbm.mcp_server import server
-
-    async def names():
-        return {t.name: t for t in await server.list_tools()}
-
-    tools = anyio.run(names)
-    assert {"game_log", "week_box"} <= tools.keys()
-    assert set(tools["game_log"].input_schema["properties"]) == {"player", "last_n", "season"}
+    assert {"game_log", "week_box"} <= TOOLS.keys()
+    assert set(TOOLS["game_log"].params) == {"player", "last_n", "season"}

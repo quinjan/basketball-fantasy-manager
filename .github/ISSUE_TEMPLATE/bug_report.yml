@@ -27,4 +27,4 @@ body:
     id: surface
     attributes:
       label: Surface
-      options: [CLI, MCP server, Dashboard, Engine/other]
+      options: [CLI, Agent tools (fbm tool), Dashboard, Engine/other]

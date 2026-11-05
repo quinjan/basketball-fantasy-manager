@@ -224,9 +224,6 @@ def test_next_week_survives_yahoo_failure(monkeypatch):
 
 
 def test_tools_registered():
-    import anyio
+    from fbm.tools import TOOLS
 
-    from fbm.mcp_server import server
-
-    names = {t.name for t in anyio.run(server.list_tools)}
-    assert {"team_roster", "next_week"} <= names
+    assert {"team_roster", "next_week"} <= TOOLS.keys()

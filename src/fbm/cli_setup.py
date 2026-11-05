@@ -21,7 +21,7 @@ _AGENT_HELP = {
     "codex": "OpenAI Codex CLI",
     "cursor": "Cursor",
     "gemini": "Gemini CLI",
-    "generic": "any other MCP-capable agent",
+    "generic": "any other agent that can run shell commands",
 }
 _AUTOMATION_HELP = {
     "none": "no schedule: you open your agent and ask the GM when you want",

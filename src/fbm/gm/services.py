@@ -1,4 +1,4 @@
-"""GM services: JSON-friendly read/analysis/action functions shared by the MCP server (and usable from the CLI).
+"""GM services: JSON-friendly read/analysis/action functions behind `fbm tool` (fbm.tools) and the CLI.
 
 Every number returned here comes from the engine; the GM must cite these outputs rather than invent numbers.
 """
@@ -1847,15 +1847,17 @@ def refresh_data() -> dict[str, Any]:
 # ------------------------------------------------------------------ memory & proposals
 
 
-def context_pack() -> dict[str, Any]:
+def context_pack(notes_chars: int = 300, signals_top: int = 8) -> dict[str, Any]:
+    """Session start pack. notes_chars caps each manager note (full notes: manager_profile or
+    memory/managers/<team>.md); signals_top caps signals_new."""
     conn = _conn()
     pack = league_overview()
     pack.update(memory.memory_files())
     pack["recent_journal"] = memory.recent_journal()
-    pack["manager_notes"] = memory.manager_notes()
+    pack["manager_notes"] = memory.manager_notes(notes_chars)
     pack["open_proposals_detail"] = [p.as_dict() for p in props.list_proposals(conn, "open")]
     try:
-        new = signals_tool(new_only=True, top=12)["signals"]
+        new = signals_tool(new_only=True, top=signals_top)["signals"]
         pack["signals_new"] = [
             {k: s.get(k) for k in ("kind", "direction", "player", "nba", "confidence", "owner", "action_hint", "note")}
             for s in new
@@ -2595,7 +2597,7 @@ def _find_trades_ht(
     ht_rows.sort(key=lambda r: -float(r.get("fbm_my_expected_cats_delta") or -9))
     return {
         "trades": trades[:limit],
-        "ht_ideas": ht_rows,
+        "ht_ideas": ht_rows[:limit],
         "counts": {
             "ht_ideas": len(ideas),
             "ht_ideas_skipped": skipped,
@@ -2607,8 +2609,9 @@ def _find_trades_ht(
         "method": "Two candidate pools judged by FBM: HT Trade Finder ideas (value-fair by HT ROS rankings with FBM "
         "multipliers; 1-for-1/2-for-2) and FBM's own search (H2H category gain for us, partner judged by their build; "
         "up to 2-for-2 incl. uneven). Each candidate is evaluated season-level (evaluate_trade). `trades`: consensus "
-        "first, then by our expected-cats gain; HT ideas that don't help us are only in `ht_ideas` (every HT idea "
-        "with FBM's verdict). `ht_value` = HT ROS total value received minus sent (unweighted, players traded only): "
+        "first, then by our expected-cats gain; HT ideas that don't help us are only in `ht_ideas` (the best `limit` "
+        "HT ideas by our gain, with FBM's verdict; counts.ht_ideas = all). `ht_value` = HT ROS total value received "
+        "minus sent (unweighted, players traded only): "
         "a market-fairness read for acceptance; HT ideas also carry HT's own badges.",
     }
 
@@ -2662,7 +2665,8 @@ def find_trades_tool(
 # ------------------------------------------------------------------ learning loop
 
 
-def grade_decisions_tool(lookback_days: int = 28) -> dict[str, Any]:
+def grade_decisions_tool(lookback_days: int = 28, limit: int = 10) -> dict[str, Any]:
+    """Proposal grades + replay grades; `limit` caps each list to its most recent entries (counts stay complete)."""
     c = _grading_ctx()
     try:
         verify_moves()  # only moves Yahoo shows are graded
@@ -2678,7 +2682,8 @@ def grade_decisions_tool(lookback_days: int = 28) -> dict[str, Any]:
         names=c.projections["name"].to_dict(),
     )
     out = {
-        "decisions": graded,
+        "decisions": graded[-limit:] if limit else graded,
+        "decisions_total": len(graded),
         "not_graded": outcomes.ungraded_moves(_conn(), lookback_days),
         "scale": "std units = team-week SDs per category (+0.5 good, -0.5 bad); not_graded = confirmed moves Yahoo "
         "does not (yet) show: never graded",
@@ -2686,7 +2691,7 @@ def grade_decisions_tool(lookback_days: int = 28) -> dict[str, Any]:
     try:
         from fbm.gm import decision_services
 
-        out["replay"] = decision_services.replay_grade(lookback_days)
+        out["replay"] = decision_services.replay_grade(lookback_days, limit)
     except Exception as err:  # proposal grading must still come back if replay fails
         out["replay"] = {"error": f"{type(err).__name__}: {err}"}
     return out

@@ -7,10 +7,10 @@
  ┌──────────────── AI agent (your choice) ────────────────┐
  │  roles: gm · reviewer · scout     skills: agents/skills │
  └───────────────┬───────────────────────────┬────────────┘
-                 │ MCP (stdio, 60 tools)     │ headless runs (optional automation)
+                 │ shell: uv run fbm tool    │ headless runs (optional automation)
                  ▼                           ▼
  ┌──────────────────────────── FBM engine (Python) ───────────────────────────┐
- │ mcp_server.py · cli.py (fbm) · dashboard/ (Streamlit)                       │
+ │ tools.py · cli.py (fbm) · dashboard/ (Streamlit)                            │
  │ decision layer  gm/ choosers · decisions · replay · odds_reliability ·     │
  │                     policy · policy_tuning · engine_ht · services ·        │
  │                     proposals · steps · memory · outcomes · health         │
@@ -50,13 +50,13 @@ The engine is deterministic and tested; the AI layer reasons over its outputs an
 
 | Path | Contents |
 |---|---|
-| `src/fbm/` | Engine package: `cli.py` and `cli_*.py` (CLI), `mcp_server.py`, `settings.py`/`config.py`, `constants.py` (constants registry), `credentials.py` (keyring), `timeutil.py` (ET game days), `automation.py`, `setup_wizard.py`, `backup.py` |
+| `src/fbm/` | Engine package: `cli.py` and `cli_*.py` (CLI), `tools.py` (agent tools behind `fbm tool`), `settings.py`/`config.py`, `constants.py` (constants registry), `credentials.py` (keyring), `timeutil.py` (ET game days), `automation.py`, `setup_wizard.py`, `backup.py` |
 | `src/fbm/analytics/` | Valuation (G/Z-scores), projections and players (HT views in Hashtag mode; ESPN engine otherwise), official odds (`ht_odds`), HT category multipliers (`category_weights`), early signals, availability, simulation, lineup, streaming, waivers, trades, punts, playoffs, opponents |
 | `src/fbm/hashtag/` | Hashtag Basketball client (owner's browser session), page parsers, HT→ESPN id matching, daily importer, read API (`store.py`), health gate (`health.py`); CLI `cli_hashtag.py` (`fbm hashtag`) |
 | `src/fbm/data/` | ESPN and ESPN Fantasy clients, sync jobs, queries |
 | `src/fbm/yahoo/` | Access (official-API OAuth or the owner's Yahoo web session, `session.py`), API client, league reads, daily lineups and final matchup results (`lineups.py`), id mapping, feed check (`coverage.py`) (read-only; FBM has no Yahoo write access) |
 | `src/fbm/league/` | League model, demo league, Yahoo league views, transaction history |
-| `src/fbm/gm/` | Services behind MCP/CLI (`services.py`, `hashtag_services.py`, `decision_services.py`, `policy_services.py`), HT-mode plumbing (`engine_ht.py`), decision rule (`choosers.py`), decision log (`decisions.py`), replay grading (`replay.py`), odds reliability, policy settings and tuning (`policy.py`, `policy_tuning.py`), proposals and approvals, owner steps (FBM never changes the league), memory, outcome grading, health |
+| `src/fbm/gm/` | Services behind `fbm tool`/CLI (`services.py`, `hashtag_services.py`, `decision_services.py`, `policy_services.py`), HT-mode plumbing (`engine_ht.py`), decision rule (`choosers.py`), decision log (`decisions.py`), replay grading (`replay.py`), odds reliability, policy settings and tuning (`policy.py`, `policy_tuning.py`), proposals and approvals, owner steps (FBM never changes the league), memory, outcome grading, health |
 | `src/fbm/store/` | SQLite access |
 | `src/fbm/notify/` | Gmail notifications |
 | `src/fbm/agents/` | Renders `agents/` sources into per-agent files (`fbm agent install`) |

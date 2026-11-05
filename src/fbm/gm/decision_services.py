@@ -1,4 +1,4 @@
-"""Decision-calibration services (MCP tools in the "decisions & replay" section): the decision log, replay grading
+"""Decision-calibration services (fbm tools in the "decisions & replay" section): the decision log, replay grading
 and odds reliability. JSON-friendly; every number comes from the engine."""
 
 from __future__ import annotations
@@ -37,8 +37,9 @@ def sync_yahoo_results(weeks_back: int = 4) -> dict[str, Any]:
         return {"error": f"{type(err).__name__}: {err}"}
 
 
-def decisions_log(kind: str | None = None, since: str | None = None, limit: int = 50) -> dict[str, Any]:
-    rows = dlog.query(svc_conn(), kind=kind, since=since, limit=5000)[-int(limit) :]
+def decisions_log(kind: str | None = None, since: str | None = None, limit: int = 15) -> dict[str, Any]:
+    matched = dlog.query(svc_conn(), kind=kind, since=since, limit=5000)
+    rows = matched[-int(limit) :] if limit else matched
     out = []
     for d in rows:
         res = d.get("result") or {}
@@ -60,14 +61,15 @@ def decisions_log(kind: str | None = None, since: str | None = None, limit: int 
                 "regret_cats": res.get("regret_cats"),
             }
         )
-    return {"decisions": out, "count": len(out)}
+    return {"decisions": out, "count": len(out), "total": len(matched)}
 
 
 def svc_conn():
     return _svc()._conn()
 
 
-def replay_grade(lookback_days: int = 14) -> dict[str, Any]:
+def replay_grade(lookback_days: int = 14, limit: int = 10) -> dict[str, Any]:
+    """Grade pending decisions; regret_by_kind covers all of them, `decisions` lists the `limit` most recent."""
     svc = _svc()
     sync = sync_yahoo_results(max(1, lookback_days // 7 + 1))
     pool = categories = None
@@ -84,7 +86,8 @@ def replay_grade(lookback_days: int = 14) -> dict[str, Any]:
     return {
         "window_et": f"{today - timedelta(days=lookback_days)}..{today - timedelta(days=1)}",
         "yahoo_sync": sync,
-        "decisions": graded,
+        "decisions": graded[-limit:] if limit else graded,
+        "decisions_total": len(graded),
         "regret_by_kind": replay.regret_summary(graded),
         "method": "replay on real box scores + Yahoo final week totals; opponent held at what they actually did; "
         "regret_cats = categories won by the best option minus the recommended one",

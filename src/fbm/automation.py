@@ -5,8 +5,8 @@ Design:
   the *current* date. OS schedulers (Task Scheduler, launchd, cron) run in machine-local time, so after a DST change
   in either zone re-run `fbm automation install` (the installer prints the next transition date).
 - Every scheduler entry calls one entry point: `<python> -m fbm.cli automation run JOB` with the repo as working dir.
-- Headless AI runs are restricted to the fbm MCP tools plus read-only file access wherever the agent supports it.
-  They may create proposals; approvals always come from the owner. Nothing auto-approves shell or file writes.
+- Headless AI runs may run only `uv run fbm tool ...` shell commands plus read-only file access wherever the agent
+  supports it. They may create proposals; approvals always come from the owner. Nothing auto-approves file writes.
 
 Pure planning/rendering functions are unit-tested; functions that touch the OS are small and isolated.
 """
@@ -26,6 +26,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 from zoneinfo import ZoneInfo
 
+from fbm.agents.render import TOOL_COMMAND
 from fbm.config import PROJECT_ROOT
 from fbm.settings import AGENTS, AUTOMATION_MODES, JOBS, Settings
 
@@ -39,7 +40,6 @@ LOCK_STALE_SECONDS = 3 * 3600
 JOB_TIMEOUT_SECONDS = 2 * 3600
 
 HEADLESS_AGENTS = ("copilot", "claude-code", "codex", "cursor", "gemini")
-MCP_SERVER = "fbm"
 
 
 @dataclass(frozen=True)
@@ -179,11 +179,10 @@ def validate(agent: str, mode: str, jobs: Sequence[str]) -> list[str]:
 # ---------------------------------------------------------------- agent commands
 
 
-MCP_FALLBACK = (
-    "If fbm MCP tool calls fail because the server is unreachable (e.g. 'connection was cancelled'), call the same "
-    "tools through the CLI bridge instead: `uv run fbm tool <tool_name> key=value ...` (or pipe a JSON object of "
-    "arguments to `uv run fbm tool <tool_name> --stdin`); it runs the same tool and returns the same JSON. That is "
-    "the only shell command allowed."
+TOOL_CLI = (
+    f"Call FBM only through its CLI: `{TOOL_COMMAND} <tool_name> key=value ...` (or pipe a JSON object of arguments "
+    f"to `{TOOL_COMMAND} <tool_name> --stdin`); it prints the tool's JSON. `{TOOL_COMMAND} <tool_name> --doc` shows "
+    "a tool's arguments. That is the only shell command allowed."
 )
 
 
@@ -191,8 +190,8 @@ def job_prompt(job: str) -> str:
     skill = CATALOG[job].skill
     return (
         f"Run the {skill} skill (agents/skills/{skill}/SKILL.md) for my FBM league. This is an unattended "
-        "scheduled run: use only the fbm MCP tools and read-only file access; do not edit files, change settings, "
-        f"or run other shell commands. {MCP_FALLBACK} Numbers must come from fbm tool output. FBM never changes my "
+        "scheduled run: use only fbm tool commands and read-only file access; do not edit files, change settings, "
+        f"or run other shell commands. {TOOL_CLI} Numbers must come from fbm tool output. FBM never changes my "
         "league: produce insights, the lineup recommendation (lineup_steps, without confirm) and proposals "
         "(create_proposal) only. Never record approvals, never call proposal_steps or confirm_done, never claim a "
         "move was made. Finish with a short report listing anything I need to do in Yahoo."
@@ -204,24 +203,27 @@ def model_for(job: str, s: Settings) -> str:
 
 
 def agent_command(agent: str, prompt: str, model: str = "") -> list[str]:
-    """Headless invocation for each agent CLI, restricted to fbm MCP tools + read-only where supported."""
+    """Headless invocation for each agent CLI: shell limited to `uv run fbm tool` (or `uv`) + read-only where
+    supported."""
     if agent == "copilot":
         # https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-programmatic-reference
-        cmd = ["copilot", "-p", prompt, "-s", "--no-ask-user", f"--allow-tool={MCP_SERVER}"]
-        cmd += ["--deny-tool=shell", "--deny-tool=write"]
+        # (shell filters match a command and its subcommands, so `uv` is the narrowest documented filter)
+        cmd = ["copilot", "-p", prompt, "-s", "--no-ask-user", "--allow-tool=shell(uv:*)", "--deny-tool=write"]
     elif agent == "claude-code":
         # https://code.claude.com/docs/en/cli-reference (-p print mode; unlisted tools are not auto-approved)
-        cmd = ["claude", "-p", prompt, f"--allowedTools=mcp__{MCP_SERVER},Read,Grep,Glob"]
-        cmd += ["--disallowedTools=Bash,Edit,Write,NotebookEdit"]
+        cmd = ["claude", "-p", prompt, f"--allowedTools=Bash({TOOL_COMMAND}:*),Read,Grep,Glob"]
+        cmd += ["--disallowedTools=Edit,Write,NotebookEdit"]
     elif agent == "codex":
-        # https://developers.openai.com/codex/noninteractive (exec defaults to a read-only sandbox; made explicit)
-        cmd = ["codex", "exec", "--sandbox", "read-only"]
+        # https://developers.openai.com/codex/noninteractive (fbm tool writes FBM's own database and journal, and
+        # reads ESPN/Yahoo/Hashtag: workspace-write sandbox with network)
+        cmd = ["codex", "exec", "--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"]
     elif agent == "cursor":
-        # https://cursor.com/docs/cli/headless (print mode without --force only proposes file changes)
-        cmd = ["cursor-agent", "-p", "--output-format", "text", "--approve-mcps"]
+        # https://cursor.com/docs/cli/headless (without --force only allow-listed shell commands run;
+        # `fbm agent install` allows Shell(uv) in .cursor/cli.json)
+        cmd = ["cursor-agent", "-p", "--output-format", "text"]
     elif agent == "gemini":
         # https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/cli-reference.md
-        cmd = ["gemini", "--approval-mode", "default", "--allowed-mcp-server-names", MCP_SERVER]
+        cmd = ["gemini", "--approval-mode", "default", "--allowed-tools", f"run_shell_command({TOOL_COMMAND})"]
     else:
         raise ValueError(f"Agent {agent!r} has no headless CLI.")
     if model:

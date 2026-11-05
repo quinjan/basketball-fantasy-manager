@@ -1172,7 +1172,7 @@ def learn_grade(days: int = typer.Option(28, help="Look back this many days.")) 
     """Grade executed moves by realized production."""
     from fbm.gm import services as svc
 
-    r = _svc(svc.grade_decisions_tool, days)
+    r = _svc(svc.grade_decisions_tool, days, 0)
     table = Table(title="Decision grades")
     for col in ("Ref", "Move", "Window (ET)", "Games", "Δ (team-week SD)", "Grade"):
         table.add_column(col)
@@ -1293,7 +1293,7 @@ from fbm import (  # noqa: E402,F401  (each module registers its commands on `ap
     cli_hashtag,  # `fbm hashtag` (Hashtag Basketball Premium)
     cli_migrate,  # `fbm migrate` (one-off local data migrations)
     cli_setup,  # setup, backup, sync-memory
-    cli_tool,  # `fbm tool` (MCP tools from the shell)
+    cli_tool,  # `fbm tool` (the agent-facing tools)
     cli_yahoo,  # Yahoo league commands
 )
 

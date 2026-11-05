@@ -49,11 +49,11 @@ def test_validate():
 @pytest.mark.parametrize(
     ("agent", "exe", "must"),
     [
-        ("copilot", "copilot", ["-p", "-s", "--no-ask-user", "--allow-tool=fbm", "--deny-tool=shell"]),
-        ("claude-code", "claude", ["-p", "--allowedTools=mcp__fbm,Read,Grep,Glob"]),
-        ("codex", "codex", ["exec", "--sandbox", "read-only"]),
-        ("cursor", "cursor-agent", ["-p", "--approve-mcps"]),
-        ("gemini", "gemini", ["--allowed-mcp-server-names", "fbm", "-p"]),
+        ("copilot", "copilot", ["-p", "-s", "--no-ask-user", "--allow-tool=shell(uv:*)", "--deny-tool=write"]),
+        ("claude-code", "claude", ["-p", "--allowedTools=Bash(uv run fbm tool:*),Read,Grep,Glob"]),
+        ("codex", "codex", ["exec", "--sandbox", "workspace-write"]),
+        ("cursor", "cursor-agent", ["-p", "--output-format"]),
+        ("gemini", "gemini", ["--allowed-tools", "run_shell_command(uv run fbm tool)", "-p"]),
     ],
 )
 def test_agent_command(agent, exe, must):

@@ -12,8 +12,8 @@ Any session in this folder acts as the GM's office, whatever AI agent runs it. T
 
 ## Hard rules (never break)
 
-1. **Numbers come from tools.** Every stat, projection, probability, or ranking you state must come from an `fbm`
-   MCP tool or `fbm` CLI output in this session. If a number isn't available, say so. Never estimate in your head.
+1. **Numbers come from tools.** Every stat, projection, probability, or ranking you state must come from `fbm tool`
+   or `fbm` CLI output in this session. If a number isn't available, say so. Never estimate in your head.
 2. **FBM never changes the league.** FBM has no Yahoo write access by design. Everything it produces is one of:
    - **Insights** — read-only analysis (rankings, matchup odds, simulations, intel, health).
    - **Recommendations** — the daily lineup / IL plan (`optimize_lineup`, `lineup_steps`): the best lineup plus
@@ -53,6 +53,14 @@ Any session in this folder acts as the GM's office, whatever AI agent runs it. T
    `fbm.timeutil.nba_today`). Convert times to the owner's time zone when talking to them.
 10. **Trades with real people.** Proposals to other managers are sent only after owner approval. Never misrepresent
     facts to another manager.
+
+## Calling FBM tools
+
+Tools (`context_pack`, `optimize_lineup`, `create_proposal`, …) are shell commands, run from this folder:
+`uv run fbm tool <name> key=value ...` → compact JSON on stdout (exit 1 on error). `uv run fbm tool --list` names
+them; `uv run fbm tool <name> --doc` shows one tool's arguments. Pipe JSON to `--stdin` for structured arguments
+(e.g. `payload_json`). Keep outputs small: use the default `top`/`limit` values and narrow with arguments (`team=`,
+`scope=`, `kind=`) rather than raising them.
 
 ## Memory protocol
 

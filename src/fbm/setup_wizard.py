@@ -524,7 +524,7 @@ class SetupReport:
         if self.settings.get("notify", {}).get("email_enabled"):
             steps.append("Run `fbm notify setup` to store the Gmail app password (prompted, never shown).")
         steps.append(
-            "Open your AI agent in this folder (restart it so it loads the FBM MCP server) and ask: "
+            "Open your AI agent in this folder (restart it so it picks up the FBM agent files) and ask: "
             '"Open the GM office".'
         )
         return steps

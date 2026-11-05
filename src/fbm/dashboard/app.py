@@ -581,7 +581,7 @@ def page_proposals() -> None:
 
 def page_learning() -> None:
     st.subheader("Decision grades")
-    g = call(svc.grade_decisions_tool, 60)
+    g = call(svc.grade_decisions_tool, 60, 0)
     if g["decisions"]:
         cols = ("ref", "title", "window_et", "games_counted", "delta", "grade")
         st.dataframe(

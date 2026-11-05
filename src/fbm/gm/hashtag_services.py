@@ -1,4 +1,4 @@
-"""Service layer for Hashtag Basketball (MCP tools + CLI): status, import, check. Read-only toward HT and Yahoo."""
+"""Service layer for Hashtag Basketball (fbm tools + CLI): status, import, check. Read-only toward HT and Yahoo."""
 
 from __future__ import annotations
 
