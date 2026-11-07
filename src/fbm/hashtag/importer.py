@@ -273,6 +273,14 @@ def roster_diff(ht_roster: list[dict], team: Any) -> tuple[list[str], list[str]]
     return missing, extra
 
 
+def stashed_out(team: Any) -> set[str]:
+    """Names of a team's players in an IL slot with an OUT status. HT may drop such a player from its pool (e.g. a
+    player stepping away from basketball); he can't play, so his absence on HT doesn't change any HT total."""
+    from fbm.league.model import IL_SLOTS
+
+    return {p.name for p in team.players if (p.selected or "").upper() in IL_SLOTS and p.is_out}
+
+
 def _pull_planner(
     run: _Run,
     client: HashtagClient,
@@ -346,6 +354,7 @@ def _pull_planner(
             if missing_teams:
                 problems.append(f"teams not on HT: {', '.join(missing_teams)}")
             checked = 0
+            tolerated: list[str] = []
             for team, roster in ((me, mine["roster"]), (opp, None)):
                 if team is None:
                     continue
@@ -365,6 +374,9 @@ def _pull_planner(
                 if not roster:
                     raise HashtagLayoutChanged("league_sync", f"no roster rows for {team.name}")
                 missing, extra = roster_diff(roster, team)
+                stashed = stashed_out(team)
+                tolerated += [n for n in missing if n in stashed]
+                missing = [n for n in missing if n not in stashed]
                 checked += len(roster)
                 if missing or extra:
                     problems.append(
@@ -374,7 +386,8 @@ def _pull_planner(
             state["page"] = page
             if problems:
                 raise LeagueMismatch("; ".join(problems))
-            return checked, f"rosters match ({me.name}{' vs ' + opp.name if opp else ''})"
+            note = f"; IL + OUT, not on HT (ignored): {', '.join(tolerated)}" if tolerated else ""
+            return checked, f"rosters match ({me.name}{' vs ' + opp.name if opp else ''}){note}"
 
         run.step("league_sync", None, sync)
 

@@ -174,6 +174,34 @@ def test_league_mismatch_is_logged_and_unhealthy(conn):
     assert report["healthy"] is False
 
 
+def _league_with_extra(selected: str, status: str) -> LeagueState:
+    league = make_league()
+    extra = RosterPlayer("e999", "Gone Player", "GS", ("C",), selected=selected, status=status, yahoo_key="466.p.999")
+    league.teams[0].players.append(extra)
+    return league
+
+
+def test_league_sync_ignores_il_out_player_missing_on_ht(conn):
+    report = importer.run_import(
+        conn, league=_league_with_extra("IL", "O"), client=make_client(FakeHT()), now=NOW, league_id="11111",
+        pages=["h2h_planner", "league_sync"],
+    )  # fmt: skip
+    sync = report["pages"]["league_sync"]
+    assert sync["status"] == "ok", sync
+    assert "Gone Player" in sync["detail"]
+
+
+@pytest.mark.parametrize(("selected", "status"), [("BN", "O"), ("IL", "GTD")])
+def test_league_sync_still_flags_playable_player_missing_on_ht(conn, selected, status):
+    report = importer.run_import(
+        conn, league=_league_with_extra(selected, status), client=make_client(FakeHT()), now=NOW,
+        league_id="11111", pages=["h2h_planner", "league_sync"],
+    )  # fmt: skip
+    sync = report["pages"]["league_sync"]
+    assert sync["status"] == "league_mismatch"
+    assert "on Yahoo not HT [Gone Player]" in sync["detail"]
+
+
 def test_session_expiry_stops_the_run_without_partial_data(conn):
     report = importer.run_import(
         conn, league=make_league(), client=make_client(FakeHT(expired_on="projections")), now=NOW, league_id="11111"
