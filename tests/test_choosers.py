@@ -54,6 +54,18 @@ def test_stream_min_gain_and_add_reserve():
     assert choosers.choose(mon, {**P, "policy.add_reserve": 0}) == "two"
 
 
+def test_trade_uses_season_weights_not_this_weeks_odds():
+    opts = [
+        {"id": "trade", "label": "trade", "cat_scores": {"ft_pct": -0.056, "tpm": 0.096, "ast": 0.062, "blk": 0.052}},
+        {"id": "pat", "label": "no move", "stand_pat": True, "cat_scores": {}},
+    ]
+    # This week: only FT% is contested, the rest are already won or lost. A season-level trade must not be judged
+    # by that (week weights would value it at ~+0.03 < stream_min_gain).
+    week = {"ft_pct": 0.46, "tpm": 0.19, "ast": 0.0, "blk": 1.0}
+    assert choosers.choose(_d("trade", opts, odds=week), P) == "trade"
+    assert choosers.choose(_d("trade", opts, odds=week, punts=["tpm", "ast", "blk"]), P) == "pat"
+
+
 def test_ros_penalty_and_il_hold():
     opts = [
         {"id": "pat", "label": "keep", "stand_pat": True, "cat_scores": {}},

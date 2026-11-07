@@ -18,8 +18,10 @@ Option dict keys used here:
     view: "ROS"|"BLEND14"|...        the HT projection view the option was generated with; options without `view`
                                      are view-independent. Only options of the active view (or no view) are eligible.
     cat_scores: {cat: float}         per-category score of the option (lineup: summed per-category G of the day's
-                                     starters; stream/claim/trade/drop/il: change in P(win) per category vs standing
-                                     pat from the comparator; category_weights: expected categories by category)
+                                     starters; stream/claim/drop/il: change in P(win) per category vs standing
+                                     pat from the comparator; trade: change in season win rate per category vs the
+                                     league, weighted 1 except punts; category_weights: expected categories by
+                                     category)
     ros_cost: float                  ROS G value given up (drops); default 0
     adds: int                        adds the option uses; default 0
     stand_pat: bool                  the do-nothing option (streams, claims, trades, drops)
@@ -44,6 +46,9 @@ KIND_VIEW_PARAM = {
     "drop": "policy.view.ros",
 }
 ACQUIRE_KINDS = ("stream_plan", "waiver_claim")
+# Decisions scored on season-level category win rates (vs the whole league), not this week's matchup: every
+# non-punted category counts in full, whatever this week's odds say.
+SEASON_KINDS = ("trade",)
 THURSDAY = 3
 
 
@@ -117,8 +122,11 @@ def choose(decision: Mapping[str, Any], params: Mapping[str, Any]) -> str:
     options = eligible(decision, params)
     if not options:
         raise ValueError(f"Decision {decision.get('id')} has no option eligible under these settings.")
-    weights = week_weights(situation.get("odds") or {}, params, situation.get("punts") or ())
     kind = decision["kind"]
+    if kind in SEASON_KINDS:
+        weights = {cat: 0.0 for cat in situation.get("punts") or ()}
+    else:
+        weights = week_weights(situation.get("odds") or {}, params, situation.get("punts") or ())
 
     if kind == "il":
         days = situation.get("expected_days_out")
