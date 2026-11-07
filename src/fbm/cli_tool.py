@@ -2,7 +2,7 @@
 
 This is how AI agents use FBM: `uv run fbm tool <name> key=value ...`. Output is compact JSON on stdout (exit code 1
 when the tool returns {"error": ...}). `--list` names every tool; `--doc` shows one tool's arguments and description,
-so agents load only the docs they need.
+so agents load only the docs they need. Output is capped (see fbm.output_cap); `--full` lifts the cap.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from typing import Annotated, Any
 import typer
 
 from fbm.cli import _fail, app
+from fbm.output_cap import DEFAULT_MAX_CHARS, cap
 
 
 def parse_arguments(name: str, pairs: list[str], stdin_text: str | None = None) -> dict[str, Any]:
@@ -50,6 +51,12 @@ def tool(
     list_tools: bool = typer.Option(False, "--list", help="List tools and their arguments."),
     doc: bool = typer.Option(False, "--doc", help="Show the tool's arguments (with defaults) and description."),
     pretty: bool = typer.Option(False, "--pretty", help="Indented JSON (for people; agents should not use it)."),
+    max_chars: int = typer.Option(
+        DEFAULT_MAX_CHARS,
+        "--max-chars",
+        help="Output budget: larger results are shrunk and saved in full to data/tool_out/<tool>.json (0 = no cap).",
+    ),
+    full: bool = typer.Option(False, "--full", help="No output cap (same as --max-chars 0). Costs context."),
 ) -> None:
     """Call an FBM tool from the shell. Prints JSON; exit code 1 if the tool reports an error."""
     from fbm.tools import TOOLS, call
@@ -69,6 +76,7 @@ def tool(
     except ValueError as err:  # includes JSONDecodeError
         _fail(f"{err}. See `fbm tool {name} --doc`.")
     result = call(name, args)
+    result = cap(name, result, 0 if full else max_chars)
     sys.stdout.buffer.write((render(result, pretty) + "\n").encode("utf-8"))
     sys.stdout.flush()
     if isinstance(result, dict) and "error" in result:

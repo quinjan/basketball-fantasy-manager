@@ -5,7 +5,9 @@ description: The GM's main daily run (after all NBA games are final, ~10:00 ET).
 
 # Daily GM run
 
-Run as the `gm` agent. Follow AGENTS.md. Be efficient: this runs every day.
+Run as the `gm` agent. Follow AGENTS.md. Be efficient: this runs every day, and every tool result stays in your
+context: keep the compact defaults and hand wide scans (steps 5–6: many free agents/signals, `fa_radar`,
+`ownership_trends`) to a sub-agent per the GM role's section 1b (explore/`gpt-6-luna` to gather; you decide).
 
 1. **Load & refresh.** `context_pack` → `refresh_data` (ESPN sync and, with Hashtag enabled, the daily HT import:
    `hashtag_import` in its output) → `snapshot` (Yahoo league; fresh rosters, scoreboard, waivers) →

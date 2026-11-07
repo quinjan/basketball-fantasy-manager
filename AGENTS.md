@@ -60,7 +60,13 @@ Tools (`context_pack`, `optimize_lineup`, `create_proposal`, …) are shell comm
 `uv run fbm tool <name> key=value ...` → compact JSON on stdout (exit 1 on error). `uv run fbm tool --list` names
 them; `uv run fbm tool <name> --doc` shows one tool's arguments. Pipe JSON to `--stdin` for structured arguments
 (e.g. `payload_json`). Keep outputs small: use the default `top`/`limit` values and narrow with arguments (`team=`,
-`scope=`, `kind=`) rather than raising them.
+`scope=`, `kind=`, `key=`, `section=`) rather than raising them.
+
+**Context budget.** Every tool result stays in the session's context window. Defaults are compact, and `fbm tool`
+caps any larger result at ~12 KB: it shrinks lists/strings, adds `_truncated`, and saves the full result to
+`data/tool_out/<tool>.json` (local-only). Never lift the cap (`--full`, `verbose=true`) in the main session; read the
+saved file's slice you need, or delegate the wide scan to a sub-agent (GM role, section 1b: models by job).
+Action-critical outputs (`lineup_steps`, `proposal_steps`, `optimize_lineup`, proposal records) are never cut.
 
 ## Memory protocol
 
@@ -68,8 +74,8 @@ Personal state is **local-only** (gitignored, never pushed): `memory/`, `reports
 `config/league.toml`, `config/constants.toml`, `config/yahoo_id_overrides.toml`, `config/hashtag_id_overrides.toml`. `fbm setup` seeds `memory/` from
 `templates/memory/`; `fbm backup` zips it locally.
 
-- Start every session with the `context_pack` tool (league, approved strategy, playbook, recent journal, manager notes,
-  open proposals, proposal rules, data freshness, `hashtag` health and `suggestions_paused`).
+- Start every session with the `context_pack` tool, once (league, approved strategy, playbook, journal titles, manager
+  note names, open proposals, proposal rules, data freshness, `hashtag` health and `suggestions_paused`).
 - Record decisions/observations with `journal_append`. Proposals, reviews, owner decisions, and owner confirmations are
   journaled by the engine.
 - `memory/strategy.md` — the GM's narrative of the current build; `memory/strategy.json` is the owner-approved
@@ -99,3 +105,18 @@ Personal state is **local-only** (gitignored, never pushed): `memory/`, `reports
 - Engine logic stays pure and tested; agents reason over engine outputs. League rules come from Yahoo settings
   (`fbm settings`), never hard-coded.
 - Only FBM core changes are committed; never commit personal state or secrets.
+
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-label vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.

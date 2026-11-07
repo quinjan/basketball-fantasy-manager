@@ -7,7 +7,8 @@ description: Read or update the GM's memory. Use for "What have we learned so fa
 
 Run as the `gm` agent. Memory lives in `memory/` (see AGENTS.md "Memory protocol").
 
-1. Recall: `context_pack` (strategy, playbook, recent journal, manager notes); `grade_decisions`,
+1. Recall: `context_pack` (strategy, playbook, journal titles, manager note names); `manager_profile` for a manager's
+   notes; `grade_decisions`,
    `decisions_log` / `replay_grade` and `odds_reliability` for what results say; older entries in `memory/journal/`.
 2. "Remember about manager Y" → append the observation with date and source to `memory/managers/<team>.md`.
 3. "New rule" → confirm the exact wording, add it under "Owner rules" in `memory/playbook.md`.

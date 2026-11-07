@@ -8,13 +8,17 @@ description: Monday run (~10:30 ET, after the fantasy week ends). Grade last wee
 Run as the `gm` agent.
 
 ## Retro (last week)
-1. `context_pack`, `refresh_data`, then `weekly_retro_data` (defaults to the last completed fantasy week). It
+1. `context_pack`, `refresh_data`, then `weekly_retro_data` (defaults to the last completed fantasy week; compact:
+   `decisions` are one-line rows, `sections` lists each key's size; drill in with `section=<key>` and `limit=`). It
    returns: graded completed (`done`) moves (realized production acquired minus given up, in team-week SD units:
    good ≥ +0.5, bad ≤ −0.5, or too early), proposals created with reviewer verdicts and owner quotes, graded
    matchup predictions, season calibration, and the decision-calibration block: decisions logged/graded this
    week, regret by kind (replay on real box scores + Yahoo FINAL results), `odds_reliability` and the `per_view`
    table (each decision kind re-chosen under every HT view: categories won and ROS value per view, `best_view`).
    In the Yahoo league also read `scoreboard` (final category results) and `standings` (record, playoff race).
+   The retro reads a lot: hand the per-decision replay detail (`section=decisions`, `decisions_log`) to a sub-agent
+   (explore/`gpt-6-luna` to gather; `claude-opus-5.5` high to diagnose why decisions lost) and work from its digest
+   (GM role, section 1b).
 2. Summarize decisions: what worked, what didn't, and why (compare with the evidence recorded at proposal time).
    Note rejected/expired proposals and the owner's stated reasons.
 3. **Decision calibration** (FBM calibrates decisions, not projections — HT owns projection accuracy):

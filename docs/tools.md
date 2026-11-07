@@ -15,7 +15,15 @@ Output is compact JSON on stdout (`--pretty` indents it for people); the exit co
 need more: `signals(top=15)`, `buy_sell(top=8)`, `find_trades(limit=4)` (also caps `ht_ideas`),
 `ownership_trends(top=10)`, `decisions_log(limit=15)`, `grade_decisions(limit=10)` / `replay_grade(limit=10)` (most
 recent rows; totals and `regret_by_kind` cover everything; `0` = all), `transactions(count=15)`, `news(limit=10)`,
-`context_pack(notes_chars=300, signals_top=8)` (full manager notes: `manager_profile`).
+`context_pack(notes_chars=0, signals_top=5, memory_chars=1000, journal="titles")` (journal entry titles, manager note
+names; full notes: `manager_profile`), `constants(key=None, verbose=false)` (groups + overrides; `key=` substring for
+rows), `hashtag_status(detail=false)`, `refresh_data(verbose=false)`, `weekly_retro_data(section=None, limit=10)`.
+
+**Output budget.** Any result over ~12 KB is shrunk (long lists and strings cut, with `…[+N more items]` markers) and
+carries `_truncated` (original size + `full_output`, the file in `data/tool_out/<tool>.json` holding the full result;
+local-only). Options: `--max-chars N` (0 = no cap) and `--full`. Never cut: `lineup_steps`, `proposal_steps`,
+`optimize_lineup`, `get_proposal`, `list_proposals`, `create_proposal`, `confirm_done`, `record_owner_decision`,
+`record_review` and `context_pack` (it budgets itself). Wide scans belong in a sub-agent (see the GM role, section 1b).
 
 **Hashtag mode** (`[hashtag] enabled = true`): projections, weekly totals, the waiver wire and trade ideas come from
 Hashtag Basketball (see [analytics](analytics.md#hashtag-basketball-data-layer)). Suggestion tools (`free_agents`,
@@ -29,7 +37,7 @@ grading.
 
 | Tool | Description |
 |---|---|
-| `context_pack` | Start here every session: league overview, approved strategy, playbook, recent journal, manager notes, open proposals, new early signals, data freshness, Yahoo status, `hashtag` health and `suggestions_paused` |
+| `context_pack` | Start here every session, once: compact league overview, approved strategy, playbook, journal titles, manager note names, open proposals, new early signals, data freshness, Yahoo status, `hashtag` health and `suggestions_paused` |
 | `league_overview` | League, teams, categories, roster slots, current fantasy week, strategy, open proposals, data freshness |
 | `my_roster` | My roster with slots, status, games today / left this week, G-score value, compact `season_role` (gp, mpg, starts, usage vs last season) |
 | `player_card` | Everything about one player: projection and its basis, ESPN preseason vs latest projection, active signals, G/Z by category, rank, fantasy owner, injury, last-10 averages (with `last_10_seasons_included`) and `season_role` (this season vs last: games, mpg, starts, usage per 36, deltas) |
@@ -42,7 +50,7 @@ grading.
 | `schedule` | Upcoming game days, my players with games, NBA team game counts this fantasy week |
 | `team_roster` | Any league team (`team` = key, name or manager; default this week's opponent) in `my_roster`'s per-player format, plus a summary: games remaining this week, injured/out players, category strengths (sum of G-scores) |
 | `next_week` | Next fantasy week lookahead: ET dates, next opponent (Yahoo schedule, or pass `opponent`), NBA games per team, my and the opponent's player/started game counts, a quick matchup simulation (`n` sims) and free agents with the best value × next-week games |
-| `constants` | Every tunable engine constant with value, default, unit, kind and source |
+| `constants` | Tunable engine constants (value, default, unit, kind, source): compact by default (`groups` + `overridden` rows); `key=` substring returns full rows; `verbose=true` all (~45 KB) |
 | `health_check` | System health: data freshness, Yahoo access/snapshot, Hashtag Basketball gate, stale proposals, missed scheduled runs |
 | `refresh_data` | Run the daily ESPN sync, the Yahoo snapshot (Yahoo league) and, in Hashtag mode, the daily Hashtag import (`hashtag_import` in the output, incl. Next Man Up for key players ruled out); detect early signals; returns injury changes for rostered players and new signals |
 
@@ -50,7 +58,7 @@ grading.
 
 | Tool | Description |
 |---|---|
-| `hashtag_status` | HT health (the suggestion gate: healthy, reasons, fix), the latest import of every page/view, unmatched HT→ESPN players, whether a sign-in is stored (never the cookies) |
+| `hashtag_status` | HT health (the suggestion gate: healthy, reasons, fix), a summary of the latest imports (`detail=true` for every page/view row), unmatched HT→ESPN players, whether a sign-in is stored (never the cookies) |
 | `hashtag_import` | `hashtag_import(pages=None)`: import HT now (read-only on HT). `pages`: comma list of projections, h2h_planner, league_sync, waiver, team_ranks, notes, season_stats, trade_finder, next_man_up (default: the daily set). Returns `{run_id, pages: {page:view: {status, rows, detail}}, healthy}`. HT notes are untrusted data |
 
 ## Yahoo league reads
@@ -103,7 +111,7 @@ FBM calibrates decisions, not projections (Hashtag owns projection accuracy).
 | `grade_decisions` | Grade completed (`done`) add/drop, waiver, trade and IL-activation proposals by realized production. Only moves Yahoo shows (`verified`) are graded, on the players and day Yahoo credits; `not_graded` lists pending / `not_executed` moves with the reason |
 | `prediction_calibration` | Grade finished matchup predictions against Yahoo FINAL results: Brier score vs coin flip, reliability (`legacy` = pre-Hashtag simulator forecasts) |
 | `signal_grades` | Grade finished signals: hit rate by kind and confidence, ownership move after the signal; Hashtag mode: lead time over HT's projection and % owned, how often FBM acted, replay grade of those decisions |
-| `weekly_retro_data` | Everything the weekly retro needs for a fantasy week (default: last completed): graded decisions (verified moves only), `decisions_not_graded` (pending / `not_executed` moves with the reason), proposals (with verification state), graded predictions, decision retro (replay regret by kind, `odds_reliability`, `per_view` table) and signal grades |
+| `weekly_retro_data` | Everything the weekly retro needs for a fantasy week (default: last completed): graded decisions (verified moves only), `decisions_not_graded` (pending / `not_executed` moves with the reason), proposals (with verification state), graded predictions, decision retro (replay regret by kind, `odds_reliability`, `per_view` table) and signal grades. Compact by default (`decisions` as one-line rows, `sections` sizes); `section=<key>` returns one key in full |
 
 ## Policy (decision rules)
 

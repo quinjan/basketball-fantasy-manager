@@ -49,7 +49,9 @@ def _read(path: Path, limit: int) -> str:
     if not path.exists():
         return ""
     text = path.read_text(encoding="utf-8")
-    return text if len(text) <= limit else text[:limit] + f"\n…[truncated {len(text) - limit} chars]"
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n…[truncated {len(text) - limit} chars; full file: {path.name}]"
 
 
 def current_strategy() -> dict[str, Any]:
@@ -93,15 +95,35 @@ def recent_journal(days: int = 3, limit: int = 6000) -> str:
     return text if len(text) <= limit else "…[older entries truncated]\n" + text[-limit:]
 
 
+def journal_digest(days: int = 3, limit: int = 1200) -> str:
+    """Entry headers only (`## time · kind · title`, newest kept) for the last `days` journal files: what happened,
+    without the bodies. Read memory/journal/<date>.md for the full text."""
+    if not JOURNAL_DIR.exists():
+        return ""
+    lines: list[str] = []
+    for f in sorted(JOURNAL_DIR.glob("*.md"), reverse=True)[:days][::-1]:
+        lines += [
+            f"{f.stem} {ln[3:].strip()}" for ln in f.read_text(encoding="utf-8").splitlines() if ln.startswith("## ")
+        ]
+    text = "\n".join(lines)
+    return text if len(text) <= limit else "…[older entries omitted]\n" + text[-limit:]
+
+
 def manager_notes(limit_each: int = 800) -> dict[str, str]:
     if not MANAGERS_DIR.exists():
         return {}
     return {f.stem: _read(f, limit_each) for f in sorted(MANAGERS_DIR.glob("*.md"))}
 
 
-def memory_files() -> dict[str, str]:
+def manager_note_names() -> list[str]:
+    return sorted(f.stem for f in MANAGERS_DIR.glob("*.md")) if MANAGERS_DIR.exists() else []
+
+
+def memory_files(chars: int = 1000) -> dict[str, str]:
+    """Strategy narrative, playbook (twice the budget: it holds the owner's rules) and the Yahoo settings summary,
+    each cut to a budget with a pointer to the full file."""
     return {
-        "strategy_md": _read(MEMORY_DIR / "strategy.md", 4000),
-        "playbook_md": _read(MEMORY_DIR / "playbook.md", 6000),
-        "league_settings_md": _read(MEMORY_DIR / "league-settings.md", 2500),
+        "strategy_md": _read(MEMORY_DIR / "strategy.md", chars),
+        "playbook_md": _read(MEMORY_DIR / "playbook.md", chars * 2),
+        "league_settings_md": _read(MEMORY_DIR / "league-settings.md", chars // 3),
     }

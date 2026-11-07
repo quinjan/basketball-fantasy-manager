@@ -68,6 +68,9 @@ class Role:
     tools: tuple[str, ...]  # fbm tool names the role may call; empty = all tools
     capabilities: tuple[str, ...]  # read | search | web
     body: str
+    # Copilot host tools the role may load. Empty = every host tool, including all MCP servers' tool definitions
+    # (hundreds of thousands of tokens), so roles that don't use `tools` should set it.
+    copilot_tools: tuple[str, ...] = ()
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, object], str]:
@@ -99,6 +102,7 @@ def load_roles(sources: Path) -> list[Role]:
                 tools=tuple(meta.get("tools", ()) or ()),
                 capabilities=tuple(meta.get("capabilities", ()) or ()),
                 body=body.lstrip("\n"),
+                copilot_tools=tuple(meta.get("copilot_tools", ()) or ()),
             )
         )
     return roles
@@ -163,6 +167,8 @@ def _role_file(role: Role, agent: str, models: Models) -> Planned | None:
             fields.append(("model", _yaml_str(model)))
         if role.tools:
             fields.append(("tools", json.dumps([*role.capabilities, "shell"])))
+        elif role.copilot_tools:
+            fields.append(("tools", json.dumps(list(role.copilot_tools))))
         return Planned(f".github/agents/{role.name}.agent.md", "file", _frontmatter(fields) + body)
     if agent == "claude-code":
         fields = [("name", role.name), ("description", desc)]

@@ -1847,19 +1847,30 @@ def refresh_data() -> dict[str, Any]:
 # ------------------------------------------------------------------ memory & proposals
 
 
-def context_pack(notes_chars: int = 300, signals_top: int = 8) -> dict[str, Any]:
-    """Session start pack. notes_chars caps each manager note (full notes: manager_profile or
-    memory/managers/<team>.md); signals_top caps signals_new."""
+def _clip(value: Any, chars: int = 140) -> Any:
+    return value if not isinstance(value, str) or len(value) <= chars else value[:chars] + "…"
+
+
+def context_pack(
+    notes_chars: int = 0, signals_top: int = 5, memory_chars: int = 1000, journal: str = "titles"
+) -> dict[str, Any]:
+    """Session start pack, sized for an agent's context window. notes_chars caps each manager note (0 = names only;
+    full notes: manager_profile or memory/managers/<team>.md); signals_top caps signals_new; memory_chars budgets
+    strategy/playbook/settings text (full files in memory/); journal: 'titles' (entry headers) | 'full'."""
     conn = _conn()
     pack = league_overview()
-    pack.update(memory.memory_files())
-    pack["recent_journal"] = memory.recent_journal()
-    pack["manager_notes"] = memory.manager_notes(notes_chars)
+    pack.update(memory.memory_files(memory_chars))
+    pack["recent_journal"] = memory.recent_journal() if journal == "full" else memory.journal_digest()
+    pack["manager_notes"] = memory.manager_notes(notes_chars) if notes_chars > 0 else {}
+    pack["manager_notes_available"] = memory.manager_note_names()
     pack["open_proposals_detail"] = [p.as_dict() for p in props.list_proposals(conn, "open")]
     try:
         new = signals_tool(new_only=True, top=signals_top)["signals"]
         pack["signals_new"] = [
-            {k: s.get(k) for k in ("kind", "direction", "player", "nba", "confidence", "owner", "action_hint", "note")}
+            {
+                k: _clip(s.get(k))
+                for k in ("kind", "direction", "player", "nba", "confidence", "owner", "action_hint", "note")
+            }
             for s in new
         ]
     except Exception as err:  # context must load even if the signal feed can't

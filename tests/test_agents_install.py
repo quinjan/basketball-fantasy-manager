@@ -43,6 +43,9 @@ def test_role_frontmatter_and_tool_scope():
     assert "`proposal_steps`" not in note and "Model family note" not in rev
     assert "## FBM tools you may use" not in cop[".github/agents/gm.agent.md"].content
     assert 'model: "gm-model-x"' in cop[".github/agents/gm.agent.md"].content
+    gm_head = cop[".github/agents/gm.agent.md"].content.split("---")[1]
+    assert 'tools: ["read", "edit", "search", "shell", "agent"' in gm_head and '"ask_user"' in gm_head
+    assert "copilot_tools" not in cop[".github/agents/gm.agent.md"].content
     assert 'model: "cheap-model-z"' in cop[".github/agents/scout.agent.md"].content
     cl = {p.path: p for p in _plan("claude-code")}
     rev = cl[".claude/agents/reviewer.md"].content

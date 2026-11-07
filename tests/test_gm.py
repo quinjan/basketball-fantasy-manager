@@ -226,6 +226,27 @@ def test_journal_append(tmp_path, monkeypatch):
         memory.journal_append("gossip", "x", "y")
 
 
+def test_journal_digest_and_memory_budgets(tmp_path, monkeypatch):
+    monkeypatch.setattr(memory, "JOURNAL_DIR", tmp_path / "journal")
+    monkeypatch.setattr(memory, "MEMORY_DIR", tmp_path)
+    monkeypatch.setattr(memory, "MANAGERS_DIR", tmp_path / "managers")
+    moment = datetime(2026, 10, 21, 9, 30, tzinfo=ZoneInfo("Asia/Manila"))
+    memory.journal_append("decision", "Start Sarr", "Long body " * 200, now=moment)
+    memory.journal_append("review", "P-1 agreed", "Another body.", now=moment)
+    digest = memory.journal_digest()
+    assert digest.splitlines() == [
+        "2026-10-21 09:30 local / Tue 21:30 ET · decision · Start Sarr",
+        "2026-10-21 09:30 local / Tue 21:30 ET · review · P-1 agreed",
+    ]
+    assert "Long body" not in digest and memory.journal_digest(limit=70).startswith("…[older entries omitted]")
+    (tmp_path / "playbook.md").write_text("p" * 5000, encoding="utf-8")
+    (tmp_path / "managers").mkdir()
+    (tmp_path / "managers" / "t.1.md").write_text("n", encoding="utf-8")
+    files = memory.memory_files(1000)
+    assert len(files["playbook_md"]) < 2200 and "full file: playbook.md" in files["playbook_md"]
+    assert files["strategy_md"] == "" and memory.manager_note_names() == ["t.1"]
+
+
 class FakeSMTP:
     sent = []
 

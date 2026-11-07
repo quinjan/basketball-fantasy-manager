@@ -45,7 +45,9 @@ values are merged with yours, never replaced.
 | `gemini` | `.gemini/settings.json` (allows `run_shell_command(uv run fbm tool)`), `GEMINI.md` (imports `AGENTS.md`) | skills `fbm-gm`, `fbm-reviewer`, `fbm-scout` | `.agents/skills/` |
 | `generic` | Nothing — prints instructions to set up by hand | — | — |
 
-Roles with a restricted tool list (reviewer, scout) get a generated "FBM tools you may use" section naming them.
+Roles with a restricted tool list (reviewer, scout) get a generated "FBM tools you may use" section naming them. The GM
+role sets `copilot_tools` in its frontmatter: Copilot then loads only those host tools instead of every MCP server's
+tool definitions (which can exceed the model's context window before the first message).
 Re-running `fbm agent install` removes the `fbm` MCP server entries an older install wrote (`.github/mcp.json`,
 `.vscode/mcp.json`, `.mcp.json`, `.cursor/mcp.json`, `.gemini/settings.json`, the Codex `[mcp_servers.fbm]` block).
 

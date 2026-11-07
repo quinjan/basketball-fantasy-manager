@@ -7,7 +7,8 @@ description: League-wide trade search (twice weekly). Find mutually beneficial t
 
 Run as the `gm` agent. Trades are never sent without the owner's explicit approval.
 
-1. `context_pack`. Read `memory/managers/` for tendencies (activity, what they overvalue, past trades).
+1. `context_pack`. Read `memory/managers/` for tendencies (activity, what they overvalue, past trades): with many
+   managers, have a sub-agent (explore/`gpt-6-luna`) read them and return a digest (GM role, section 1b).
 2. `find_trades` (whole league; optionally `partner=` for a targeted look). Hashtag mode: two candidate pools,
    both judged by FBM with `evaluate_trade` plus partner intel — HT Trade Finder ideas (run with FBM's category
    multipliers at fairness "fair" and "up to 10% my way"; HT only does 1-for-1 / 2-for-2 on its ROS view) and FBM's

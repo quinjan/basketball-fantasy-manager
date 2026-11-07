@@ -133,12 +133,14 @@ def call(name: str, args: dict[str, Any] | None = None) -> Any:
 
 
 @tool()
-def context_pack(notes_chars: int = 300, signals_top: int = 8) -> dict:
-    """START HERE every session. League overview, approved strategy, playbook, recent journal, manager notes,
-    open proposals, new early signals (signals_new), decision policy (FBM never changes the league), data freshness,
-    and Yahoo access status. notes_chars caps each manager note (full note: manager_profile); signals_top caps
-    signals_new."""
-    return svc.context_pack(notes_chars, signals_top)
+def context_pack(notes_chars: int = 0, signals_top: int = 5, memory_chars: int = 1000, journal: str = "titles") -> dict:
+    """START HERE every session, ONCE (never repeat it in a sub-agent that was handed its context). Compact league
+    overview, approved strategy, playbook, recent journal TITLES, open proposals, new early signals (signals_new),
+    decision policy (FBM never changes the league), data freshness, Yahoo and Hashtag status. Manager notes are names
+    only (`manager_notes_available`): notes_chars>0 adds each note capped to that many chars (full: manager_profile).
+    memory_chars budgets strategy/playbook/settings text (full files in memory/); journal='full' returns entry bodies;
+    signals_top caps signals_new."""
+    return svc.context_pack(notes_chars, signals_top, memory_chars, journal)
 
 
 @tool()
@@ -280,10 +282,30 @@ def waiver_decision(player: str, drop: str | None = None, on_waivers: bool = Tru
 
 
 @tool()
-def constants() -> dict:
-    """Every tunable engine constant with value, default, unit, kind (measured/research/rule/heuristic) and source.
-    Change values in config/constants.toml (owner-approved; journal why)."""
-    return svc.constants_table()
+def constants(key: str | None = None, verbose: bool = False) -> dict:
+    """Tunable engine constants (value, default, unit, kind measured/research/rule/heuristic, source). Default is
+    compact: `groups` (key prefix -> count) and the `overridden` rows. key: case-insensitive substring (e.g. 'stream')
+    -> the full rows that match. verbose=true: every row (~45 KB: avoid). Change values in config/constants.toml
+    (owner-approved; journal why)."""
+    full = svc.constants_table()
+    rows = full["constants"]
+    meta = {"unknown_overrides": full["unknown_overrides"], "how_to_change": full["how_to_change"]}
+    if verbose:
+        return full
+    if key:
+        hit = [r for r in rows if key.lower() in r["key"].lower()]
+        return {"matched": len(hit), "constants": hit, **meta}
+    groups: dict[str, int] = {}
+    for r in rows:
+        prefix = r["key"].split(".")[0]
+        groups[prefix] = groups.get(prefix, 0) + 1
+    return {
+        "total": len(rows),
+        "groups": groups,
+        "overridden": [r for r in rows if r.get("overridden")],
+        "hint": "key=<substring> returns the full rows for matching constants.",
+        **meta,
+    }
 
 
 @tool()
@@ -448,12 +470,38 @@ def prediction_calibration() -> dict:
 
 
 @tool()
-def weekly_retro_data(week_start: str | None = None) -> dict:
+def weekly_retro_data(week_start: str | None = None, section: str | None = None, limit: int = 10) -> dict:
     """Everything the weekly retro needs for a fantasy week (default: last completed week): graded decisions
     (proposal outcomes + replay of every logged option on real box scores and Yahoo finals, regret by kind, lineup
     regret), the per-view table (which HT projection view would have decided best), odds reliability, proposals and
-    owner decisions, graded predictions and signal grades."""
-    return svc.weekly_retro_data_tool(week_start)
+    owner decisions, graded predictions and signal grades. Default is compact: `decisions` are one-line rows (the
+    `limit` most recent; 0 = all) and `sections` lists every key with its size. section=<key> returns just that key
+    in full (lists cut to `limit` items; 0 = all), e.g. section=decisions for each decision's per-category detail."""
+    return _retro_view(svc.weekly_retro_data_tool(week_start), section, limit)
+
+
+_RETRO_ROW_KEYS = ("ref", "kind", "title", "executed_et", "days", "games_counted", "delta", "grade")
+
+
+def _retro_view(data: dict, section: str | None, limit: int) -> dict:
+    sizes = {k: len(json.dumps(v, default=str)) for k, v in data.items()}
+    if section:
+        if section not in data:
+            raise ValueError(f"unknown section {section!r}; expected one of: {', '.join(data)}")
+        value = data[section]
+        out: dict[str, Any] = {"week_et": data.get("week_et"), "section": section}
+        if isinstance(value, list) and limit > 0 and len(value) > limit:
+            out["total"] = len(value)
+            value = value[-limit:]
+        out[section] = value
+        return out
+    out = dict(data)
+    rows = [r for r in data.get("decisions") or [] if isinstance(r, dict)]
+    out["decisions_total"] = len(rows)
+    shown = rows[-limit:] if limit > 0 else rows
+    out["decisions"] = [{k: r[k] for k in _RETRO_ROW_KEYS if k in r} for r in shown]
+    out["sections"] = sizes
+    return out
 
 
 # ---------------------------------------------------------------- early signals
@@ -530,12 +578,46 @@ def lineup_steps(day: str | None = None, confirm: bool = False, trigger: str | N
 
 
 @tool(write=True)
-def refresh_data() -> dict:
+def refresh_data(verbose: bool = False) -> dict:
     """Run the daily ESPN sync (schedule, box scores, injuries, news) and, in Hashtag mode, the HT import
     (projections for every view, H2H Planner totals, waiver wire with FBM's category multipliers, team ranks, notes,
     Next Man Up for absent key players), then detect early signals. Returns rostered injury changes, the HT import
-    report and newly caught signals."""
-    return svc.refresh_data()
+    report and newly caught signals. Compact by default (HT pages summarized as ok-count + problems; injury list
+    capped at 10); verbose=true returns the full report."""
+    out = svc.refresh_data()
+    return out if verbose or "error" in out else _refresh_view(out)
+
+
+def _refresh_view(out: dict) -> dict:
+    view = dict(out)
+    ht = out.get("hashtag_import")
+    if isinstance(ht, dict) and isinstance(ht.get("pages"), dict):
+        pages = ht["pages"]
+        problems = {k: f"{v.get('status')}: {v.get('detail')}" for k, v in pages.items() if v.get("status") != "ok"}
+        view["hashtag_import"] = {
+            **{k: ht[k] for k in ("run_id", "healthy", "health_reasons", "next_man_up") if k in ht},
+            "pages_ok": len(pages) - len(problems),
+            "problems": problems,
+        }
+    changes = out.get("rostered_injury_changes") or []
+    view["rostered_injury_changes"] = [
+        {
+            k: (v[:100] + "…" if k == "comment" and isinstance(v, str) and len(v) > 100 else v)
+            for k, v in c.items()
+            if k in ("name", "team", "old_status", "new_status", "fantasy_team", "comment")
+        }
+        for c in changes[:10]
+    ]
+    if len(changes) > 10:
+        view["rostered_injury_changes_total"] = len(changes)
+    tx = (out.get("yahoo_snapshot") or {}).get("transactions")
+    if isinstance(tx, dict) and isinstance(tx.get("memory"), dict):
+        written = tx["memory"].get("written")
+        view["yahoo_snapshot"] = {
+            **out["yahoo_snapshot"],
+            "transactions": {**tx, "memory": {"written": len(written) if isinstance(written, list) else written}},
+        }
+    return view
 
 
 @tool(write=True)
@@ -632,12 +714,28 @@ def get_proposal(ref: str) -> dict:
 
 
 @tool()
-def hashtag_status() -> dict:
-    """Hashtag Basketball (HT) health: is HT healthy enough for suggestions (no fallback when enabled), the latest
-    import of every page/view, unmatched HT->ESPN players, and whether a sign-in is stored (never the cookies)."""
+def hashtag_status(detail: bool = False) -> dict:
+    """Hashtag Basketball (HT) health: is HT healthy enough for suggestions (no fallback when enabled), a summary of
+    the latest imports (counts, any not-ok page/view, newest/oldest finish), unmatched HT->ESPN players, and whether
+    a sign-in is stored (never the cookies). detail=true adds every page/view's latest import row (~17 KB)."""
     from fbm.gm import hashtag_services
 
-    return hashtag_services.hashtag_status()
+    out = hashtag_services.hashtag_status()
+    if detail or "last_imports" not in out:
+        return out
+    imports = out.pop("last_imports")
+    finished = [r["finished_at"] for r in imports if r.get("finished_at")]
+    out["last_imports_summary"] = {
+        "views": len(imports),
+        "not_ok": [r for r in imports if r.get("status") != "ok"][:10],
+        "newest": max(finished, default=None),
+        "oldest": min(finished, default=None),
+    }
+    for key in ("unmatched_projected", "unmatched_players"):
+        if isinstance(out.get(key), list) and len(out[key]) > 10:
+            out[f"{key}_total"] = len(out[key])
+            out[key] = out[key][:10]
+    return out
 
 
 @tool(write=True)

@@ -30,12 +30,12 @@ def test_render_is_compact_unless_pretty():
 def test_tool_list_doc_and_call():
     runner = CliRunner()
     listed = runner.invoke(app, ["tool", "--list"])
-    assert listed.exit_code == 0 and "context_pack(notes_chars, signals_top)" in listed.output
+    assert listed.exit_code == 0 and "context_pack(notes_chars, signals_top, memory_chars, journal)" in listed.output
     assert "lineup_steps(day, confirm, trigger) [write]" in listed.output
     doc = runner.invoke(app, ["tool", "free_agents", "--doc"])
     assert doc.exit_code == 0 and "free_agents(top=25" in doc.output and "unrostered" in doc.output
     out = runner.invoke(app, ["tool", "constants"])
-    assert out.exit_code == 0 and "constants" in json.loads(out.output)
+    assert out.exit_code == 0 and "groups" in json.loads(out.output) and len(out.output) < 6000
     assert "\n  " not in out.output.strip()
     assert runner.invoke(app, ["tool", "no_such_tool"]).exit_code == 1
     bad = runner.invoke(app, ["tool", "free_agents", "top=x"])
