@@ -264,6 +264,58 @@ def check_storage(data_dir_exists: bool, db_bytes: int | None) -> list[dict[str,
     return [result("Storage", WARN if mb > limit else OK, f"fbm.db {mb:.1f} MB (warn above {limit} MB)")]
 
 
+_COUNTING = ("tpm", "pts", "reb", "ast", "stl", "blk", "tov")
+_PLANNER_MIN_BANKED = 0.25  # banked growth (share of the first pull's rest-of-week) needed to judge the planner
+_PLANNER_MIN_DROP = 0.5  # the planner's AFTER - BEFORE must shrink by at least this share of the banked growth
+
+
+def check_ht_planner(rows: list[dict[str, Any]]) -> dict[str, str]:
+    """HT H2H Planner sanity (issue #13): AFTER - BEFORE is the rest of the week, so over a week it must shrink about
+    as fast as the banked stats grow. rows = {pulled_at, et_date, category, me_before, opp_before, me_after,
+    opp_after} for one week and view. If the gap barely shrinks while stats were banked, the planner is counting days
+    already played (Days Played unticked)."""
+    pulls: dict[str, dict[str, dict[str, Any]]] = {}
+    days: dict[str, str] = {}
+    for r in rows:
+        pulls.setdefault(r["pulled_at"], {})[r["category"]] = r
+        days[r["pulled_at"]] = r["et_date"]
+    stamps = sorted(pulls)
+    name = "HT planner rest-of-week"
+    if len(stamps) < 2 or days[stamps[0]] == days[stamps[-1]]:
+        return result(name, OK, "not enough planner pulls this week to judge")
+    first, last = pulls[stamps[0]], pulls[stamps[-1]]
+    banked, drop = [], []
+    for cat in _COUNTING:
+        if cat not in first or cat not in last:
+            continue
+        for side in ("me", "opp"):
+            vals = [first[cat][f"{side}_before"], first[cat][f"{side}_after"], last[cat][f"{side}_before"],
+                    last[cat][f"{side}_after"]]  # fmt: skip
+            if any(v is None for v in vals):
+                continue
+            b0, a0, b1, a1 = (float(v) for v in vals)
+            gap0 = a0 - b0
+            if gap0 <= 0:
+                continue
+            banked.append((b1 - b0) / gap0)
+            drop.append((gap0 - (a1 - b1)) / gap0)
+    if not banked:
+        return result(name, OK, "no planner categories to compare")
+    banked_share, drop_share = sum(banked) / len(banked), sum(drop) / len(drop)
+    if banked_share < _PLANNER_MIN_BANKED:
+        return result(name, OK, f"banked stats only {banked_share:.0%} of the week's rest so far; too early to judge")
+    if drop_share < _PLANNER_MIN_DROP * banked_share:
+        return result(
+            name,
+            WARN,
+            f"AFTER - BEFORE shrank {drop_share:.0%} while banked stats grew {banked_share:.0%} of the week: HT counts "
+            "days already played. Official odds ignore it (banked + simulated rest) but its totals are inflated.",
+            "Run `fbm hashtag import` (it ticks the planner's Days Played) and check `ht_planner_check` in "
+            "`simulate_matchup`.",
+        )
+    return result(name, OK, f"AFTER - BEFORE shrank {drop_share:.0%} vs banked growth {banked_share:.0%}")
+
+
 def check_hashtag(ht: dict[str, Any] | None) -> list[dict[str, str]]:
     """Hashtag Basketball gate: OK when disabled (not needed) or healthy; FAIL with reasons/fix when enabled and not
     healthy (owner rule: no suggestions without healthy HT data)."""
@@ -389,9 +441,24 @@ def gather(
             except sqlite3.Error:
                 unmatched = 0
         ht_status: dict[str, Any] | None = None
+        planner_rows: list[dict[str, Any]] = []
         if settings.hashtag_enabled:
+            from fbm.gm import policy as gm_policy
             from fbm.hashtag import health as ht_health
 
+            try:
+                view = str(gm_policy.get(conn, "policy.view.weekly_odds"))
+                planner_rows = [
+                    dict(r)
+                    for r in conn.execute(
+                        "SELECT pulled_at, et_date, category, me_before, opp_before, me_after, opp_after "
+                        "FROM hashtag_matchup_totals WHERE view = ? AND week = "
+                        "(SELECT MAX(week) FROM hashtag_matchup_totals WHERE view = ?)",
+                        (view, view),
+                    )
+                ]
+            except Exception:  # noqa: BLE001 - the planner check is additive
+                planner_rows = []
             try:
                 ht_status = ht_health.status(conn, True, now).as_dict()
             except sqlite3.Error as err:
@@ -421,4 +488,6 @@ def gather(
     )
     checks += check_notifications(settings.email_enabled, outbox, now)
     checks += check_hashtag(ht_status)
+    if ht_status and ht_status.get("enabled"):
+        checks.append(check_ht_planner(planner_rows))
     return {"overall": overall(checks), "phase": phase, "as_of": now.isoformat(), "checks": checks}

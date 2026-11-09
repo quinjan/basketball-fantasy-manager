@@ -1,19 +1,26 @@
-"""Official weekly matchup odds in HT mode: Hashtag's projected week totals (means) + FBM's simulator spread.
+"""Official weekly matchup odds in HT mode: projected week totals (means) + FBM's simulator spread.
 
 Owner decision 6 (2026-10-26): HT's displayed "probability" is a share formula, not a win probability. FBM's official
-per-category odds use HT's H2H Planner totals (banked + projected rest of week) as the means and the per-category
-standard deviation of (me - opp) from FBM's simulator (HT per-game means, real game-to-game spread; banked stats are a
-fixed offset, so they add no spread), scaled by `policy.odds_spread_scale`:
+per-category odds use projected week totals as the means and the per-category standard deviation of (me - opp) from
+FBM's simulator (HT per-game means, real game-to-game spread; banked stats are a fixed offset, so they add no
+spread), scaled by `policy.odds_spread_scale`:
 
     p_win(cat) = Phi(sign * (me - opp) / (scale * sd))      sign = -1 for TO (lower is better)
 
-P(tie) ~ 0 for these continuous totals. Matchup-level numbers treat categories as independent.
+P(tie) ~ 0 for these continuous totals (exactly 0.5 when both sides' totals are final and equal). Matchup-level
+numbers treat categories as independent.
 
-Injured players (owner request, 2026-10-26): HT's grid counts every rostered player on each of his game days (Out and
-IL players included), capped at the active spots. FBM removes that by adding `injury_adjustment` to HT's totals: the
-change in expected totals (HT per-game means) between the week planned as HT counts it (everyone healthy) and the
-week planned with injuries respected (Out players can't start until their return date, GTD/Q/D at their play
-probability, healthy bench players fill the freed spots).
+Means (issue #13): banked stats (Yahoo scoreboard) + the simulator's expected stats for the games still to play, at
+HT's per-game means for the policy view (`means_from_totals`). They do NOT come from HT's H2H Planner AFTER totals:
+that page counts every day of the week unless the owner's "Days Played" days are ticked, so banked days were counted
+twice. The planner is only a cross-check (`ht_rest_gap` + `planner_check`: flags an AFTER - BEFORE that exceeds the
+simulated rest of the week).
+
+Injured players (owner request, 2026-10-26): the simulator already respects injuries (Out players can't start until
+their return date, GTD/Q/D at their play probability, healthy bench players fill the freed spots). HT's grid counts
+every rostered player on each of his game days, so `injury_adjustment` (the change in expected totals between the
+week planned as HT counts it and the week planned with injuries respected) puts HT's gap on the same footing for the
+cross-check.
 """
 
 from __future__ import annotations
@@ -113,6 +120,121 @@ def apply_adjustment(
             m2, o2 = max(m2, 0.0), max(o2, 0.0)
         out[k] = (m2, o2)
     return out
+
+
+def means_from_totals(
+    totals_me: np.ndarray, totals_opp: np.ndarray, categories: Iterable[Category | str]
+) -> dict[str, tuple[float, float]]:
+    """Expected week totals {cat: (me, opp)} from simulated week totals (rows = simulations, banked stats included,
+    simulation.STATS columns). Percent categories are mean made / mean attempted."""
+    from fbm.analytics.simulation import COL
+
+    out: dict[str, tuple[float, float]] = {}
+    for c in map(_cat, categories):
+        pair = []
+        for t in (totals_me, totals_opp):
+            m = t.mean(axis=0) if len(t) else np.zeros(t.shape[1])
+            if c.kind == "pct":
+                att = m[COL[c.att]]
+                pair.append(float(m[COL[c.made]] / att) if att > 0 else 0.0)
+            else:
+                pair.append(float(m[COL[c.stat]]))
+        out[c.key] = (pair[0], pair[1])
+    return out
+
+
+def sim_rest(
+    totals_me: np.ndarray,
+    totals_opp: np.ndarray,
+    banked_me: Mapping[str, float],
+    banked_opp: Mapping[str, float],
+    categories: Iterable[Category | str],
+) -> dict[str, dict[str, tuple[float, float]]]:
+    """Counting categories only: the simulated games still to play, {"rest": {cat: (me, opp)} expected totals,
+    "sd": {cat: (me, opp)} sd of each side's simulated total} (banked stats removed from the rest)."""
+    from fbm.analytics.simulation import COL
+
+    rest: dict[str, tuple[float, float]] = {}
+    sd: dict[str, tuple[float, float]] = {}
+    for c in map(_cat, categories):
+        if c.kind == "pct":
+            continue
+        col = COL[c.stat]
+        vals, sds = [], []
+        for t, banked in ((totals_me, banked_me), (totals_opp, banked_opp)):
+            vals.append(float(t[:, col].mean() - float(banked.get(c.stat, 0.0))) if len(t) else 0.0)
+            sds.append(float(t[:, col].std()) if len(t) else 0.0)
+        rest[c.key] = (vals[0], vals[1])
+        sd[c.key] = (sds[0], sds[1])
+    return {"rest": rest, "sd": sd}
+
+
+def ht_rest_gap(
+    row: Mapping[str, Mapping[str, Any]],
+    categories: Iterable[Category | str],
+    adj_me: Mapping[str, float] | None = None,
+    adj_opp: Mapping[str, float] | None = None,
+) -> dict[str, tuple[float, float]]:
+    """What HT's H2H Planner implies for the rest of the week: AFTER - BEFORE per counting category, plus each side's
+    injury adjustment (so it is comparable with the simulator's rest). Percent categories can't be split (no
+    attempts) and are skipped, as are categories missing a value."""
+    adj_me, adj_opp = adj_me or {}, adj_opp or {}
+    out: dict[str, tuple[float, float]] = {}
+    for c in map(_cat, categories):
+        v = row.get(c.key) or {}
+        if c.kind == "pct" or any(v.get(k) is None for k in ("me_before", "opp_before", "me_after", "opp_after")):
+            continue
+        out[c.key] = (
+            float(v["me_after"]) - float(v["me_before"]) + float(adj_me.get(c.key, 0.0)),
+            float(v["opp_after"]) - float(v["opp_before"]) + float(adj_opp.get(c.key, 0.0)),
+        )
+    return out
+
+
+GUARD_SD = 3.0  # sds of a side's simulated total
+GUARD_REL = 0.35  # plus this share of the simulated rest
+GUARD_ABS = 2.0  # plus a couple of units of slack (rounding, a game that just ended)
+
+
+def planner_check(
+    gap: Mapping[str, tuple[float, float]],
+    rest: Mapping[str, tuple[float, float]],
+    sd: Mapping[str, tuple[float, float]],
+    n_sd: float = GUARD_SD,
+) -> dict[str, Any]:
+    """Sanity guard (issue #13): flag every category side where HT's AFTER - BEFORE exceeds the simulator's rest of
+    the week by more than `n_sd` sds (+ GUARD_REL of the rest + GUARD_ABS). That is the signature of a planner that
+    counts days already played (or of an HT pull older than the banked stats). Over-counts only."""
+    flags = []
+    for key, g in gap.items():
+        if key not in rest:
+            continue
+        for i, side in enumerate(("me", "opp")):
+            limit = n_sd * sd.get(key, (0.0, 0.0))[i] + GUARD_REL * abs(rest[key][i]) + GUARD_ABS
+            excess = g[i] - rest[key][i]
+            if excess > limit:
+                flags.append(
+                    {
+                        "cat": key,
+                        "side": side,
+                        "ht_rest": round(g[i], 2),
+                        "sim_rest": round(rest[key][i], 2),
+                        "excess": round(excess, 2),
+                        "limit": round(limit, 2),
+                    }
+                )
+    ok = not flags
+    return {
+        "ok": ok,
+        "checked": sorted(gap),
+        "flags": flags,
+        "message": "HT planner AFTER - BEFORE agrees with the simulated rest of the week."
+        if ok
+        else f"HT planner AFTER - BEFORE exceeds the simulated rest of the week in {len(flags)} category side(s): the "
+        "planner is counting days already played (or was pulled before the latest banked stats). Official odds use "
+        "banked + simulated rest, so they are unaffected; re-run `fbm hashtag import` (it ticks the planner's Days "
+        "Played).",
+    }
 
 
 def win_distribution(p_win: Mapping[str, float]) -> list[float]:

@@ -7,8 +7,7 @@ Every tunable value lives in the constants registry (see the end of this page).
 
 With `[hashtag] enabled = true`, Hashtag Basketball Premium (HT) owns player projections and their accuracy; FBM no
 longer re-projects or calibrates projections. The daily import (`refresh_data` / `fbm hashtag import`) stores HT's
-projection views — ROS, BLEND7/14/30, STREAM7/14/30 — plus the H2H Planner weekly totals (banked + projected rest of
-week), the waiver wire and (on demand) Trade Finder ideas, both run with FBM's category multipliers, team ranks,
+projection views — ROS, BLEND7/14/30, STREAM7/14/30 — plus the H2H Planner weekly totals (a cross-check, not the odds' means), the waiver wire and (on demand) Trade Finder ideas, both run with FBM's category multipliers, team ranks,
 player notes and Next Man Up. Each decision uses the HT view its policy setting names (baseline: ROS for drops,
 trades, IL, season weights and playoffs; BLEND14 for claims kept beyond the week; STREAM7 for weekly odds, lineups
 and in-week streams). HT data is personal-use only and HT notes are untrusted data.
@@ -84,7 +83,10 @@ evaluations use. Out players without a return date miss the whole week.
 
 HT's displayed "probability" is a share formula (counting stats: mine / (mine + opp); percentages: 0.5 + point
 difference / 40, clipped 0.05–0.95), not a win probability: FBM shows it for reference only. The official per-category
-odds use HT's projected weekly totals (view `policy.view.weekly_odds`) as the means and FBM's simulator for the spread:
+odds use projected week totals as the means (view `policy.view.weekly_odds`) and FBM's simulator for the spread. The
+means are **banked stats (Yahoo scoreboard) + the simulator's expected stats for the games still to play** at HT's
+per-game means (injuries respected, percentages as made / attempted). With no games left they are the banked totals
+(odds 0/1, equal totals a tie at 0.5):
 
 `P(win cat) = Φ(sign × (me − opp) / (policy.odds_spread_scale × sd))`, sign = −1 for TO,
 
@@ -92,14 +94,17 @@ where sd is the simulator's per-category standard deviation of (me − opp) over
 real game-to-game variation; banked stats add no spread). P(tie) ≈ 0; matchup-level numbers treat categories as
 independent.
 
-HT's H2H grid counts every rostered player on each of his game days (Out and IL players included), capped at the
-active spots. FBM takes the injured players out of HT's totals before using them: it adds the change in expected
-totals (HT per-game means) between the rest of the week planned as HT counts it (everyone healthy and active) and
-planned with injuries respected (Out players can't start until their ESPN return date, GTD/Q/D count at their play
-probability, healthy bench players fill the freed spots; no back-to-back rest risk). `simulate_matchup` shows both
-(`*_ht_grid` and the adjusted `*_total_ht`) and lists `injured_excluded`.
+HT's H2H Planner AFTER totals are **not** the means (issue #13): AFTER counts every day of the week not ticked under
+"Days Played", so days already played were counted twice (AFTER - BEFORE stayed ~a full week all week). The importer now
+ticks the weekdays already played (before today, ET); the planner is kept as a cross-check only. `simulate_matchup`
+shows it as `*_ht_grid` next to the official `*_total_ht` and returns `ht_planner_check`: it flags every category side
+where HT's AFTER - BEFORE (injured players removed the way HT's grid counts them) exceeds the simulated rest of the
+week by more than 3 sd + 35% + 2. `health_check` also warns when the planner's gap does not shrink as stats bank
+across a week. HT's grid counts every rostered player on each of his game days (Out and IL players included), capped
+at the active spots; the simulator instead respects injuries (Out players can't start until their ESPN return date,
+GTD/Q/D count at their play probability, healthy bench players fill the freed spots) and `injured_excluded` lists them.
 
-Each daily forecast is stored (`source = ht_spread`, with the adjusted means, the raw grid means and sd) so
+Each daily forecast is stored (`source = ht_spread`, with the means, the raw HT grid means, the planner check and sd) so
 `odds_reliability` can grade it against Yahoo's FINAL result and recompute it for other spread scales and views.
 
 ## Matchup simulation
@@ -112,7 +117,7 @@ leg of back-to-backs carry that rest risk on their team's back-to-back dates (`s
 the stats already banked this week (live scoreboard) are added to the simulated remainder. Output includes
 per-category win/tie/loss odds and an "if the opponent streams" upper bound (the streaming planner run from their
 side). In Hashtag mode that block also carries `official_if_opponent_streams`: the official odds re-priced with the
-opponent's HT totals shifted by the simulated change from those streams (display only; the recorded forecast and
+opponent's projected totals shifted by the simulated change from those streams (display only; the recorded forecast and
 calibration use the stand-pat official odds).
 
 ## Decision rule (choosers) and decision log

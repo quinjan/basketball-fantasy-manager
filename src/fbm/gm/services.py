@@ -88,10 +88,78 @@ def active_league() -> LeagueState:
         from fbm.league.yahoo_league import load_or_refresh
 
         try:
-            return load_or_refresh(float(C("yahoo.snapshot_max_age_min")))
+            return _roll_week(load_or_refresh(float(C("yahoo.snapshot_max_age_min"))))
         except Exception as err:
             raise GMError(f"Yahoo league unavailable and no snapshot yet: {err}") from err
     raise GMError(f'Unknown [league] source "{source}" in config/settings.toml (use "demo" or "yahoo").')
+
+
+_WEEK_MATCHUPS: dict[tuple[str, int], list] = {}  # (league_key, week) -> Yahoo scoreboard matchups (read-only)
+
+
+def _yahoo_week_matchups(league: LeagueState, week: int) -> list:
+    """Yahoo's scoreboard for one week (its bounds and pairings never change, so cached per process)."""
+    key = (league.league_key, week)
+    if key not in _WEEK_MATCHUPS:
+        from fbm.yahoo.league_reads import fetch_scoreboard
+
+        with _yahoo_client() as client:
+            _WEEK_MATCHUPS[key] = fetch_scoreboard(client, league.league_key, week)
+    return _WEEK_MATCHUPS[key]
+
+
+def _week_lookup(league: LeagueState):
+    """Yahoo schedule lookup for fbm.league.weeks: week number -> WeekInfo, None when Yahoo can't be read."""
+    from fbm.league.weeks import week_info_from_matchups
+
+    def lookup(week: int):
+        try:
+            return week_info_from_matchups(week, _yahoo_week_matchups(league, week), league.my_team_key)
+        except Exception:  # noqa: BLE001 - the calendar is the fallback
+            return None
+
+    return lookup
+
+
+def _roll_week(league: LeagueState) -> LeagueState:
+    """Yahoo keeps a finished week as current until it rolls over (Monday ET). Past its end, move week number,
+    window and opponent to the next Yahoo week together (fbm.league.weeks) so every tool agrees; Yahoo's per-week
+    banked stats and add counts belong to the finished week, so they are cleared."""
+    if league.source != "yahoo" or not (league.week_start and league.week_end):
+        return league
+    today = nba_today()
+    if today <= league.week_end:
+        return league
+    from dataclasses import replace
+
+    from fbm.league.weeks import WeekInfo, effective_week
+
+    yahoo = WeekInfo(league.week, league.week_start, league.week_end, league.opponent_key)
+    eff = effective_week(yahoo, today, _week_lookup(league))
+    if eff.rolled_from is None:
+        return league
+    w = eff.week
+    return replace(
+        league,
+        week=w.number,
+        week_start=w.start,
+        week_end=w.end,
+        opponent_key=w.opponent_key,
+        banked={},
+        adds_used={},
+        rolled_from_week=eff.rolled_from.number,
+        rollover_note=eff.note,
+    )
+
+
+def _rollover_hint(league: LeagueState, err: GMError) -> GMError:
+    """A missing-data error while FBM is ahead of Yahoo/HT (week rolled by date) gets the actionable reason."""
+    if not league.rolled_from_week:
+        return err
+    return GMError(
+        f"{err} {league.rollover_note} Hashtag may still be on week {league.rolled_from_week}: once HT shows week "
+        f"{league.week}, run `fbm hashtag import` and retry."
+    )
 
 
 def _is_yahoo() -> bool:
@@ -294,7 +362,14 @@ def league_overview() -> dict[str, Any]:
         "now_local": now.isoformat(timespec="minutes"),
         "now_et": now.astimezone(ET).isoformat(timespec="minutes"),
         "nba_game_day_et": nba_today().isoformat(),
-        "fantasy_week": {"start": ws.isoformat(), "end": we.isoformat(), "first_remaining_day": start.isoformat()},
+        "fantasy_week": {
+            "number": league.week if league.source == "yahoo" else None,
+            "start": ws.isoformat(),
+            "end": we.isoformat(),
+            "first_remaining_day": start.isoformat(),
+            "rolled_over_from_yahoo_week": league.rolled_from_week,
+            "note": league.rollover_note or None,
+        },
         "strategy": memory.current_strategy(),
         "waiver_priority": {
             "mine": league.waiver_priority.get(league.my_team_key),
@@ -585,7 +660,7 @@ def schedule(days: int = 7) -> dict[str, Any]:
                 "players": with_game,
             }
         )
-    ws, we = fantasy_week(start)
+    _, ws, we = _week_window(start)
     week_playing = teams_playing(_conn(), ws, we)
     counts: dict[str, int] = {}
     for d in date_range(ws, we):
@@ -733,10 +808,13 @@ def _lineup_plan(
 def _week_odds(
     league: LeagueState, opp: FantasyTeam, n: int, start_day: date | None = None
 ) -> tuple[dict[str, float], str]:
-    """This week's per-category odds {cat: P(win)} and their source: HT mode = the official HT totals + sim spread
-    (current week only); otherwise FBM's simulator."""
+    """This week's per-category odds {cat: P(win)} and their source: HT mode = banked + simulated rest of the week
+    (HT per-game means) with the sim spread (current week only); otherwise FBM's simulator."""
     if ctx().hashtag and start_day is None:
-        return _ht_week_odds(league, opp, n)["p_win"], "ht_spread"
+        try:
+            return _ht_week_odds(league, opp, n)["p_win"], "ht_spread"
+        except GMError as err:
+            raise _rollover_hint(league, err) from err
     return _ht.odds_map(_matchup(league, league.my_team, opp, start_day, n)[0]), "fbm_sim"
 
 
@@ -785,10 +863,11 @@ def _ht_injury_adjustment(
 
 
 def _ht_week_odds(league: LeagueState, opp: FantasyTeam, n: int) -> dict[str, Any]:
-    """Official weekly odds (contract B): HT H2H Planner me_after/opp_after as the means, less the injured players
-    HT's grid counts (`_ht_injury_adjustment`), sd of (me - opp) per category from FBM's simulator on HT projections
-    (view policy.view.weekly_odds) for the remaining days (banked stats a fixed offset), scaled by
-    policy.odds_spread_scale."""
+    """Official weekly odds (contract B): means = banked stats (Yahoo scoreboard) + the simulator's expected stats for
+    the games still to play at HT's per-game means (view policy.view.weekly_odds; injuries respected), sd of
+    (me - opp) per category from the same simulation (banked stats a fixed offset), scaled by
+    policy.odds_spread_scale. HT's H2H Planner AFTER totals are NOT the means (they count days already played, issue
+    #13): they only feed `planner_check`, a guard that flags an AFTER - BEFORE above the simulated rest of the week."""
     from fbm.analytics import ht_odds
     from fbm.hashtag import store as ht_store
 
@@ -811,17 +890,22 @@ def _ht_week_odds(league: LeagueState, opp: FantasyTeam, n: int) -> dict[str, An
         for k, v in row["categories"].items()
         if k in keys and v.get("me_after") is not None and v.get("opp_after") is not None
     }
-    cats = [k for k in league.categories if k.key in ht_means]
-    injury = _ht_injury_adjustment(league, opp, day0, models, cats)
-    means = ht_odds.apply_adjustment(ht_means, injury["me"], injury["opp"])
+    cats = list(league.categories)
+    injury = _ht_injury_adjustment(league, opp, day0, models, [k for k in cats if k.key in ht_means])
+    means = ht_odds.means_from_totals(totals["me"], totals["opp"], cats)
     sd = ht_odds.spread(totals["me"], totals["opp"], cats)
     scale = float(params["policy.odds_spread_scale"])
     p_win = ht_odds.odds_from_totals(means, sd, scale, league.categories)
+    rest = ht_odds.sim_rest(totals["me"], totals["opp"], mw.banked, ow.banked, cats)
+    gap = ht_odds.ht_rest_gap(row["categories"], cats, injury["me"], injury["opp"])
     return {
         "p_win": p_win,
         "summary": ht_odds.summary(p_win),
         "means": means,
         "ht_means": ht_means,
+        "ht_gap": gap,
+        "sim_rest": rest["rest"],
+        "planner_check": ht_odds.planner_check(gap, rest["rest"], rest["sd"]),
         "injury": injury,
         "sd": sd,
         "scale": scale,
@@ -959,6 +1043,8 @@ def _matchup(
 def _default_opponent(league: LeagueState) -> FantasyTeam:
     if league.opponent_key and any(t.team_key == league.opponent_key for t in league.teams):
         return league.team(league.opponent_key)
+    if league.rolled_from_week:
+        raise GMError(f"This week's opponent is unknown: {league.rollover_note} Pass opponent=<team> to preview one.")
     keys = [t.team_key for t in league.teams]
     return league.teams[(keys.index(league.my_team_key) + 1) % len(keys)]
 
@@ -1087,7 +1173,8 @@ def weekly_plan(opponent: str | None = None, trigger: str | None = "daily-gm", n
 def _simulate_matchup_ht(
     league: LeagueState, opp: FantasyTeam, n: int, record: bool, opponent_streams: int | None
 ) -> dict[str, Any]:
-    """HT mode outlook: official odds = HT totals + FBM sim spread (contract B); HT's own share for reference."""
+    """HT mode outlook: official odds = banked + simulated rest of the week at HT per-game means, with the FBM sim
+    spread (contract B); HT's own share and planner totals for reference."""
     w = _ht_week_odds(league, opp, n)
     p_win, summ, means, mw, ow = w["p_win"], w["summary"], w["means"], w["mw"], w["ow"]
     prediction_id = None
@@ -1108,6 +1195,8 @@ def _simulate_matchup_ht(
             extra={
                 "ht_grid_means": {k: {"me": m[0], "opp": m[1]} for k, m in w["ht_means"].items()},
                 "injury_adjustment": {"me": w["injury"]["me"], "opp": w["injury"]["opp"]},
+                "means_source": "banked + simulated rest (issue #13)",
+                "ht_planner_check": w["planner_check"],
             },
         )
         prediction_id = _ht.record_ht_prediction(
@@ -1137,10 +1226,11 @@ def _simulate_matchup_ht(
         "opponent": opp.name,
         "opponent_key": opp.team_key,
         "window_et": f"{day0}..{we}",
-        "odds_source": "ht_spread: Hashtag projected week totals (means, injured players removed) + FBM simulator "
-        "spread",
+        "odds_source": "ht_spread: banked stats + simulated rest of the week at HT per-game means (injuries respected) "
+        "+ FBM simulator spread",
         "ht_view": w["view"],
         "ht_pulled_at": w["ht"]["pulled_at"],
+        "ht_planner_check": w["planner_check"],
         "spread_scale": w["scale"],
         "injured_excluded": w["injury"]["players"],
         "banked_this_week": (
@@ -1152,8 +1242,8 @@ def _simulate_matchup_ht(
                 "cat": _CAT_LABEL.get(k, k),
                 "me_total_ht": _r(means[k][0], 3 if k in pct else 1),
                 "opp_total_ht": _r(means[k][1], 3 if k in pct else 1),
-                "me_ht_grid": _r(w["ht_means"][k][0], 3 if k in pct else 1),
-                "opp_ht_grid": _r(w["ht_means"][k][1], 3 if k in pct else 1),
+                "me_ht_grid": None if k not in w["ht_means"] else _r(w["ht_means"][k][0], 3 if k in pct else 1),
+                "opp_ht_grid": None if k not in w["ht_means"] else _r(w["ht_means"][k][1], 3 if k in pct else 1),
                 "sd_diff_sim": _r(w["sd"].get(k, 0.0), 4 if k in pct else 2),
                 "p_win": _r(p),
                 "p_tie": 0.0,
@@ -1176,10 +1266,12 @@ def _simulate_matchup_ht(
         "opponent_adds_source": adds_source,
         "weekly_plan": plan,
         "prediction_id": prediction_id,
-        "method": "p_win = Phi((HT me - HT opp) / (spread_scale x sd of the simulated difference)); categories "
-        "treated as independent for expected/p_majority. *_total_ht = HT's grid totals (*_ht_grid) less the injured "
-        "players the grid counts (Out until their return date, GTD/Q/D at their play probability; healthy bench "
-        "players fill the spots). ht_share_reference is HT's displayed share formula, not a probability.",
+        "method": "p_win = Phi((me - opp) / (spread_scale x sd of the simulated difference)); categories treated as "
+        "independent for expected/p_majority. *_total_ht = expected week total = banked stats (Yahoo scoreboard) + the "
+        "simulated games still to play at HT per-game means (Out until their return date, GTD/Q/D at their play "
+        "probability; healthy bench players fill the spots); with no games left it is the banked total and the odds "
+        "are 0/1 (ties 0.5). *_ht_grid is HT's H2H Planner AFTER total, a cross-check only (`ht_planner_check`): "
+        "it can count days already played. ht_share_reference is HT's displayed share formula, not a probability.",
     }
 
 
@@ -1203,7 +1295,10 @@ def simulate_matchup_tool(
                 "In Hashtag mode the matchup outlook comes from HT's current-week totals only; `start` is not "
                 "supported (no FBM-only projections in HT mode)."
             )
-        return _simulate_matchup_ht(league, opp, n, record, opponent_streams)
+        try:
+            return _simulate_matchup_ht(league, opp, n, record, opponent_streams)
+        except GMError as err:
+            raise _rollover_hint(league, err) from err
     odds, mw, ow, day0, we, models, my_plans, opp_plans = _matchup(
         league, league.my_team, opp, parse_date(start) if start else None, n
     )
@@ -3357,10 +3452,13 @@ def scoreboard_tool() -> dict[str, Any]:
     from fbm.league.yahoo_views import scoreboard_view
 
     league = active_league()
+    note = "Live weekly totals from Yahoo; percentages are makes/attempts. Leader = Yahoo's stat winner."
+    if league.rolled_from_week:
+        note += f" These are Yahoo's week-{league.rolled_from_week} matchups: {league.rollover_note}"
     return {
-        "week": league.week,
+        "week": league.rolled_from_week or league.week,
         "as_of": league.fetched_at,
-        "note": "Live weekly totals from Yahoo; percentages are makes/attempts. Leader = Yahoo's stat winner.",
+        "note": note,
         "matchups": scoreboard_view(league),
     }
 

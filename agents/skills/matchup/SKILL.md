@@ -13,9 +13,10 @@ Run as the `gm` agent. Every number comes from tool output.
 2. `weekly_plan(trigger="owner-ask")` and/or `simulate_matchup` (current opponent; banked stats included in the
    Yahoo league). Report expected categories won, P(win week), per-category win odds, chase/hold/lock/concede status,
    swing categories, and `if_opponent_streams` (in Hashtag mode quote its `official_if_opponent_streams` — same
-   basis as the official odds; the FBM-sim stand_pat/streaming numbers are not). **Official odds** (Hashtag mode) = HT's projected weekly totals
-   (policy view `policy.view.weekly_odds`, default STREAM7) with injured players removed (HT's grid counts them;
-   see `injured_excluded`, `*_ht_grid` vs `*_total_ht`) + FBM's simulator spread × `policy.odds_spread_scale`.
+   basis as the official odds; the FBM-sim stand_pat/streaming numbers are not). **Official odds** (Hashtag mode) = banked stats + the simulated rest of the week at HT per-game means
+   (policy view `policy.view.weekly_odds`, default STREAM7; injuries respected, see `injured_excluded`) + FBM's
+   simulator spread × `policy.odds_spread_scale`. `*_ht_grid` is HT's planner AFTER total, a cross-check only: if
+   `ht_planner_check.ok` is false, say HT's planner is counting days already played (the odds are unaffected).
    HT's displayed "probability" is a share formula (mine/(mine+opp)), not a win probability: quote it only as a
    reference, labelled as such. `odds_reliability` says how well the official odds have held up vs Yahoo finals.
 3. Category questions ("can I flip STL?"): read that category's odds; `streaming_plan` and

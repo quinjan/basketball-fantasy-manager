@@ -12,6 +12,7 @@ from typing import Any
 
 from fbm.analytics.week import date_range, fantasy_week, plan_team_week, teams_playing
 from fbm.league.model import IL_SLOTS, OUT_STATUSES, FantasyTeam, LeagueState
+from fbm.league.weeks import week_info_from_matchups
 
 TOP_FA = 10
 STREAM_GAMES_BASELINE = 3.5  # same lens as services.free_agents (week_value)
@@ -93,8 +94,14 @@ def team_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
 def next_week_bounds(
     current_end: date, yahoo_start: date | None = None, yahoo_end: date | None = None
 ) -> tuple[date, date]:
-    """Next fantasy week's ET dates: Yahoo's own bounds if its schedule gave them, else the Monday-Sunday week."""
-    if yahoo_start and yahoo_end and yahoo_start > current_end:
+    """Next fantasy week's ET dates: Yahoo's own bounds for that week if its schedule gave them, else the
+    Monday-Sunday week after `current_end`. Yahoo's bounds are never replaced by a guess: if they don't start after
+    `current_end` the caller's idea of the current week is wrong, and that is an error, not a silent fallback."""
+    if yahoo_start and yahoo_end:
+        if yahoo_end < yahoo_start or yahoo_start <= current_end:
+            raise ValueError(
+                f"Yahoo's next-week bounds {yahoo_start}..{yahoo_end} don't follow the current week's end {current_end}"
+            )
         return yahoo_start, yahoo_end
     start = current_end + timedelta(days=1)
     return start, fantasy_week(start)[1]
@@ -154,26 +161,28 @@ def team_roster(team: str | None = None, day: str | None = None, punts: str | No
 
 
 def _next_opponent(league: LeagueState, opponent: str | None) -> tuple[FantasyTeam | None, dict[str, Any]]:
-    """(next opponent, {week, start, end, source/note}) from the owner's choice or the Yahoo schedule."""
+    """(next opponent, {week, start, end, source/note}) from the owner's choice or the Yahoo schedule. The Yahoo
+    week bounds come back even when the caller picks the opponent, so the window is Yahoo's either way."""
     svc = _svc()
-    if opponent:
-        return match_team(league, opponent), {"source": "caller"}
+    caller = match_team(league, opponent) if opponent else None
     if league.source != "yahoo":
+        if caller:
+            return caller, {"source": "caller"}
         return None, {"note": "demo league has no matchup schedule; pass opponent=<team> to preview one"}
     week = league.week + 1
     try:
-        from fbm.yahoo.league_reads import fetch_scoreboard
-
-        with svc._yahoo_client() as client:
-            matchups = fetch_scoreboard(client, league.league_key, week)
+        matchups = svc._yahoo_week_matchups(league, week)
     except Exception as err:
-        return None, {"note": f"Yahoo schedule for week {week} unavailable: {type(err).__name__}: {err}"}
-    mine = next((m for m in matchups if m.team(league.my_team_key)), None)
-    opp = mine.opponent_of(league.my_team_key) if mine else None
-    if mine is None or opp is None or not any(x.team_key == opp.team_key for x in league.teams):
-        return None, {"note": f"Yahoo has no week-{week} matchup for this team (bye, or the season ends)"}
-    info = {"source": "Yahoo schedule", "week": mine.week, "start": mine.week_start, "end": mine.week_end}
-    return league.team(opp.team_key), info
+        note = f"Yahoo schedule for week {week} unavailable: {type(err).__name__}: {err}"
+        return caller, ({"source": "caller", "note": note} if caller else {"note": note})
+    sched = week_info_from_matchups(week, matchups, league.my_team_key)
+    info: dict[str, Any] = {"week": week, "start": sched.start, "end": sched.end} if sched else {}
+    if caller:
+        return caller, {**info, "source": "caller"}
+    opp_key = sched.opponent_key if sched else None
+    if opp_key is None or not any(x.team_key == opp_key for x in league.teams):
+        return None, {**info, "note": f"Yahoo has no week-{week} matchup for this team (bye, or the season ends)"}
+    return league.team(opp_key), {**info, "source": "Yahoo schedule"}
 
 
 def _team_week(
@@ -213,15 +222,21 @@ def next_week(opponent: str | None = None, n: int = 4000) -> dict[str, Any]:
     league = svc.active_league()
     current_end = svc._week_window()[2]
     opp, info = _next_opponent(league, opponent)
-    start, end = next_week_bounds(current_end, info.get("start"), info.get("end"))
+    window_note = None
+    try:
+        start, end = next_week_bounds(current_end, info.get("start"), info.get("end"))
+    except ValueError as err:
+        window_note = f"{err}; using the Monday-Sunday calendar week instead."
+        start, end = next_week_bounds(current_end)
     days = date_range(start, end)
     playing = teams_playing(svc._conn(), start, end)
     counts = games_by_team(playing)
     out: dict[str, Any] = {
-        "week": info.get("week") or league.week + 1,
+        "week": league.week + 1,
         "start_et": start.isoformat(),
         "end_et": end.isoformat(),
         "days": len(days),
+        "this_week": league.week,
         "opponent": opp.name if opp else None,
         "opponent_key": opp.team_key if opp else None,
         "opponent_source": info.get("source"),
@@ -229,6 +244,9 @@ def next_week(opponent: str | None = None, n: int = 4000) -> dict[str, Any]:
         "nba_games_by_team": counts,
         "nba_game_days": {d.isoformat(): len(teams) // 2 for d, teams in playing.items()},
     }
+    notes = [n for n in (league.rollover_note, window_note) if n]
+    if notes:
+        out["window_note"] = " ".join(notes)
     if not counts:
         out["note"] = "No NBA games are scheduled in that window (schedule not published yet, or the season is over)."
         return out

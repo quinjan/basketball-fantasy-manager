@@ -91,6 +91,7 @@ def graded_forecasts(
                 "window": f"{row['window_start']}..{row['window_end']}",
                 "week": final.get("week"),
                 "view": payload.get("view"),
+                "means_source": payload.get("means_source"),
                 "forecasts": {k: fc[k] for k in cats},
                 "outcomes": {k: float(winners[k]) for k in cats},
             }
@@ -163,6 +164,14 @@ def report(
     }
     if not rows:
         out["note"] = "No ht_spread forecasts with a Yahoo final result yet (they grade once the week is final)."
+    legacy = sum(1 for r in rows if not r.get("means_source"))
+    if legacy:
+        out["pre_fix_forecasts"] = legacy
+        out["pre_fix_note"] = (
+            f"{legacy} graded forecast(s) predate the issue #13 fix: their means were HT planner totals that counted "
+            "days already played (inflated after day 1), and the payload has no banked stats to recompute them. Read "
+            "their Brier with that in mind; forecasts with `means_source` are banked + simulated rest."
+        )
     views = sorted({r["view"] for r in rows if r["view"]})
     if not view and len(views) > 1:
         out["by_view"] = {v: _summary(r for r in rows if r["view"] == v) for v in views}

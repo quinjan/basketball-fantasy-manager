@@ -328,7 +328,9 @@ def parse_h2h_planner(html: str | Node) -> dict[str, Any]:
     """H2H Matchup Planner -> {my_team, opp_team, week, view, spots, categories: {cat: {me_before, opp_before,
     me_after, opp_after, ht_share}}, roster_side: me|opp, roster: [{yahoo_id, name, positions, team, days}]}.
 
-    before = banked this week; after = banked + HT's projection for the rest of the week."""
+    before = banked this week; after = banked + HT's projection for the days NOT ticked under "Days Played". With no
+    day ticked, after counts the whole week, banked days twice (issue #13): the importer ticks the days already played,
+    and FBM's official odds don't use `after` as the means anyway."""
     doc = _doc(html)
     page = "h2h_planner"
     t, rows = _find_table(doc, page, ("BEFORE", *CAT_HEADERS), "statsTable")
@@ -372,6 +374,21 @@ def parse_h2h_planner(html: str | Node) -> dict[str, Any]:
         "roster_side": side,
         "roster": parse_planner_roster(doc),
     }
+
+
+def parse_days_played(doc: Node) -> dict[str, tuple[str, bool]]:
+    """The planner's "Days Played" checkboxes (FVDAYS) -> {"MON": (form field name, ticked)}; {} if the page has none.
+    Days ticked there are already played: HT leaves them out of the AFTER projection."""
+    labels = {(lb.attrs.get("for") or ""): lb.text().strip().upper() for lb in doc.find_all("label")}
+    out: dict[str, tuple[str, bool]] = {}
+    for cb in doc.find_all("input", type="checkbox"):
+        name = cb.attrs.get("name") or ""
+        if "$FVDAYS$" not in name:
+            continue
+        day = labels.get(cb.attrs.get("id") or "", "")
+        if day:
+            out[day] = (name, "checked" in cb.attrs)
+    return out
 
 
 def parse_planner_roster(doc: Node) -> list[dict[str, Any]]:

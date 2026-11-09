@@ -12,7 +12,7 @@ import json
 import sqlite3
 import uuid
 from collections.abc import Callable, Iterable
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from fbm.hashtag import CATEGORY_KEYS, VIEWS
@@ -281,6 +281,29 @@ def stashed_out(team: Any) -> set[str]:
     return {p.name for p in team.players if (p.selected or "").upper() in IL_SLOTS and p.is_out}
 
 
+_WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
+
+
+def played_days_fields(
+    doc: Any, week_start: date | None, week_end: date | None, et_today: date
+) -> dict[str, str | None]:
+    """Postback fields for the planner's "Days Played" checkboxes: tick the weekdays of this fantasy week already
+    played (before today, ET), untick the rest, so HT's AFTER counts only the rest of the week. {} when the page has
+    no such checkboxes or the week isn't a plain 7-day span (weekday labels would be ambiguous)."""
+    boxes = P.parse_days_played(doc)
+    if not boxes or week_start is None:
+        return {}
+    end = week_end or week_start + timedelta(days=6)
+    if (end - week_start).days > 6:
+        return {}
+    played: set[str] = set()
+    day = week_start
+    while day < min(et_today, end + timedelta(days=1)):
+        played.add(_WEEKDAYS[day.weekday()])
+        day += timedelta(days=1)
+    return {name: ("on" if label in played else None) for label, (name, _) in boxes.items()}
+
+
 def _pull_planner(
     run: _Run,
     client: HashtagClient,
@@ -303,10 +326,12 @@ def _pull_planner(
         if opp is None:
             raise HashtagError("No opponent this week in the Yahoo snapshot.")
         page = open_planner()
+        day_fields = played_days_fields(page.doc, league.week_start, league.week_end, et_today)
         fields = {
             "DDTEAM2": option_value(page.doc, "DDTEAM2", opp.name),
             "DDWEEK": option_value(page.doc, "DDWEEK", str(league.week)),
             "DDDURATION": _duration_value(page, view),
+            **day_fields,
         }
         page = client.postback(page, fields=fields, event_target="DDDURATION")
         if first:
@@ -333,7 +358,12 @@ def _pull_planner(
                 for cat, v in parsed["categories"].items()
             ],
         )  # fmt: skip
-        return len(parsed["categories"])
+        ticked = [d for d, (_, on) in P.parse_days_played(page.doc).items() if on]
+        want = [name for name, v in day_fields.items() if v]
+        note = f"days played ticked: {','.join(ticked) or 'none'}" if day_fields else "no Days Played checkboxes"
+        if day_fields and len(ticked) != len(want):
+            note += f" (expected {len(want)}: HT may still count days already played)"
+        return len(parsed["categories"]), note
 
     if "h2h_planner" in pages:
         for i, view in enumerate(views):

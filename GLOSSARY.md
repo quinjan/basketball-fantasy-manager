@@ -23,6 +23,13 @@ The deterministic rule that re-syncs only the stale source data a tool depends o
 never decides when data is stale.
 _Avoid_: auto-refresh, GM refresh
 
+**Current fantasy week**:
+The week (number, ET window, opponent) every tool treats as "this week". Yahoo keeps reporting a finished week as
+current (`midevent`) until it rolls over, so once today's ET date is past that week's end the current week is the next
+Yahoo week (bounds and opponent from Yahoo's schedule; the Monday-Sunday calendar is only the fallback). One resolver
+(`fbm.league.weeks`) settles it, so week number, window and opponent never disagree.
+_Avoid_: calendar week, Yahoo week (when the two can differ)
+
 ## Decisions
 
 **Policy**:

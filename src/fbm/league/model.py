@@ -118,6 +118,10 @@ class LeagueState:
     # This week's pairings: {week, status, is_playoffs, teams: [{team_key, name, stats, points}], stat_winners}.
     matchups: list[dict] = field(default_factory=list)
     ownership: dict[str, list[float | None]] = field(default_factory=dict)  # player_id -> [percent_owned, delta]
+    # Set when week/week_start/week_end/opponent_key were rolled past Yahoo's finished week (fbm.league.weeks): the
+    # week number Yahoo still reported, and why. `matchups` remain Yahoo's own (the finished week's).
+    rolled_from_week: int | None = None
+    rollover_note: str = ""
 
     def team(self, team_key: str) -> FantasyTeam:
         return next(t for t in self.teams if t.team_key == team_key)

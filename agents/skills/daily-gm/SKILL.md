@@ -22,7 +22,7 @@ context: keep the compact defaults and hand wide scans (steps 5–6: many free a
    (`nba_game_day_et`, or the next day with games). It returns the recommended lineup and exact steps for the owner
    (and logs the lineup decision) — put them at the top of the report.
 3. **Matchup.** In the Yahoo league, `scoreboard` for stats already banked this week. Once per day call
-   `weekly_plan(trigger="daily-gm")` (official odds: HT weekly totals + FBM spread; chase/hold/lock/concede status
+   `weekly_plan(trigger="daily-gm")` (official odds: banked + simulated rest at HT per-game means + FBM spread; chase/hold/lock/concede status
    and category weights; logs the chase_concede / category_weights decisions) **or**
    `simulate_matchup(record=true)` (current opponent; includes banked stats; records the forecast that
    `odds_reliability` grades). Identify swing categories, expected categories won, P(win week), games-started gap,

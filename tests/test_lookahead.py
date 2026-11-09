@@ -81,10 +81,13 @@ def test_next_week_bounds_prefers_yahoo_schedule():
         date(2026, 11, 2),
         date(2026, 11, 15),
     )  # a two-week stretch (e.g. around the All-Star break)
-    assert la.next_week_bounds(date(2026, 11, 1), date(2026, 10, 26), date(2026, 11, 1)) == (
-        date(2026, 11, 2),
-        date(2026, 11, 8),
-    )  # a stale/overlapping Yahoo window is ignored
+    with pytest.raises(ValueError, match="don't follow"):  # never silently replaced by a guessed window
+        la.next_week_bounds(date(2026, 11, 1), date(2026, 10, 26), date(2026, 11, 1))
+    # the Monday after Yahoo's week 3 ended: current_end is 11-15 (effective week 4), Yahoo's week 5 is next
+    assert la.next_week_bounds(date(2026, 11, 15), date(2026, 11, 16), date(2026, 11, 22)) == (
+        date(2026, 11, 16),
+        date(2026, 11, 22),
+    )
 
 
 def test_games_by_team_and_best_streams():

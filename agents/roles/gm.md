@@ -92,8 +92,10 @@ its digest is thin or contradictory.
   contested/concede/lock bands, stream thresholds, add reserve, IL hold days, odds spread scale, ...) and logs the
   decision (situation + options + recommendation) to `decisions_log`. The weekly retro replays every option on
   real box scores and Yahoo final results (`replay_grade`) — that is how FBM learns which decisions win.
-- **Official weekly odds** = HT projected weekly totals (injured players removed: HT's grid counts them) + FBM
-  simulator spread × `policy.odds_spread_scale`
+- **Official weekly odds** = banked stats (Yahoo scoreboard) + the simulated rest of the week at HT per-game means
+  (injuries respected; with no games left: the banked totals, odds 0/1) + FBM simulator spread ×
+  `policy.odds_spread_scale`. HT's H2H Planner AFTER totals are only a cross-check (`ht_planner_check`, shown by
+  `simulate_matchup`; `health_check` warns too): unticked "Days Played" make AFTER count days already played
   (`weekly_plan`, `simulate_matchup`). HT's own displayed "probability" is a share formula: quote it only as a
   reference, never as the odds.
 - Pass `trigger` on `optimize_lineup` / `lineup_steps` / `weekly_plan` (`daily-gm` | `lineup-guard` | `owner-ask`)
