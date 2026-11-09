@@ -11,6 +11,9 @@ description: Walk the owner through pending GM proposals and capture their decis
    - If the reviewer said DISAGREE/SPLIT, show the strongest alternative too.
    - `policy` proposals: show each setting's current → proposed value and the replay evidence (categories gained,
      graded weeks/decisions); say plainly that it changes how FBM decides from now on.
+   - `trade` proposals: show the realism line (`evidence.trade_realism`: partner ranking value, HT value premium,
+     partner expected cats vs their thresholds). If `realism_override` is present, flag it prominently: the GM sent the
+     trade despite failing the partner-realism screen — quote the failing numbers and its `override_reason`.
 3. Ask the owner with the ask-user tool, choices: `Approve P-<id>`, `Reject P-<id>`, `Discuss P-<id>`.
    If the owner already wrote "approve P-12" in chat, that text is the decision — don't ask again.
 4. `record_owner_decision(ref, approved, owner_quote=<the owner's exact words>)`. Never paraphrase or infer.
@@ -19,6 +22,10 @@ description: Walk the owner through pending GM proposals and capture their decis
      `confirm_done(ref, note)` (status `done`; demo league: this applies the change). It then checks the move against
      Yahoo: a `verification_warning` means it is pending (trade vote / waiver processing) or not executed — tell the
      owner; every snapshot re-verifies, and only verified moves are graded.
+   - A trade the owner sent that the partner answered: when the owner says what happened (declined, countered,
+     vetoed, withdrawn, accepted...), `record_trade_response(ref, response, owner_quote=<their exact words>)`; a
+     decline flips it to `not_executed` at once. Without it the next snapshot reads Yahoo's pending-offer list
+     (vanished offer = declined/withdrawn; still pending past the window = ignored). Never guess a response.
    - `done` (strategy / policy proposals) → confirm the approved strategy was recorded, or the policy settings were
      applied (new policy version in `policy_settings`).
    - `failed` → explain the re-validation problem and whether a revised proposal makes sense.

@@ -143,6 +143,27 @@ def means_from_totals(
     return out
 
 
+def shrink_opponent_means(
+    means: Mapping[str, tuple[float, float]],
+    banked_opp: Mapping[str, float],
+    factors: Mapping[str, float],
+    categories: Iterable[Category | str],
+) -> dict[str, tuple[float, float]]:
+    """Opponent's projected rest of the week scaled by `factors` {cat: f} (issue #15: realized/projected ratio of past
+    opponents). Only the part still to be played moves: opp = banked + f * (opp - banked). Counting categories only
+    (percent categories and categories without a factor are untouched); the spread is not changed."""
+    out = {k: (float(m), float(o)) for k, (m, o) in means.items()}
+    for c in map(_cat, categories):
+        f = factors.get(c.key)
+        if f is None or c.kind == "pct" or c.key not in out:
+            continue
+        banked = float(banked_opp.get(c.stat, 0.0))
+        me, opp = out[c.key]
+        if opp > banked:
+            out[c.key] = (me, banked + float(f) * (opp - banked))
+    return out
+
+
 def sim_rest(
     totals_me: np.ndarray,
     totals_opp: np.ndarray,

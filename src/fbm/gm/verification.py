@@ -26,6 +26,7 @@ from typing import Any
 
 from fbm.constants import C
 from fbm.gm import proposals as props
+from fbm.gm import trade_offers
 from fbm.league.model import IL_SLOTS
 from fbm.timeutil import ET
 from fbm.yahoo.league_reads import Transaction, TxPlayer
@@ -51,6 +52,7 @@ class YahooView:
     resolve: Callable[[TxPlayer], str | None] = _no_resolve  # transaction player -> espn id
     team_names: Mapping[str, str] = field(default_factory=dict)
     lineups: Mapping[str, Mapping[str, str]] = field(default_factory=dict)  # ET day -> {espn id: my slot}
+    offers: Sequence[trade_offers.Offer] = ()  # Yahoo's pending trade offers seen on snapshots (read-only)
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,7 @@ class _Case:
         self.window_end = self.confirmed + timedelta(hours=float(C(window)))
         self.legs: list[dict[str, Any]] = []
         self.notes: list[str] = []
+        self.response: dict[str, Any] | None = None  # trades: what the partner did with the offer
 
     def leg(self, role: str, player: str, name: str | None, status: str, detail: str, **extra: Any) -> dict[str, Any]:
         row = {"role": role, "player": player, "name": name or player, "status": status, "detail": detail, **extra}
@@ -123,6 +126,7 @@ class _Verifier:
         self.view, self.now = view, now
         self.events = _events(view)
         self.ledger: dict[tuple[str, str], str] = {}
+        self.links: dict[str, trade_offers.Offer] = {}  # trade proposal ref -> the Yahoo offer it became
 
     # ---------------------------------------------------------------- shared helpers
 
@@ -203,6 +207,7 @@ class _Verifier:
         gname = dict(zip(give, gnames, strict=False))
         tname = dict(zip(get, tnames, strict=False))
         mine, partner = self.view.my_team_key, str(c.pay.get("partner"))
+        offer = self.links.get(c.p.ref)
         for tx in self.view.transactions:
             if tx.type != "trade" or tx.status.lower() != RESOLVED or tx.timestamp is None:
                 continue
@@ -227,6 +232,7 @@ class _Verifier:
                 self.ledger[k] = c.p.ref
             for role, p, nm, ev in legs:
                 self._verified_leg(c, role, p, nm, ev)
+            c.response = self._trade_response(c, offer, tx=tx)
             return
         owners = self.view.owners
         landed = (
@@ -235,6 +241,7 @@ class _Verifier:
             and all(owners.get(p) == mine for p in get)
         )
         if landed and not c.prior.get("state") == NOT_EXECUTED:
+            c.response = self._trade_response(c, offer, roster=True)
             for p in give:
                 c.leg(
                     "give",
@@ -257,13 +264,26 @@ class _Verifier:
         where += [
             f"{tname.get(p, p)} still on {self._team(owners.get(p, 'no team'))}" for p in get if owners.get(p) != mine
         ]
-        if self._expired(c):
+        resp = c.response = self._trade_response(c, offer)
+        if resp["response"] in trade_offers.NEGATIVE and resp["source"] != "window":  # decided by the partner
+            who = "the owner reports" if resp["source"] == "owner" else "Yahoo shows"
+            quote = f' (owner: "{resp["reason"][:160]}")' if resp.get("reason") else ""
             c.leg(
                 "trade",
                 ",".join(give + get),
                 None,
                 "contradicted",
-                "no trade transaction after approval; " + "; ".join(where) + " (rejected, withdrawn or vetoed)",
+                f"offer {resp['response']}: {who} it was not accepted; {resp['basis']}{quote}",
+            )
+        elif self._expired(c):
+            c.leg(
+                "trade",
+                ",".join(give + get),
+                None,
+                "contradicted",
+                "no trade transaction after approval; "
+                + "; ".join(where)
+                + f" (rejected, withdrawn or vetoed); {resp['response']}: {resp['basis']}",
             )
         else:
             c.leg(
@@ -273,6 +293,52 @@ class _Verifier:
                 PENDING,
                 "no completed trade seen yet (league vote / review window still open)",
             )
+
+    def _trade_response(
+        self, c: _Case, offer: trade_offers.Offer | None, tx: Transaction | None = None, roster: bool = False
+    ) -> dict[str, Any]:
+        """What the partner did with the offer. A completed Yahoo trade (or the players landing) wins; then the
+        owner's recorded response; then Yahoo's pending list (an offer that left it with no trade was declined or
+        withdrawn); then the verify.trade_window_hours deadline (`ignored`)."""
+        owner = (c.p.execution or {}).get("owner_response") or {}
+        hours = float(C("verify.trade_window_hours"))
+        source, at, quote = "yahoo_pending", None, None
+        if tx is not None:
+            response, at, source = "accepted", tx.timestamp, "yahoo_transaction"
+            basis = f"Yahoo completed it as {_short(tx.key)}"
+        elif roster:
+            response, source, basis = "accepted", "roster", "the players are on the new rosters"
+        elif owner:
+            response, source, quote = owner["response"], "owner", owner.get("reason")
+            at, basis = _dt(owner.get("response_at")), "reported by the owner"
+            if response == "accepted" and self._expired(c):
+                basis = f"the owner says accepted, but Yahoo shows no completed trade within {hours:g}h"
+        elif offer is not None:
+            response, at, basis = trade_offers.offer_response(offer, self.now, None)
+            source = "yahoo_status" if trade_offers.status_response(offer.status) else "yahoo_pending"
+            if response == trade_offers.PENDING and self._expired(c):
+                response, source = "ignored", "window"
+                basis = f"still pending in Yahoo more than {hours:g}h after the owner sent it"
+        elif self._expired(c):
+            response, source = "ignored", "window"
+            basis = f"never seen in Yahoo's pending list and no completed trade within {hours:g}h"
+        else:
+            response, basis = trade_offers.PENDING, "not seen in Yahoo's pending list yet"
+        sent = c.confirmed
+        out = {
+            "response": response,
+            "source": source,
+            "basis": basis,
+            "partner": str(c.pay.get("partner")),
+            "partner_name": self._team(str(c.pay.get("partner"))),
+            "sent_at": _iso(sent),
+            "response_at": _iso(at),
+            "hours_to_response": round(max((at - sent).total_seconds(), 0.0) / 3600, 1) if at else None,
+            "offer": offer.tx_key if offer else None,
+            "offer_status": offer.status if offer else None,
+            "reason": quote,
+        }
+        return {k: v for k, v in out.items() if v is not None}
 
     def il_activation(self, c: _Case) -> None:
         act, name = str(c.pay.get("activate")), c.pay.get("activate_name")
@@ -343,7 +409,7 @@ class _Verifier:
                 credited["out" if lg["role"] in ("drop", "give") else "in"].append(lg["player"])
         credited_legs = [lg for lg in c.legs if lg["status"] == VERIFIED and lg.get("at")] if state == VERIFIED else []
         days = [_et_day(_dt(lg["at"])) if lg["via"] == "transaction" else lg["at"] for lg in credited_legs]
-        return {
+        out = {
             "state": state,
             "reason": reason,
             "checked_at": _iso(self.now),
@@ -354,6 +420,9 @@ class _Verifier:
             "credited": credited,
             "effective_et": min(days, default=None),  # first ET day the move shows in Yahoo (grading starts here)
         }
+        if c.response:
+            out["response"] = c.response
+        return out
 
 
 def reconcile(
@@ -364,6 +433,7 @@ def reconcile(
     now = now or datetime.now(UTC)
     v = _Verifier(view, now)
     cases = []
+    claimed_offers: set[str] = set()
     out: dict[str, dict[str, Any]] = {}
     for p in sorted(proposals, key=lambda x: (_dt(x.decided_at) or _dt(x.created_at), x.id)):
         if p.status not in ("done", "not_executed") or props.effective_kind(p.kind, p.payload) not in VERIFIABLE_KINDS:
@@ -373,9 +443,20 @@ def reconcile(
             for lg in prior.get("legs") or []:
                 if lg.get("leg_key"):
                     v.ledger[(lg["leg_key"][0], lg["leg_key"][1])] = p.ref
+            if offer_key := (prior.get("response") or {}).get("offer"):
+                claimed_offers.add(offer_key)
             out[p.ref] = prior
             continue
         cases.append(_Case(p, prior))
+    v.links = trade_offers.link(
+        [
+            (c.p.ref, str(c.pay.get("partner")), c.pay.get("give") or [], c.pay.get("get") or [], c.approved)
+            for c in cases
+            if c.kind == "trade"
+        ],
+        view.offers,
+        claimed_offers,
+    )
     for c in cases:
         {"trade": v.trade, "il_activation": v.il_activation}.get(c.kind, v.acquire)(c)
     for c in cases:  # an IL activation needs its drop to free the spot, so it claims the drop transaction first
@@ -409,7 +490,11 @@ def verify_all(conn: sqlite3.Connection, view: YahooView, now: datetime | None =
         if ver is None:
             continue
         old = (p.execution or {}).get("verification") or {}
-        if ver is not old and (ver.get("state") != old.get("state") or ver.get("legs") != old.get("legs")):
+        if ver is not old and (
+            ver.get("state") != old.get("state")
+            or ver.get("legs") != old.get("legs")
+            or ver.get("response") != old.get("response")
+        ):
             p = props.record_verification(conn, p.id, ver)
         rows.append({"ref": p.ref, "kind": p.kind, "title": p.title, "status": p.status, **brief(ver)})
     return rows
@@ -421,4 +506,6 @@ def brief(ver: Mapping[str, Any] | None) -> dict[str, Any]:
     out = {"verification": ver.get("state"), "reason": ver.get("reason")}
     if ver.get("notes"):
         out["notes"] = ver["notes"]
+    if ver.get("response"):
+        out["trade_response"] = ver["response"].get("response")
     return out

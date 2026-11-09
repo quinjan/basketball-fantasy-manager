@@ -161,6 +161,15 @@ REGISTRY_LIST: list[PolicyParam] = [
     ),
     # opponent
     PolicyParam(
+        "policy.opponent_shrink",
+        False,
+        "bool",
+        "Shrink the opponent's projected rest-of-week counting stats in the official weekly odds by the realized/"
+        "projected ratio of past opponents (odds_reliability.opponent_ratio; factors within 0.6-1.0, only once "
+        "policy.min_weeks weeks are graded). Off = official odds use the projection as is.",
+        "odds reliability: leave-one-week-out Brier with vs without the opponent shrink (issue #15)",
+    ),
+    PolicyParam(
         "policy.opponent_adds",
         "manager_model",
         "choice",

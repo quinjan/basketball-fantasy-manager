@@ -531,6 +531,25 @@ _ALL = [
         "heuristic",
     ),
     Constant(
+        "trade.max_ht_value_premium",
+        0.15,
+        "fraction of the value we send",
+        "Max Hashtag ROS value premium to us (value received minus sent, over sent) a trade proposal may carry. "
+        "create_proposal(kind=trade) refuses a larger premium unless an override_reason is given.",
+        "Offers FBM itself judged one-sided were drafted by hand (P-37 was about +39% our way and was declined); "
+        "HT's own Trade Finder calls up to 10% my way fair.",
+        "heuristic",
+    ),
+    Constant(
+        "trade.min_their_cats_delta",
+        0.0,
+        "expected cats per week",
+        "Min change in the partner's expected categories won per week, judged by their own build, for a trade "
+        "proposal to pass the realism gate; at or below this it is refused unless an override_reason is given.",
+        "A manager who loses categories by their own build has no reason to say yes.",
+        "heuristic",
+    ),
+    Constant(
         "trade.wire_target_bonus",
         0.5,
         "weight multiplier",
@@ -1222,6 +1241,25 @@ _ALL = [
         "How long after the owner confirms a trade offer the trade may still complete before an unseen trade is "
         "judged not executed (rejected, withdrawn or vetoed).",
         "Acceptance plus the ~2-day league review/veto period, with a day of slack.",
+        "heuristic",
+    ),
+    Constant(
+        "trade_offers.min_outcomes",
+        5,
+        "outcomes",
+        "Recorded responses (accepted, declined, ignored, ...) a partner needs before its acceptance rate may weight "
+        "partner order; below it the counts are shown but never weighted.",
+        "A handful of offers is noise: one decline must not blacklist a manager (the first three sent offers all "
+        "failed for different reasons).",
+        "heuristic",
+    ),
+    Constant(
+        "trade_offers.weight_floor",
+        0.5,
+        "fraction",
+        "Partner-order weight of a partner who never accepts, once trade_offers.min_outcomes is met: weight = floor + "
+        "(1 - floor) x acceptance rate, multiplying that partner's complementary fit.",
+        "Poor acceptance halves a partner's fit rather than removing the partner: fit still matters.",
         "heuristic",
     ),
     # policy (ws-policy: add new policy.* meta constants inside this section only; the policy values themselves

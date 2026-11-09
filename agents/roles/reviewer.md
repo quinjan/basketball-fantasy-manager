@@ -25,7 +25,13 @@ run in a fresh context, ideally on a different model from the GM: your value is 
    - Games remaining this week, injury risk, weekly add limit, waiver priority cost, strategy consistency.
    - Is there a **stronger alternative** (another free agent, another drop candidate, doing nothing)? Name it with
      its numbers.
-   - For trades: does it help us more than them under both teams' builds (`league_profile`)?
+   - For trades: does it help us more than them under both teams' builds (`league_profile`)? **Check partner
+     realism** (`get_proposal` → `evidence.trade_realism`; re-derive with `evaluate_trade` → `realism`): the
+     partner's ranking value delta vs `-trade.max_their_value_loss`, the HT ROS value premium to us vs
+     `trade.max_ht_value_premium` (HT mode; a large positive % means HT's market sees it lopsided our way), and the
+     partner's expected cats by their build vs `trade.min_their_cats_delta` (`constants`). A `realism_override`
+     means the GM sent it despite a failing rule: judge its stated reason, and DISAGREE (or SPLIT) when the partner
+     would plainly decline. A passing proposal can still be unrealistic: say so if the numbers hide it.
    - For strategy proposals: run `punt_scenarios` yourself — does the proposed build beat the approved one by the
      switch margin, and are its swaps and lens conflicts consistent with the proposal's reasoning?
    - For **policy** proposals (payload `{"changes": {key: value}, "evidence": ...}`): re-run `policy_suggestions`

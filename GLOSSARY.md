@@ -50,6 +50,18 @@ A move that spends a scarce or hard-to-undo resource (a valuable drop, rolling w
 policy change), so it needs independent review and the owner's verbatim decision before the owner acts.
 _Avoid_: request, ticket, suggestion
 
+**Partner-realism gate**:
+The screen a trade proposal must pass before it is drafted: the partner's ranking value loss, the Hashtag value
+premium to us and the partner's expected categories by their own build, each against a code constant. A failing trade
+is refused unless the GM records an override reason, which is journaled and shown to the reviewer and the owner.
+_Avoid_: acceptance odds (it is a screen, not a probability), policy (it is a code constant, not an owner setting)
+
+**Opponent shrink**:
+The policy-gated correction (`policy.opponent_shrink`, default off) that scales an opponent's projected rest-of-week
+counting stats by what past opponents realized against the same kind of projection (`odds_reliability.opponent_ratio`).
+It needs `policy.min_weeks` graded weeks of forecasts that store their banked stats; pre-fix forecasts never feed it.
+_Avoid_: rescale, haircut
+
 **Recommendation**:
 A move that is cheap to undo (lineup, IL slot moves, a stream whose drop is below the policy drop-cost threshold),
 given with exact steps for the owner to act on without review or approval.

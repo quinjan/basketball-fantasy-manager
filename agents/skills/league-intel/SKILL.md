@@ -19,7 +19,10 @@ History syncs on every `snapshot` (and `refresh_data`) in a live Yahoo league. O
    adds, streaming propensity, trades completed / proposed, last activity, strong / weak cats and likely punts,
    the wire lean (`wire_targets` / `wire_sheds`: categories their recent adds and drops chase or shed, from
    `wire_cat_lean`; empty until enough adds are scored), `trade_punts` (what trade tools assume they don't value),
-   `complementary_fit_with_me`, and the last few `recent_moves`. Lead with the `model` block: it is an empirical-Bayes
+   `complementary_fit_with_me`, and the last few `recent_moves`. `trade_offers` (live league) = the offers WE sent this
+   manager and what came of them: counts, `median_response_hours`, the owner's quoted `owner_reasons`; Yahoo's
+   completed-trade feed never shows declined offers, so `trades_proposed` undercounts. Below `min_outcomes`
+   responses say the sample is too small. Lead with the `model` block: it is an empirical-Bayes
    estimate (observed rates shrunk toward the league-wide rate, recency-weighted). For each of adds/week, claim
    participation and stream fraction give prior vs observed vs posterior, and say how much is evidence
    (`evidence_share`, `ess` weeks) versus prior. A manager with 0 moves is *not* "inactive" until enough weeks have
@@ -36,7 +39,9 @@ History syncs on every `snapshot` (and `refresh_data`) in a live Yahoo league. O
 ## Which managers are the best trade partners?
 1. `league_intel()` → `best_trade_partners` (ordered by activity group, then complementary fit; see `partner_order`).
 2. For concrete packages: `find_trades(partner=...)` for the top 1–3; each trade carries `partner_intel`
-   (including `wire_targets` and `trade_punts_assumed`). Offers that feed what they chase are easier to sell.
+   (including `wire_targets` and `trade_punts_assumed`, and `trade_offers`: offers we sent them, accepted/declined,
+   median response hours — counts only, no weighting, until `trade_offers.min_outcomes` responses). Offers that feed
+   what they chase are easier to sell.
 3. Prefer active managers with high fit; flag inactive ones (offers may sit unanswered).
 
 ## Scout my next opponent

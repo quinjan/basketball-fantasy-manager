@@ -16,6 +16,10 @@ Run as the `gm` agent.
    week, regret by kind (replay on real box scores + Yahoo FINAL results), `odds_reliability` and the `per_view`
    table (each decision kind re-chosen under every HT view: categories won and ROS value per view, `best_view`).
    In the Yahoo league also read `scoreboard` (final category results) and `standings` (record, playoff race).
+   `trade_offers` in the retro data: trade acceptance overall, by partner and by HT value-premium band (how big a
+   premium we asked), with this week's offers — report the counts and any owner-quoted reasons; below
+   `min_outcomes` responses treat rates as anecdotes (no new rule from three offers). Ask the owner about offers
+   still `pending`/`ignored` whose real outcome they know and record it with `record_trade_response`.
    The retro reads a lot: hand the per-decision replay detail (`section=decisions`, `decisions_log`) to a sub-agent
    (explore/`gpt-6-luna` to gather; `claude-opus-5.5` high to diagnose why decisions lost) and work from its digest
    (GM role, section 1b).
@@ -27,8 +31,10 @@ Run as the `gm` agent.
      category_weights). Name the decisions with the biggest regret and why.
    - `per_view` table: which HT view would have chosen better for each kind vs the view in force.
    - `odds_reliability` (and `prediction_calibration` for legacy pre-HT forecasts): Brier vs coin flip,
-     reliability buckets, expected vs actual categories. If the official odds are off (e.g. our 80% calls win 60%),
-     say so and hedge close calls.
+     reliability buckets, `calibration` by confidence band, expected vs actual categories. If the official odds are off
+     (e.g. our 80% calls win 60%), say so and hedge close calls. Read `opponent_ratio` too: realized/projected totals
+     for us vs opponents (post-#13 forecasts only); `policy_suggestions` proposes `policy.opponent_shrink` only once
+     ≥ `policy.min_weeks` such weeks show it lowers the Brier score.
    - `policy_suggestions`: changes that would have won more categories on replay (≥ `policy.min_weeks` graded weeks,
      each within its max step). For each worthwhile one, draft a `policy` proposal with the payload it ships
      (`create_proposal(kind="policy", payload_json=..., evidence_json=...)`) → `reviewer` agent → owner approval

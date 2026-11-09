@@ -129,6 +129,22 @@ def test_planner_check_quiet_when_ht_gap_is_the_rest_of_the_week(odds_for):
     assert w["planner_check"]["ok"] and w["planner_check"]["flags"] == []
 
 
+def test_opponent_shrink_off_by_default_and_banked_untouched_when_on(odds_for, monkeypatch):
+    base = odds_for((12, 10), (800.0, 780.0))
+    assert base["shrink"]["factors"] == {} and base["means"] == base["means_raw"]
+    from fbm.gm import odds_reliability
+
+    monkeypatch.setattr(
+        odds_reliability, "live_shrink", lambda *a, **k: {"enabled": True, "n_weeks": 4, "factors": {"pts": 0.8}}
+    )
+    w = odds_for((12, 10), (800.0, 780.0))
+    rest = base["means"]["pts"][1] - OPP_BANKED["pts"]
+    assert w["means"]["pts"][1] == pytest.approx(OPP_BANKED["pts"] + 0.8 * rest)
+    assert w["means"]["pts"][0] == base["means"]["pts"][0]  # our side is never shrunk
+    assert w["means_raw"]["pts"] == base["means"]["pts"]  # the unshrunk projection is kept for the ratios
+    assert w["means"]["reb"] == base["means"]["reb"]  # no factor, no change
+
+
 def test_planner_check_function_pure():
     gap = {"pts": (800.0, 780.0)}
     rest = {"pts": (60.0, 60.0)}

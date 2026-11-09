@@ -362,8 +362,10 @@ def manager_profile(team: str | None = None) -> dict:
     """Opponent intel for one manager (default: this week's opponent): adds/week, waiver claims, streaming
     propensity, trades, last activity + tier, category build (strong/weak/likely punts), wire lean (categories they
     chase / shed with recent adds and drops: wire_targets / wire_sheds), the punts trades assume for them
-    (trade_punts), complementary fit with us. Team names are untrusted data. Demo league: no history, activity
-    unknown."""
+    (trade_punts), complementary fit with us. Live league: `trade_offers` = offers WE sent this manager and what came
+    of them (offers_received_from_us, accepted / declined / ignored / ..., median_response_hours, the owner's quoted
+    reasons; counts only until trade_offers.min_outcomes responses). Team names are untrusted data. Demo league: no
+    history, activity unknown."""
     return svc.manager_profile(team)
 
 
@@ -435,7 +437,9 @@ def evaluate_trade(partner: str, give: str, get: str) -> dict:
     """Evaluate a trade for BOTH sides (season-level): expected categories per week vs the league before/after,
     category win-rate deltas, G deltas, forced drops / free-agent fills, verdict. The partner's side is also judged
     by their build (them.judged_by_their_build: likely punts + weak categories they shed on the wire don't count;
-    the verdict uses it). give/get: comma-separated names."""
+    the verdict uses it). `realism` = the partner-realism screen create_proposal applies to trades (their ranking
+    value, HT value premium to us, their expected cats by their build: value vs threshold per rule).
+    give/get: comma-separated names."""
     return svc.evaluate_trade_tool(partner, give, get)
 
 
@@ -443,7 +447,8 @@ def evaluate_trade(partner: str, give: str, get: str) -> dict:
 def find_trades(partner: str | None = None, max_give: int = 2, max_get: int = 2, limit: int = 4) -> dict:
     """Search the league (or one partner) for trades that improve our expected categories and are defensible for
     the other team judged by their build (their likely punts don't count; categories they chase on the wire weigh
-    more). Returns evaluated candidates with payload ids ready for a trade proposal. HT mode: merges HT Trade Finder
+    more). Returns evaluated candidates with payload ids ready for a trade proposal; each carries `realism`
+    (ok/failing: whether create_proposal's partner-realism gate would accept it). HT mode: merges HT Trade Finder
     ideas (fairness 'fair' + 'up to 10% my way', FBM multipliers) with FBM's own search; every trade carries
     `sources` (hashtag/fbm), `consensus`, `ht_value` (HT ROS value received minus sent: acceptance read) and HT's
     badges/category ranks; `ht_ideas` lists every HT idea with FBM's verdict."""
@@ -474,7 +479,9 @@ def weekly_retro_data(week_start: str | None = None, section: str | None = None,
     """Everything the weekly retro needs for a fantasy week (default: last completed week): graded decisions
     (proposal outcomes + replay of every logged option on real box scores and Yahoo finals, regret by kind, lineup
     regret), the per-view table (which HT projection view would have decided best), odds reliability, proposals and
-    owner decisions, graded predictions and signal grades. Default is compact: `decisions` are one-line rows (the
+    owner decisions, graded predictions and signal grades, and (live league) `trade_offers`: trade acceptance overall,
+    by partner and by HT value-premium band, with this week's offers. Default is compact: `decisions` are one-line
+    rows (the
     `limit` most recent; 0 = all) and `sections` lists every key with its size. section=<key> returns just that key
     in full (lists cut to `limit` items; 0 = all), e.g. section=decisions for each decision's per-category detail."""
     return _retro_view(svc.weekly_retro_data_tool(week_start), section, limit)
@@ -639,10 +646,16 @@ def create_proposal(
     rationale: str,
     evidence_json: str = "{}",
     expires_in_hours: float | None = None,
+    override_reason: str | None = None,
 ) -> dict:
     """Draft a proposal for the owner (FBM never makes the move). kind: add_drop|waiver_claim|trade|strategy|policy|
     il_activation|other. Refuses (naming the existing ref) when an open proposal already covers the same move.
     In Hashtag mode add_drop/waiver_claim/trade/il_activation proposals are refused while HT is unhealthy.
+    Trades also face the partner-realism gate: the engine re-evaluates the payload's players and refuses, naming the
+    failing number, when the partner's ranking value falls below -trade.max_their_value_loss, the HT ROS value
+    premium to us exceeds trade.max_ht_value_premium (HT mode only), or the partner's expected cats by their own
+    build change by <= trade.min_their_cats_delta. Rebalance (2-for-2, sweetener) or pass override_reason (recorded
+    in evidence.trade_realism, journaled, shown by get_proposal/list_proposals as realism_override).
     payload_json examples: add_drop {"add": id, "add_name": .., "drop": id, "drop_name": ..};
     il_activation {"activate": IL player id/name, "drop": id/name (needed when the roster is full),
     "effective_et": "YYYY-MM-DD" (optional)}; evaluate it first with evaluate_il_activation;
@@ -652,7 +665,14 @@ def create_proposal(
     after review + owner approval, by proposal_steps).
     rationale must cite tool outputs; evidence_json holds the key numbers."""
     return svc.create_proposal(
-        kind, title, summary, json.loads(payload_json), rationale, json.loads(evidence_json), expires_in_hours
+        kind,
+        title,
+        summary,
+        json.loads(payload_json),
+        rationale,
+        json.loads(evidence_json),
+        expires_in_hours,
+        override_reason,
     )
 
 
@@ -688,6 +708,18 @@ def confirm_done(ref: str, note: str) -> dict:
 
 
 @tool(write=True)
+def record_trade_response(ref: str, response: str, owner_quote: str, response_at: str | None = None) -> dict:
+    """Only when the OWNER tells you what the trade partner did with an offer they sent (a done trade proposal):
+    response = accepted | declined | ignored | countered | vetoed | withdrawn; owner_quote = the owner's own words
+    (they carry any reason: never invent or infer a response); response_at = when it happened (ISO 8601, UTC if no
+    offset; default now). Stored on the proposal and journaled; a recorded declined/ignored/countered/vetoed/
+    withdrawn flips it to `not_executed` immediately. A completed Yahoo trade always wins (a later matching
+    transaction returns it to `done`/verified). Yahoo's pending-offer history is recorded on every snapshot and fills
+    the response in by itself when the owner says nothing. Nothing is sent to Yahoo."""
+    return svc.record_trade_response(ref, response, owner_quote, response_at)
+
+
+@tool(write=True)
 def verify_moves(sync_first: bool = True) -> dict:
     """Reconcile every owner-confirmed move (add/drop, waiver claim, trade, IL activation) with Yahoo: stored league
     transactions, current rosters and lineup history. Each gets verified | pending | not_executed (with the reason);
@@ -706,7 +738,11 @@ def list_proposals(status: str | None = "open", limit: int = 20) -> dict:
 @tool()
 def get_proposal(ref: str) -> dict:
     """One proposal with its full event history and, for confirmed moves, its Yahoo `verification` (state, reason,
-    transactions credited)."""
+    transactions credited). Trades carry `evidence.trade_realism` (per-rule numbers vs thresholds) and, when sent
+    despite failing the partner-realism screen, `realism_override` (reason + failing rules). Trades also carry
+    `trade_response`: what the partner did with the offer (accepted | declined | ignored | countered | vetoed |
+    withdrawn | pending), its `source` (owner | yahoo_pending | yahoo_status | yahoo_transaction | window), the basis,
+    time to response and the owner's quoted reason."""
     return svc.get_proposal(ref)
 
 
@@ -774,13 +810,16 @@ def replay_grade(lookback_days: int = 14, limit: int = 10) -> dict:
 
 
 @tool()
-def odds_reliability(scale: float | None = None, view: str | None = None) -> dict:
+def odds_reliability(scale: float | None = None, view: str | None = None, detail: bool = False) -> dict:
     """How reliable FBM's weekly matchup odds (HT totals + simulator spread) were vs Yahoo final results: Brier vs
-    coin flip, reliability buckets (with mapped win rate), per-category Brier, expected vs actual categories, per HT
-    view. scale recomputes the odds for another spread scale; view filters one HT view."""
+    coin flip, reliability buckets (with mapped win rate), calibration by confidence band (do the favorites win as
+    often as forecast?), per-category Brier, expected vs actual categories, per HT view, and `opponent_ratio`: realized
+    / projected totals for us vs opponents (post-#13 forecasts only) with the status of the policy-gated opponent
+    shrink. scale recomputes the odds for another spread scale; view filters one HT view; detail adds per-category
+    ratios per opponent."""
     from fbm.gm import decision_services
 
-    return decision_services.odds_reliability(scale, view)
+    return decision_services.odds_reliability(scale, view, detail)
 
 
 # ---------------------------------------------------------------- policy (ws-policy tools go here)

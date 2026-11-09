@@ -866,9 +866,13 @@ def _ht_week_odds(league: LeagueState, opp: FantasyTeam, n: int) -> dict[str, An
     """Official weekly odds (contract B): means = banked stats (Yahoo scoreboard) + the simulator's expected stats for
     the games still to play at HT's per-game means (view policy.view.weekly_odds; injuries respected), sd of
     (me - opp) per category from the same simulation (banked stats a fixed offset), scaled by
-    policy.odds_spread_scale. HT's H2H Planner AFTER totals are NOT the means (they count days already played, issue
-    #13): they only feed `planner_check`, a guard that flags an AFTER - BEFORE above the simulated rest of the week."""
+    policy.odds_spread_scale. Opponent shrink (issue #15, `policy.opponent_shrink`, default off): when on and enough
+    weeks are graded, the opponent's projected rest of the week is scaled by past realized/projected ratios
+    (odds_reliability.opponent_ratio). HT's H2H Planner AFTER totals are NOT the means (they count days already
+    played, issue #13): they only feed `planner_check`, a guard that flags an AFTER - BEFORE above the simulated rest
+    of the week."""
     from fbm.analytics import ht_odds
+    from fbm.gm import odds_reliability
     from fbm.hashtag import store as ht_store
 
     conn = _conn()
@@ -893,6 +897,10 @@ def _ht_week_odds(league: LeagueState, opp: FantasyTeam, n: int) -> dict[str, An
     cats = list(league.categories)
     injury = _ht_injury_adjustment(league, opp, day0, models, [k for k in cats if k.key in ht_means])
     means = ht_odds.means_from_totals(totals["me"], totals["opp"], cats)
+    means_raw = means
+    shrink = odds_reliability.live_shrink(conn, params, view)
+    if shrink["factors"]:
+        means = ht_odds.shrink_opponent_means(means, ow.banked, shrink["factors"], cats)
     sd = ht_odds.spread(totals["me"], totals["opp"], cats)
     scale = float(params["policy.odds_spread_scale"])
     p_win = ht_odds.odds_from_totals(means, sd, scale, league.categories)
@@ -902,6 +910,8 @@ def _ht_week_odds(league: LeagueState, opp: FantasyTeam, n: int) -> dict[str, An
         "p_win": p_win,
         "summary": ht_odds.summary(p_win),
         "means": means,
+        "means_raw": means_raw,
+        "shrink": shrink,
         "ht_means": ht_means,
         "ht_gap": gap,
         "sim_rest": rest["rest"],
@@ -1183,21 +1193,18 @@ def _simulate_matchup_ht(
     if record:
         from fbm.analytics import ht_odds
 
+        extra = {
+            "ht_grid_means": {k: {"me": m[0], "opp": m[1]} for k, m in w["ht_means"].items()},
+            "injury_adjustment": {"me": w["injury"]["me"], "opp": w["injury"]["opp"]},
+            "means_source": "banked + simulated rest (issue #13)",
+            "ht_planner_check": w["planner_check"],
+            "banked": {"me": dict(mw.banked), "opp": dict(ow.banked)},  # lets odds_reliability isolate the rest
+        }
+        if w["shrink"]["factors"]:  # `means` are shrunk: keep the projection the ratios must be measured against
+            extra["means_raw"] = {k: {"me": m[0], "opp": m[1]} for k, m in w["means_raw"].items()}
+            extra["opp_shrink"] = w["shrink"]["factors"]
         payload = ht_odds.payload(
-            p_win,
-            means,
-            w["sd"],
-            w["scale"],
-            w["view"],
-            league.fetched_at or None,
-            plan_me,
-            plan_opp,
-            extra={
-                "ht_grid_means": {k: {"me": m[0], "opp": m[1]} for k, m in w["ht_means"].items()},
-                "injury_adjustment": {"me": w["injury"]["me"], "opp": w["injury"]["opp"]},
-                "means_source": "banked + simulated rest (issue #13)",
-                "ht_planner_check": w["planner_check"],
-            },
+            p_win, means, w["sd"], w["scale"], w["view"], league.fetched_at or None, plan_me, plan_opp, extra=extra
         )
         prediction_id = _ht.record_ht_prediction(
             _conn(), payload, (w["day0"], w["we"]), league.my_team_key, opp.team_key
@@ -1231,6 +1238,13 @@ def _simulate_matchup_ht(
         "ht_view": w["view"],
         "ht_pulled_at": w["ht"]["pulled_at"],
         "ht_planner_check": w["planner_check"],
+        "opponent_shrink": {
+            "enabled": w["shrink"]["enabled"],
+            "graded_weeks": w["shrink"]["n_weeks"],
+            "factors": w["shrink"]["factors"] or None,
+            "note": "policy.opponent_shrink (default off): opponent rest-of-week scaled by past realized/projected "
+            "ratios once policy.min_weeks weeks are graded; see odds_reliability.opponent_ratio.",
+        },
         "spread_scale": w["scale"],
         "injured_excluded": w["injury"]["players"],
         "banked_this_week": (
@@ -2020,6 +2034,7 @@ def create_proposal(
     rationale: str,
     evidence: dict[str, Any] | None = None,
     expires_in_hours: float | None = None,
+    override_reason: str | None = None,
 ) -> dict[str, Any]:
     settings = load_settings()
     if kind in ("add_drop", "waiver_claim", "trade", "il_activation"):
@@ -2034,6 +2049,8 @@ def create_proposal(
         for pid in incoming:
             if pid:
                 _require_nba_team(c, str(pid))
+    if kind == "trade":
+        evidence = _trade_realism_gate(payload, evidence, override_reason)
     if kind == "policy":
         from fbm.gm import policy as _policy
 
@@ -2045,6 +2062,13 @@ def create_proposal(
         _conn(), kind, title, summary, payload, rationale, evidence, expires_in_hours or settings.default_expiry_hours
     )
     memory.journal_append("proposal", f"{p.ref} {title}", f"{summary}\n\nRationale: {rationale}")
+    override = (p.evidence or {}).get("trade_realism", {}).get("override_reason") if kind == "trade" else None
+    if override:
+        failing = [r for r in p.evidence["trade_realism"]["rules"] if not r["ok"]]
+        detail = f"Override reason: {override}\nFailing rules: {json.dumps(failing)}"
+        props.add_event(_conn(), p.id, "realism_override", detail)
+        memory.journal_append("decision", f"{p.ref} trade realism override", detail)
+        p = props.get(_conn(), p.id)
     return p.as_dict()
 
 
@@ -2079,7 +2103,7 @@ def _yahoo_view(league: LeagueState):
     """What Yahoo shows right now (rosters, stored transactions, my daily lineups) for the move verifier."""
     from datetime import date as _date
 
-    from fbm.gm import verification
+    from fbm.gm import trade_offers, verification
     from fbm.league import tx_history
     from fbm.yahoo import lineups
 
@@ -2114,6 +2138,7 @@ def _yahoo_view(league: LeagueState):
         resolve=resolve,
         team_names={t.team_key: t.name for t in league.teams},
         lineups=lineups.daily_lineups(conn, me, _date(2000, 1, 1), _date(2100, 1, 1)) if live else {},
+        offers=trade_offers.load_offers(conn) if live else (),
     )
 
 
@@ -2127,11 +2152,26 @@ def verify_moves(sync_first: bool = False) -> dict[str, Any]:
             sync_transactions_tool(write_memory=False)
         except GMError:
             pass  # verify on what is already stored
-    rows = verification.verify_all(_conn(), _yahoo_view(active_league()))
+    conn = _conn()
+    before = _trade_responses(conn)
+    rows = verification.verify_all(conn, _yahoo_view(active_league()))
+    for ref, now_resp in _trade_responses(conn).items():
+        if now_resp and now_resp != before.get(ref):
+            memory.journal_append("system", f"{ref} trade offer {now_resp['response']}", now_resp.get("basis", ""))
     counts: dict[str, int] = {}
     for r in rows:
         counts[r["verification"]] = counts.get(r["verification"], 0) + 1
     return {"counts": counts, "moves": rows}
+
+
+def _trade_responses(conn) -> dict[str, dict[str, Any] | None]:
+    """{ref: trade_response (or None)} for every owner-confirmed trade, to journal what changed."""
+    return {
+        p.ref: p.trade_response
+        for s in ("done", "not_executed")
+        for p in props.list_proposals(conn, s, 1000)
+        if p.kind == "trade"
+    }
 
 
 _VERIFY_WARNING = {
@@ -2164,6 +2204,25 @@ def confirm_done(ref: str, note: str) -> dict[str, Any]:
         if ver and ver["state"] in _VERIFY_WARNING:
             out["verification_warning"] = f"{_VERIFY_WARNING[ver['state']]} ({ver['reason']})"
     except Exception as err:  # the owner's confirmation stands even if verification cannot run
+        out["verification_warning"] = f"verification could not run: {type(err).__name__}: {err}"
+    return out
+
+
+def record_trade_response(ref: str, response: str, owner_quote: str, response_at: str | None = None) -> dict[str, Any]:
+    """The owner tells FBM what the trade partner did with a sent offer. Stored with the owner's own words, journaled,
+    and applied by the next verification: a declined/ignored/countered/vetoed/withdrawn offer flips to not_executed
+    now; a completed Yahoo trade still wins. Nothing here touches Yahoo."""
+    conn = _conn()
+    at = None
+    if response_at:
+        at = datetime.fromisoformat(response_at)
+    p = props.record_trade_response(conn, ref, response, owner_quote, at)
+    memory.journal_append("owner", f"{p.ref} trade offer {response.strip().lower()} (owner)", f'Owner: "{owner_quote}"')
+    out = p.as_dict()
+    try:
+        verify_moves(sync_first=True)
+        out = props.get(conn, p.id).as_dict()
+    except Exception as err:  # the owner's word is stored even if verification cannot run
         out["verification_warning"] = f"verification could not run: {type(err).__name__}: {err}"
     return out
 
@@ -2502,21 +2561,90 @@ def _trade_dict(ev, c: AnalyticsContext) -> dict[str, Any]:
     }
 
 
-@_ht.gated
-def evaluate_trade_tool(partner: str, give: str, get: str, n: int = 1500, trigger: str | None = None) -> dict[str, Any]:
+def _evaluate_trade_ev(league: LeagueState, team: FantasyTeam, give_ids: list[str], get_ids: list[str], n: int = 1500):
+    """The season-level TradeEval for explicit player ids, the partner judged by their build."""
     from fbm.analytics.trades import evaluate_trade
 
+    sim, fa = _league_sim(n)
+    profile = _manager_profiles(league, {team.team_key: dict(sim.profile(team.team_key)[0])}, labels=False)
+    build = _partner_build(profile.get(team.team_key))
+    return evaluate_trade(sim, league.my_team_key, team.team_key, give_ids, get_ids, fa, _strategy_punts(None), build)
+
+
+def _ht_ros_total(ros: pd.DataFrame, ids: list[str]) -> float:
+    """HT ROS total value of `ids`, unweighted; each player floored at 0 (a below-replacement throw-in is a drop)."""
+    return sum(max(float(ros.at[i, "total"]), 0.0) for i in ids if i in ros.index and pd.notna(ros.at[i, "total"]))
+
+
+def _trade_realism_for(ev, ros: pd.DataFrame | None = None):
+    """Partner-realism screen (analytics.trades.trade_realism) for an evaluated trade. The HT value premium rule needs
+    Hashtag mode and an HT ROS value for every traded player; otherwise it is skipped with a note."""
+    from fbm.analytics.trades import ht_value_premium, realism_of
+
+    c = ctx()
+    premium, note = None, "Hashtag is not the data layer here (demo/ESPN mode): HT value premium rule skipped"
+    if c.hashtag:
+        from fbm.hashtag import store as ht_store
+
+        ros = ht_store.projections(_conn(), "ROS") if ros is None else ros
+        give, get = list(ev.me.gives), list(ev.me.gets)
+        missing = [i for i in (*give, *get) if i not in ros.index or pd.isna(ros.at[i, "total"])]
+        if missing:
+            note = f"no HT ROS value for {', '.join(_names(c, missing))}: HT value premium rule skipped"
+        else:
+            sent, received = _ht_ros_total(ros, give), _ht_ros_total(ros, get)
+            premium = ht_value_premium(sent, received)
+            note = f"HT ROS value sent {sent:.2f}, received {received:.2f}"
+    return realism_of(ev, premium, note)
+
+
+def _realism_brief(realism) -> dict[str, Any]:
+    """Compact realism read for candidate lists: would create_proposal accept this trade without an override?"""
+    d = realism.as_dict()
+    return {"ok": d["ok"], "failing": d["failing"]}
+
+
+def _trade_realism_gate(
+    payload: dict[str, Any], evidence: dict[str, Any] | None, override_reason: str | None
+) -> dict[str, Any]:
+    """Refuse a trade payload the partner would not plausibly accept (ranking loss, HT value premium, their-build
+    gain), unless an `override_reason` is given. The numbers are recomputed here from the payload's player ids, never
+    taken from the caller. Returns the proposal evidence with `trade_realism` (and the override, if any) recorded."""
+    league = active_league()
+    if not payload.get("partner"):
+        raise GMError("A trade payload needs `partner` (team key).")
+    team = _team(league, str(payload["partner"]))
+    if team.team_key == league.my_team_key:
+        raise GMError("Partner must be another team.")
+    give = [_resolve_on_team(str(x), league.my_team) for x in payload.get("give") or []]
+    get = [_resolve_on_team(str(x), team) for x in payload.get("get") or []]
+    if not give or not get:
+        raise GMError("A trade payload needs at least one player in `give` and one in `get`.")
+    try:
+        ev = _evaluate_trade_ev(league, team, give, get)
+    except ValueError as err:
+        raise GMError(f"Cannot evaluate the trade: {err}") from err
+    realism = _trade_realism_for(ev)
+    record: dict[str, Any] = {**realism.as_dict(), "verdict": ev.verdict}
+    reason = (override_reason or "").strip()
+    if not realism.ok:
+        if not reason:
+            raise GMError(realism.refusal())
+        record["override_reason"] = reason
+    return {**(evidence or {}), "trade_realism": record}
+
+
+@_ht.gated
+def evaluate_trade_tool(partner: str, give: str, get: str, n: int = 1500, trigger: str | None = None) -> dict[str, Any]:
     league, c = active_league(), ctx()
     team = _team(league, partner)
     if team.team_key == league.my_team_key:
         raise GMError("Partner must be another team.")
     give_ids = [_resolve_on_team(x, league.my_team) for x in give.split(",") if x.strip()]
     get_ids = [_resolve_on_team(x, team) for x in get.split(",") if x.strip()]
-    sim, fa = _league_sim(n)
-    profile = _manager_profiles(league, {team.team_key: dict(sim.profile(team.team_key)[0])}, labels=False)
-    build = _partner_build(profile.get(team.team_key))
-    ev = evaluate_trade(sim, league.my_team_key, team.team_key, give_ids, get_ids, fa, _strategy_punts(None), build)
+    ev = _evaluate_trade_ev(league, team, give_ids, get_ids, n)
     out = _trade_dict(ev, c)
+    out["realism"] = _trade_realism_for(ev).as_dict()
     out["method"] = (
         "season-level: typical week vs every team, before/after; rosters rebalanced; their side judged by their "
         "build (likely punts + weak categories they shed on the wire don't count; see them.judged_by_their_build)"
@@ -2584,10 +2712,7 @@ def _ht_value_read(ros: pd.DataFrame, c: AnalyticsContext, give: list[str], get:
     """HT ROS total value received minus sent (unweighted, players traded only; each player floored at 0 because a
     below-replacement throw-in is a drop, not value): a market-fairness read."""
 
-    def total(ids: list[str]) -> float:
-        return sum(max(float(ros.at[i, "total"]), 0.0) for i in ids if i in ros.index and pd.notna(ros.at[i, "total"]))
-
-    sent, received = total(give), total(get)
+    sent, received = _ht_ros_total(ros, give), _ht_ros_total(ros, get)
     out: dict[str, Any] = {"sent": _r(sent), "received": _r(received), "received_minus_sent": _r(received - sent)}
     out["pct_of_sent"] = _r((received - sent) / abs(sent) * 100, 1) if sent else None
     missing = [i for i in [*give, *get] if i not in ros.index]
@@ -2622,6 +2747,7 @@ def _find_trades_ht(
     c = ctx()
     part = _team(league, partner) if partner else None
     sim, fa, profiles, builds = _trade_setup(league, n)
+    _rows, offer_stats = _offer_context(league)
     mine = dict(sim.profile(league.my_team_key)[0])
     punts = _strategy_punts(None)
     ros = ht_store.projections(_conn(), "ROS")
@@ -2685,6 +2811,7 @@ def _find_trades_ht(
         d["sources"] = cand["sources"]
         d["consensus"] = len(cand["sources"]) == 2
         d["ht_value"] = _ht_value_read(ros, c, list(ev.me.gives), list(ev.me.gets))
+        d["realism"] = _realism_brief(_trade_realism_for(ev, ros))
         if cand["ht"]:
             d["ht_idea"] = cand["ht"]
             cand["row"].update({
@@ -2696,7 +2823,9 @@ def _find_trades_ht(
             ht_rows.append(cand["row"])
         p = profiles.get(ev.them.team_key)
         if p is not None:
-            d["partner_intel"] = _intel_row(p, complementary_fit(mine, p.cat_win_rate))
+            d["partner_intel"] = _intel_row(
+                p, complementary_fit(mine, p.cat_win_rate), _offers_for(offer_stats, p.team_key)
+            )
         if "fbm" in cand["sources"] or float(d["me"]["expected_cats_delta"]) > 0:
             trades.append(d)
     trades.sort(key=lambda d: (not d["consensus"], -float(d["me"]["expected_cats_delta"])))
@@ -2734,6 +2863,7 @@ def find_trades_tool(
         return _find_trades_ht(league, partner, max_give, max_get, limit, n)
     partners = [_team(league, partner).team_key] if partner else None
     sim, fa, profiles, builds = _trade_setup(league, n)
+    _rows, offer_stats = _offer_context(league)
     results = find_trades(
         sim,
         league.my_team_key,
@@ -2749,10 +2879,14 @@ def find_trades_tool(
     trades = []
     for r in results:
         d = _trade_dict(r, c)
+        d["realism"] = _realism_brief(_trade_realism_for(r))
         p = profiles.get(r.them.team_key)
         if p is not None:
             fit = complementary_fit(mine, p.cat_win_rate)
-            d["partner_intel"] = {**_intel_row(p, fit), "rank_key": partner_rank_key(p, fit)[:1]}
+            d["partner_intel"] = {
+                **_intel_row(p, fit, _offers_for(offer_stats, p.team_key)),
+                "rank_key": partner_rank_key(p, fit)[:1],
+            }
         trades.append(d)
     # stable: keeps the engine's gain order within an activity group; inactive managers last
     trades.sort(key=lambda d: (d.get("partner_intel") or {}).get("rank_key", [2])[0])
@@ -2857,12 +2991,31 @@ def weekly_retro_data_tool(week_start: str | None = None) -> dict[str, Any]:
         names=c.projections["name"].to_dict(),
     )
     data["yahoo_sync"] = sync
+    if _is_yahoo():
+        try:
+            data["trade_offers"] = _trade_offer_retro(start)
+        except Exception as err:  # retro data must still come back if offer history cannot be read
+            data["trade_offers"] = {"error": f"{type(err).__name__}: {err}"}
     for key, fn in (("signal_grades", signal_grades_tool),):
         try:
             data[key] = fn()
         except Exception as err:  # retro data must still come back if one learning input fails
             data[key] = {"error": f"{type(err).__name__}: {err}"}
     return data
+
+
+def _trade_offer_retro(start: date) -> dict[str, Any]:
+    """Trade acceptance for the retro: all offers, by partner and by HT value-premium band, plus this week's."""
+    from datetime import timedelta
+
+    from fbm.gm import trade_offers
+
+    league = active_league()
+    rows, _stats = _offer_context(league)
+    day_start = datetime.combine(start, datetime.min.time(), ET)
+    lo = day_start.astimezone(UTC).isoformat(timespec="seconds")
+    hi = (day_start + timedelta(days=7)).astimezone(UTC).isoformat(timespec="seconds")
+    return trade_offers.retro_summary(rows, lo, hi, {t.team_key: t.name for t in league.teams})
 
 
 # ------------------------------------------------------------------ early signals & projection calibration
@@ -3407,6 +3560,10 @@ def snapshot_tool() -> dict[str, Any]:
     except GMError as err:  # intel history is additive; never fail the snapshot over it
         transactions = {"error": str(err)}
     try:
+        offers_synced = sync_pending_offers_tool()
+    except Exception as err:  # offer history is additive; never fail the snapshot over it
+        offers_synced = {"error": f"{type(err).__name__}: {err}"}
+    try:
         moves = verify_moves()
         verification_summary: dict[str, Any] = {
             "counts": moves["counts"],
@@ -3426,8 +3583,23 @@ def snapshot_tool() -> dict[str, Any]:
         "unmatched_players": [{"yahoo_id": m.yahoo_id, "name": m.name, "team": m.team} for m in unmatched],
         "how_to_fix_unmatched": _OVERRIDE_HELP if unmatched else None,
         "transactions": transactions,
+        "trade_offers": offers_synced,
         "move_verification": verification_summary,
     }
+
+
+def sync_pending_offers_tool() -> dict[str, Any]:
+    """Record Yahoo's pending trade offers (sent and received) so a later disappearance with no completed trade is
+    seen as a decline/withdrawal. Read-only on Yahoo; a failed read raises and marks nothing gone."""
+    if msg := _yahoo_only("pending offers"):
+        return msg
+    from fbm.gm import trade_offers
+    from fbm.yahoo.league_reads import fetch_pending
+
+    league = active_league()
+    with _yahoo_client() as client:
+        txs = fetch_pending(client, league.league_key, league.my_team_key)
+    return trade_offers.observe(_conn(), txs, league.my_team_key, _yahoo_mapper(league), datetime.now(UTC))
 
 
 def yahoo_ids_tool() -> dict[str, Any]:
@@ -3660,7 +3832,46 @@ def sync_transactions_tool(write_memory: bool = True) -> dict[str, Any]:
     return out
 
 
-def _intel_row(p, fit: float | None = None) -> dict[str, Any]:
+def _offer_context(league: LeagueState) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """(one row per trade offer I sent, per-partner outcome stats). Empty in the demo league and when the history
+    cannot be read: trade-offer outcomes are additive intel."""
+    if not _is_yahoo():
+        return [], {}
+    from fbm.gm import trade_offers
+
+    try:
+        conn = _conn()
+        mapper = _yahoo_mapper(league)
+
+        def resolve(tp):
+            try:
+                return mapper(tp.player_id, tp.name, tp.nba_team)
+            except Exception:  # an unmatched player is compared by its Yahoo id
+                return None
+
+        offers = trade_offers.load_offers(conn)
+        proposals = [p for s in ("done", "not_executed") for p in props.list_proposals(conn, s, 1000)]
+        rows = trade_offers.sent_rows(
+            proposals,
+            offers,
+            [t for t in _tx_history() if t.type == "trade"],
+            resolve,
+            league.my_team_key,
+            datetime.now(UTC),
+            float(C("verify.trade_window_hours")),
+            {t.team_key: t.name for t in league.teams},
+        )
+        return rows, trade_offers.partner_stats(rows, offers)
+    except Exception:  # noqa: BLE001 - see docstring
+        return [], {}
+
+
+def _offers_for(stats: dict[str, dict[str, Any]], key: str) -> dict[str, Any] | None:
+    """A partner's offer stats for `_intel_row`; None (no key) in the demo league."""
+    return stats.get(key, {}) if _is_yahoo() else None
+
+
+def _intel_row(p, fit: float | None = None, offers: dict[str, Any] | None = None) -> dict[str, Any]:
     row = {
         "team": p.name,
         "key": p.team_key,
@@ -3688,6 +3899,10 @@ def _intel_row(p, fit: float | None = None) -> dict[str, Any]:
         row["their_weak_cats"] = lab(p.weak_cats)
         row["their_likely_punts"] = lab(p.likely_punts)
         row["trade_punts_assumed"] = lab(p.trade_punts)
+    if offers is not None:
+        from fbm.gm import trade_offers
+
+        row["trade_offers"] = trade_offers.compact_stats(offers)
     return row
 
 
@@ -3714,7 +3929,7 @@ def manager_profile(team: str | None = None, n: int = 800) -> dict[str, Any]:
             recent.append({"utc": tx.timestamp.isoformat(timespec="minutes"), "moves": moves})
         if len(recent) >= 10:
             break
-    return {
+    out = {
         **p.to_dict(),
         "mine": t.team_key == league.my_team_key,
         "complementary_fit_with_me": complementary_fit(builds[league.my_team_key], p.cat_win_rate),
@@ -3725,24 +3940,41 @@ def manager_profile(team: str | None = None, n: int = 800) -> dict[str, Any]:
         "shrunk toward the league-wide prior, recency-weighted; ess/evidence_share say how much is evidence vs "
         "prior); build = typical-week category win rates vs the league",
     }
+    if _is_yahoo() and t.team_key != league.my_team_key:
+        from fbm.gm import trade_offers
+
+        rows, stats = _offer_context(league)
+        mine = [r for r in rows if r["partner"] == t.team_key]
+        out["trade_offers"] = {
+            **stats.get(t.team_key, trade_offers.summarize([])),
+            "note": "offers WE sent this manager and what came of them (Yahoo's pending list + the owner's recorded "
+            "responses); completed-trade counts above never include declined offers, so trades_proposed undercounts",
+            "offers": [
+                {k: r.get(k) for k in ("ref", "sent_at", "response", "response_at", "source")} for r in mine[-5:]
+            ],
+        }
+    return out
 
 
 def league_intel(n: int = 800, top: int = 5) -> dict[str, Any]:
     """League-wide intel: activity ranking, most active on the wire, best trade partners."""
     from fbm.analytics.opponents import rank_partners, ranked_by_activity
+    from fbm.gm import trade_offers
 
     league = active_league()
     builds = _builds(league, n)
     profiles = _manager_profiles(league, builds)
     others = [p for k, p in profiles.items() if k != league.my_team_key]
     has_history = any(p.moves for p in others)
-    partners = rank_partners(profiles, league.my_team_key, builds[league.my_team_key])
+    _rows, offer_stats = _offer_context(league)
+    weights = {k: trade_offers.acceptance_weight(s) for k, s in offer_stats.items()}
+    partners = rank_partners(profiles, league.my_team_key, builds[league.my_team_key], weights)
     wire = sorted(others, key=lambda p: (-p.recent_adds_per_week, -p.waiver_claims))[:top] if has_history else []
     prior = next((p.model for p in others if p.model is not None), None)
     return {
         "activity_ranking": [_intel_row(p) for p in ranked_by_activity(others)],
         "most_active_on_wire": [_intel_row(p) for p in wire],
-        "best_trade_partners": [_intel_row(p, fit) for p, fit in partners[:top]],
+        "best_trade_partners": [_intel_row(p, fit, _offers_for(offer_stats, p.team_key)) for p, fit in partners[:top]],
         "transactions_stored": len(_tx_history()),
         "league_prior": (
             {
@@ -3757,5 +3989,7 @@ def league_intel(n: int = 800, top: int = 5) -> dict[str, Any]:
         ),
         "note": None if has_history else _INTEL_DEMO_NOTE,
         "partner_order": "activity group (active/very active, casual, unknown, inactive), then complementary fit "
-        "(their category surplus x my need + my surplus x their need), then trade count",
+        "(their category surplus x my need + my surplus x their need), then trade count; a partner's fit is "
+        "discounted by its trade acceptance only after trade_offers.min_outcomes recorded responses "
+        "(`trade_offers.acceptance_weight`; below that the counts are shown, never weighted)",
     }

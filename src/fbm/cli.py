@@ -960,7 +960,8 @@ def proposals_list(
         table.add_column(col)
     for p in rows:
         review = f"{p.review_verdict or ''} {p.review_model or ''}".strip()
-        table.add_row(p.ref, p.status, p.kind, p.title, review, p.expires_at[:16])
+        title = f"{p.title} [realism override]" if p.realism_override else p.title
+        table.add_row(p.ref, p.status, p.kind, title, review, p.expires_at[:16])
     console.print(table)
 
 

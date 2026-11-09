@@ -193,7 +193,8 @@ def job_prompt(job: str) -> str:
         "scheduled run: use only fbm tool commands and read-only file access; do not edit files, change settings, "
         f"or run other shell commands. {TOOL_CLI} Numbers must come from fbm tool output. FBM never changes my "
         "league: produce insights, the lineup recommendation (lineup_steps, without confirm) and proposals "
-        "(create_proposal) only. Never record approvals, never call proposal_steps or confirm_done, never claim a "
+        "(create_proposal) only. Never record approvals, never call proposal_steps, confirm_done or "
+        "record_trade_response, never claim a "
         "move was made. Finish with a short report listing anything I need to do in Yahoo."
     )
 

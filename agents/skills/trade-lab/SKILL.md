@@ -17,6 +17,7 @@ Run as the `gm` agent. Nothing is sent to another manager without the owner's ex
    Hashtag mode: HT ROS vs the market's season stats and % owned — with luck-vs-role reasons and confidence), then `player_card` (availability, minutes trend, signals).
 4. Evaluate any package: `evaluate_trade(partner, give, get)` — expected categories before/after for both sides,
    forced drops, `playoff_outlook` weight, verdict.
-5. Counter-offer: iterate `evaluate_trade` on variants; keep it defensible for the partner.
+5. Counter-offer: iterate `evaluate_trade` on variants; keep it defensible for the partner (`realism` must pass:
+   `create_proposal` refuses trades the partner would not plausibly accept unless an `override_reason` is given).
 6. `create_proposal` kind `trade` (payload ids + names, short respectful `note`) → `reviewer` → owner decision →
    `proposal_steps` (exact steps). The owner sends/accepts it in Yahoo, then `confirm_done`.

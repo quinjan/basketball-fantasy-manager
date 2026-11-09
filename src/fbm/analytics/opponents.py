@@ -276,15 +276,20 @@ def complementary_fit(mine: Mapping[str, float], theirs: Mapping[str, float]) ->
 _GROUP = {"very active": 0, "active": 0, "casual": 1, "unknown": 2, "inactive": 3}
 
 
-def partner_rank_key(p: ManagerProfile, fit: float) -> tuple:
-    return (_GROUP.get(p.tier, 2), -fit, -(p.trades_completed + p.trades_proposed))
+def partner_rank_key(p: ManagerProfile, fit: float, weight: float = 1.0) -> tuple:
+    """`weight` scales the fit by the partner's trade acceptance (trade_offers.acceptance_weight; 1.0 until they
+    have enough recorded responses)."""
+    return (_GROUP.get(p.tier, 2), -fit * weight, -(p.trades_completed + p.trades_proposed))
 
 
 def rank_partners(
-    profiles: Mapping[str, ManagerProfile], my_key: str, mine: Mapping[str, float]
+    profiles: Mapping[str, ManagerProfile],
+    my_key: str,
+    mine: Mapping[str, float],
+    weights: Mapping[str, float] | None = None,
 ) -> list[tuple[ManagerProfile, float]]:
     rows = [(p, complementary_fit(mine, p.cat_win_rate)) for k, p in profiles.items() if k != my_key]
-    return sorted(rows, key=lambda r: partner_rank_key(*r))
+    return sorted(rows, key=lambda r: partner_rank_key(*r, (weights or {}).get(r[0].team_key, 1.0)))
 
 
 def ranked_by_activity(profiles: Sequence[ManagerProfile]) -> list[ManagerProfile]:

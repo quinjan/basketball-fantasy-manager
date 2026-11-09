@@ -206,6 +206,22 @@ CREATE TABLE IF NOT EXISTS league_transaction_players (
     PRIMARY KEY (tx_key, seq)
 );
 
+-- Yahoo pending trade offers (mine to them = outgoing, theirs to me = incoming), observed on every snapshot. An offer
+-- the snapshot no longer lists has `gone_at` set; whether it was accepted is decided against completed trades.
+-- Trade notes are untrusted free text and are not stored. give/get = JSON [{"id": espn id, "name": ..}] from MY side.
+CREATE TABLE IF NOT EXISTS trade_offers (
+    tx_key TEXT PRIMARY KEY,
+    direction TEXT NOT NULL,
+    partner_team_key TEXT NOT NULL,
+    status TEXT,
+    proposed_at TEXT,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    gone_at TEXT,
+    give TEXT NOT NULL,
+    get TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS espn_projections (
     season INTEGER NOT NULL,
     snapshot_date TEXT NOT NULL,

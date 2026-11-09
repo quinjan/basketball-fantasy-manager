@@ -94,5 +94,5 @@ def replay_grade(lookback_days: int = 14, limit: int = 10) -> dict[str, Any]:
     }
 
 
-def odds_reliability(scale: float | None = None, view: str | None = None) -> dict[str, Any]:
-    return odds_rel.report(svc_conn(), scale=scale, view=view)
+def odds_reliability(scale: float | None = None, view: str | None = None, detail: bool = False) -> dict[str, Any]:
+    return odds_rel.report(svc_conn(), scale=scale, view=view, detail=detail)

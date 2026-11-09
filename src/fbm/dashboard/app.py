@@ -550,7 +550,12 @@ def page_proposals() -> None:
         with st.expander(f"{p['ref']} · {p['status']} · {p['title']}", expanded=p["status"] == "pending_approval"):
             st.write(p["summary"])
             st.markdown(f"**Rationale:** {p['rationale']}")
-            if p.get("review_verdict"):
+            if p.get("realism_override"):
+                ov = p["realism_override"]
+                failing = ", ".join(f"{r['rule']} {r['value']} (limit {r['threshold']})" for r in ov["failing"])
+                st.warning(
+                    f"Sent despite failing the partner-realism screen ({failing}). Reason: {ov['override_reason']}"
+                )
                 st.markdown(f"**Review ({p['review_model']}):** `{p['review_verdict']}`")
                 st.write(p.get("review_notes") or "")
             if p.get("owner_quote"):

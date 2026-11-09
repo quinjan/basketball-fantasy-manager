@@ -104,8 +104,27 @@ across a week. HT's grid counts every rostered player on each of his game days (
 at the active spots; the simulator instead respects injuries (Out players can't start until their ESPN return date,
 GTD/Q/D count at their play probability, healthy bench players fill the freed spots) and `injured_excluded` lists them.
 
-Each daily forecast is stored (`source = ht_spread`, with the means, the raw HT grid means, the planner check and sd) so
-`odds_reliability` can grade it against Yahoo's FINAL result and recompute it for other spread scales and views.
+Each daily forecast is stored (`source = ht_spread`, with the means, the raw HT grid means, the planner check, the
+banked stats and sd) so `odds_reliability` can grade it against Yahoo's FINAL result and recompute it for other spread
+scales and views.
+
+**Opponent realism (issue #15).** The simulator already counts only startable players: each side's daily lineup is
+solved over the league's starting slots (`LeagueState.starting_slots()`, from Yahoo settings; the optimizer picks games
+first, then value, as a manager would), IL-slotted and Out players don't start, and the bench is never counted. What it
+cannot model is how real opponents actually set lineups (benched players with games, empty or wrong-position slots,
+stale rosters), so it still projects opponents above what they score. `odds_reliability.opponent_ratio` measures that:
+per counting category, `(Yahoo final − banked) / (projected total − banked)` for us and for opponents (pooled and per
+opponent team), one forecast per week, using only forecasts whose projected part is isolated (post-#13 forecasts, which
+store the banked stats; a forecast must still project at least half of its total). Pre-#13 forecasts stay out (their
+means were HT grid totals and their payload has no banked stats, so they cannot be recomputed): only those made before
+the week's first tip-off appear, separately, as `pre_fix_day0_reference`. `odds_reliability` also shows calibration by
+confidence band (favorite win rate vs mean confidence, so mid-range misses are visible).
+
+`policy.opponent_shrink` (default **off**) multiplies the opponent's projected rest of the week by those ratios
+(factors clipped to 0.6–1.0, counting categories only, banked stats and the spread untouched) once `policy.min_weeks`
+weeks are graded; below that it does nothing even when on. When it is on the payload keeps the unshrunk `means_raw`, so
+the ratios keep measuring the projection, not the correction. `policy_suggestions` judges it by the Brier score with
+vs without the shrink (leave-one-week-out); it only becomes active through an owner-approved `policy` proposal.
 
 ## Matchup simulation
 
@@ -148,7 +167,8 @@ final and every game's box score is synced.
 
 `policy_suggestions` re-runs `choosers.choose` over every graded decision with candidate values of one setting (all
 others as now) and sums the replayed outcome of the option each would have picked; chase/concede thresholds are also
-checked against the categories' final results and `policy.odds_spread_scale` by the odds' Brier score. A change is
+checked against the categories' final results and `policy.odds_spread_scale` and `policy.opponent_shrink` by the odds'
+Brier score. A change is
 suggested only with ≥ `policy.min_weeks` graded weeks and within the setting's max step. Nothing self-tunes: a
 suggestion becomes a `policy` proposal → reviewer → owner approval → `proposal_steps` applies it (policy version +1,
 history kept). The weekly retro's `per_view` table shows, per decision kind, what each HT view would have chosen.
@@ -180,6 +200,17 @@ value to be realistic. That "ranking" value is measured above replacement level 
 partner's forced drop is never counted as a gain for them. The finder also asks for the partner's expendable players
 (lowest value to their own build), turning a 2-for-1 into a roster-neutral 2-for-2 that takes their likely cut.
 Playoff-schedule value is added and weighted up as the playoffs approach.
+
+**Partner-realism gate.** One screen (`trade_realism` in `fbm.analytics.trades`) judges whether the partner would
+plausibly accept. `find_trades` applies its ranking rule; `create_proposal(kind="trade")` applies all three to the
+payload (re-evaluated from the player ids, not the caller's numbers) and refuses, naming the failing number:
+(1) the partner's ranking value delta (judged by their build) below -`trade.max_their_value_loss`;
+(2) the Hashtag ROS value premium to us, (received - sent) / sent over players traded only (each floored at 0),
+above `trade.max_ht_value_premium` (HT mode only; skipped with a note in demo/ESPN mode or when HT lacks a traded
+player); (3) the partner's expected cats per week by their own build at or below `trade.min_their_cats_delta`. An
+`override_reason` lets a trade through; it is recorded in `evidence.trade_realism`, journaled and flagged to the
+reviewer and owner. These are code constants, not `policy` settings: revisit them once trade-outcome tracking has
+at least five outcomes.
 
 ## Punt scenarios
 

@@ -8,6 +8,8 @@ not_executed --Yahoo later shows the move (transaction evidence)--> done
 (`done` means the OWNER said they made the move; the verification state (verified | pending | not_executed) lives in
  execution["verification"] and is refreshed from the stored Yahoo transactions/rosters on every snapshot. Only
  verified moves are graded. `not_executed` is terminal for graders: the move never happened in Yahoo.)
+(a trade offer's fate (accepted | declined | ignored | ... | pending) is `execution["verification"]["response"]`, from
+ Yahoo's pending-offer history and the owner's recorded response (`record_trade_response`); see trade_offers.py.)
 (a move the league already shows is not a failure: proposal_steps -> awaiting_owner; a proposal that `failed` only
  because the owner made the move first can still be confirmed done once the league shows it)
 (`failed` is for re-validation problems. A kind with no step template is not a failure: proposal_steps returns generic
@@ -106,10 +108,33 @@ class Proposal:
     def is_expired(self) -> bool:
         return datetime.fromisoformat(self.expires_at) <= _now()
 
+    @property
+    def realism_override(self) -> dict[str, Any] | None:
+        """The partner-realism screen this trade failed and the override_reason it was sent with anyway (else None)."""
+        r = (self.evidence or {}).get("trade_realism") or {}
+        if not r.get("override_reason"):
+            return None
+        return {"override_reason": r["override_reason"], "failing": [x for x in r.get("rules", []) if not x["ok"]]}
+
+    @property
+    def trade_response(self) -> dict[str, Any] | None:
+        """What the trade partner did with the offer (accepted | declined | ignored | ... | pending): the verifier's
+        reading of Yahoo + the owner's recorded response, or the owner's alone before the first verification."""
+        ex = self.execution or {}
+        if resp := (ex.get("verification") or {}).get("response"):
+            return resp
+        if owner := ex.get("owner_response"):
+            return {**owner, "source": "owner", "basis": "recorded by the owner; not reconciled with Yahoo yet"}
+        return None
+
     def as_dict(self) -> dict[str, Any]:
         d = dict(self.__dict__)
         d["ref"] = self.ref
         d["verification"] = (self.execution or {}).get("verification")
+        if self.kind == "trade":
+            d["trade_response"] = self.trade_response
+        if self.kind == "trade" and (override := self.realism_override):
+            d["realism_override"] = override
         return d
 
 
@@ -125,6 +150,12 @@ def _event(conn: sqlite3.Connection, pid: int, event: str, detail: str = "") -> 
         "INSERT INTO proposal_events(proposal_id, at, event, detail) VALUES (?,?,?,?)",
         (pid, _iso(_now()), event, detail),
     )
+
+
+def add_event(conn: sqlite3.Connection, pid: int, event: str, detail: str = "") -> None:
+    """Append an audit event to a proposal's history (shown by get_proposal)."""
+    _event(conn, pid, event, detail)
+    conn.commit()
 
 
 def parse_ref(ref: str | int) -> int:
@@ -320,6 +351,58 @@ def record_verification(conn: sqlite3.Connection, ref: str | int, verification: 
     before = (p.execution or {}).get("verification") or {}
     if before.get("state") != state or p.status != status:
         _event(conn, p.id, f"verification_{state}", str(verification.get("reason") or "")[:300])
+    new_resp, old_resp = verification.get("response") or {}, before.get("response") or {}
+    if new_resp.get("response") and new_resp.get("response") != old_resp.get("response"):
+        _event(conn, p.id, f"trade_response_{new_resp['response']}", str(new_resp.get("basis") or "")[:300])
+    conn.commit()
+    return get(conn, p.id)
+
+
+TRADE_RESPONSES = ("accepted", "declined", "ignored", "countered", "vetoed", "withdrawn")
+
+
+def record_trade_response(
+    conn: sqlite3.Connection,
+    ref: str | int,
+    response: str,
+    owner_quote: str,
+    response_at: datetime | None = None,
+) -> Proposal:
+    """The OWNER reports what the trade partner did with the offer (`owner_quote` = their own words, which carry any
+    reason). Stored in execution["owner_response"]; the next verification turns it into the proposal's trade response
+    and flips a declined/ignored/countered/vetoed/withdrawn offer to `not_executed`. A completed Yahoo trade always
+    wins, so only `accepted` can be recorded once Yahoo shows the trade."""
+    p = get(conn, ref)
+    response = response.strip().lower()
+    if effective_kind(p.kind, p.payload) != "trade":
+        raise ProposalError(f"{p.ref} is a {p.kind} proposal; trade responses apply to trades only.")
+    if p.status not in ("done", "not_executed"):
+        raise ProposalError(
+            f"{p.ref} is {p.status}; record a response only after the owner confirmed sending the offer."
+        )
+    if response not in TRADE_RESPONSES:
+        raise ProposalError(f"response must be one of {TRADE_RESPONSES}.")
+    if not owner_quote.strip():
+        raise ProposalError("owner_quote is required: the owner's own words about the response.")
+    ver = (p.execution or {}).get("verification") or {}
+    if ver.get("state") == "verified" and response != "accepted":
+        raise ProposalError(
+            f"{p.ref} is verified: Yahoo shows the trade completed, which overrides any other response."
+        )
+    at = response_at or _now()
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    if at > _now() + timedelta(minutes=5):
+        raise ProposalError("response_at is in the future.")
+    owner = {
+        "response": response,
+        "response_at": _iso(at),
+        "reason": owner_quote.strip(),
+        "recorded_at": _iso(_now()),
+    }
+    execution = {**(p.execution or {}), "owner_response": owner}
+    conn.execute("UPDATE proposals SET execution=? WHERE id=?", (json.dumps(execution), p.id))
+    _event(conn, p.id, f"owner_trade_response_{response}", owner_quote.strip()[:200])
     conn.commit()
     return get(conn, p.id)
 

@@ -26,6 +26,7 @@ UNCAPPED = frozenset(
         "list_proposals",
         "create_proposal",
         "confirm_done",
+        "record_trade_response",
         "record_owner_decision",
         "record_review",
         "context_pack",  # budgets itself (notes_chars, memory_chars, journal, signals_top)

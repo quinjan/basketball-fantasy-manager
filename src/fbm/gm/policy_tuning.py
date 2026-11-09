@@ -4,7 +4,8 @@ For one setting and a list of candidate values, `evaluate` re-runs the shared de
 every graded decision the setting affects, with the candidate in place of the current value (all other settings as
 now), and sums the replayed outcome (`result.options[id].cats_won`, from fbm.gm.replay) of the option that would
 have been picked. Chase/concede thresholds are also checked against the categories' final results, and
-`policy.odds_spread_scale` is judged by the odds' Brier score (fbm.gm.odds_reliability).
+`policy.odds_spread_scale` is judged by the odds' Brier score (fbm.gm.odds_reliability), and so is
+`policy.opponent_shrink` (Brier with vs without the realized/projected opponent shrink, leave-one-week-out).
 
 `suggest` lists changes that beat the current value with enough graded weeks (`policy.min_weeks`) and within the
 setting's max_step. It NEVER applies anything: a suggestion becomes a `policy` proposal that goes through the
@@ -24,6 +25,8 @@ from fbm.gm import choosers, decisions, policy
 ALL_KINDS = decisions.KINDS
 THRESHOLD_KEYS = ("policy.concede_below", "policy.lock_above", "policy.contested_band")
 SPREAD_KEY = "policy.odds_spread_scale"
+SHRINK_KEY = "policy.opponent_shrink"
+BRIER_KEYS = (SPREAD_KEY, SHRINK_KEY)
 # Settings the replay cannot judge yet (no replay hook): never suggested automatically.
 UNTUNED = ("policy.season_weights", "policy.opponent_adds")
 EPS = 1e-9
@@ -123,12 +126,32 @@ def _evaluate_spread(conn: sqlite3.Connection, candidates: list) -> list[dict[st
     return out
 
 
+def _evaluate_shrink(conn: sqlite3.Connection, candidates: list) -> list[dict[str, Any]]:
+    """policy.opponent_shrink: Brier of the graded post-#13 forecasts with the opponent shrink off vs on
+    (leave-one-week-out ratios, fbm.gm.odds_reliability.evaluate_shrink)."""
+    from fbm.gm import odds_reliability
+
+    rows, _ = odds_reliability.graded_forecasts(conn)
+    ev = odds_reliability.evaluate_shrink(rows)
+    return [
+        {
+            "value": (value := policy.validate(SHRINK_KEY, c)),
+            "brier": ev["brier_on"] if value else ev["brier_off"],
+            "n_weeks": ev["n_weeks"],
+            "n_decisions": ev["n_forecasts"],
+        }
+        for c in candidates
+    ]
+
+
 def evaluate(conn: sqlite3.Connection, key: str, candidates: list) -> list[dict[str, Any]]:
     """Per candidate value: n_decisions, n_weeks, cats_won, cats_won_delta (vs current), regret (vs best option),
     changed (decision ids whose choice changes); threshold keys also classify_cost(_delta)."""
     policy.param(key)
     if key == SPREAD_KEY:
         return _evaluate_spread(conn, candidates)
+    if key == SHRINK_KEY:
+        return _evaluate_shrink(conn, candidates)
     current = policy.all_values(conn)
     graded = _graded(conn, affected_kinds(key))
     base: dict[int, tuple[str, float]] = {}
@@ -203,7 +226,7 @@ def candidates_for(key: str, current: Any) -> list:
 
 
 def _improvement(key: str, row: Mapping[str, Any], cur_row: Mapping[str, Any]) -> float:
-    if key == SPREAD_KEY:
+    if key in BRIER_KEYS:
         if row.get("brier") is None or cur_row.get("brier") is None:
             return 0.0
         return float(cur_row["brier"]) - float(row["brier"])
@@ -224,7 +247,7 @@ def suggest(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             continue
         try:
             rows = evaluate(conn, key, [current[key], *cands])
-        except ImportError:
+        except (ImportError, AttributeError):  # a calibration module that isn't available can't judge the setting
             continue
         cur_row, alt = rows[0], rows[1:]
         best, best_gain = None, 0.0
@@ -242,7 +265,7 @@ def suggest(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 "current": current[key],
                 "value": best["value"],
                 "improvement": round(best_gain, 4),
-                "metric": "brier_reduction" if key == SPREAD_KEY else "replayed_cats_won",
+                "metric": "brier_reduction" if key in BRIER_KEYS else "replayed_cats_won",
                 "n_weeks": best["n_weeks"],
                 "n_decisions": best["n_decisions"],
                 "evidence": {

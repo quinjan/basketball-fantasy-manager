@@ -465,7 +465,132 @@ def find_trades(
         for r in results
         if r.me.expected_delta > 0.02
         and r.them.expected_delta_build >= -0.05
-        and r.them.judged_value_delta >= -max_their_value_loss
+        and realism_of(r, rules=(RULE_RANKING,), max_their_value_loss=max_their_value_loss).ok
     ]
     good.sort(key=lambda r: -(r.me.expected_delta + 0.25 * min(r.them.expected_delta_build, 0.0)))
     return good[:limit]
+
+
+RULE_RANKING = "their_ranking_value"
+RULE_HT_PREMIUM = "ht_value_premium"
+RULE_THEIR_CATS = "their_expected_cats"
+ALL_RULES = (RULE_RANKING, RULE_HT_PREMIUM, RULE_THEIR_CATS)
+
+
+@dataclass(frozen=True)
+class RealismRule:
+    """One partner-realism rule: `value` against `threshold` (None value = not checked, `note` says why)."""
+
+    rule: str
+    value: float | None
+    threshold: float
+    ok: bool
+    note: str = ""
+
+    @property
+    def checked(self) -> bool:
+        return self.value is not None
+
+    def as_dict(self) -> dict:
+        out = {"rule": self.rule, "value": self.value, "threshold": self.threshold, "ok": self.ok}
+        return {**out, "note": self.note} if self.note else out
+
+
+@dataclass(frozen=True)
+class TradeRealism:
+    """Would the partner plausibly accept? Pass/fail per rule with the numbers and thresholds."""
+
+    rules: tuple[RealismRule, ...]
+
+    @property
+    def ok(self) -> bool:
+        return all(r.ok for r in self.rules)
+
+    @property
+    def failures(self) -> tuple[RealismRule, ...]:
+        return tuple(r for r in self.rules if not r.ok)
+
+    def as_dict(self) -> dict:
+        return {"ok": self.ok, "failing": [r.rule for r in self.failures], "rules": [r.as_dict() for r in self.rules]}
+
+    def refusal(self) -> str:
+        """Names every failing number and threshold, with how to rebalance."""
+        parts = [_FAILURE_TEXT[r.rule](r) for r in self.failures]
+        return (
+            "Trade fails the partner-realism screen: "
+            + "; ".join(parts)
+            + ". Rebalance (add a piece to our side, e.g. a 2-for-2 or a sweetener that helps their build) and "
+            "re-run evaluate_trade, or pass override_reason to create_proposal to send it anyway (recorded, journaled "
+            "and shown to the reviewer and the owner)."
+        )
+
+
+_FAILURE_TEXT = {
+    RULE_RANKING: lambda r: (
+        f"the partner's ranking value changes {r.value:+.2f} G points above replacement "
+        f"(it may lose at most {-r.threshold:.2f}; trade.max_their_value_loss)"
+    ),
+    RULE_HT_PREMIUM: lambda r: (
+        f"Hashtag ROS value premium to us is {r.value:+.0%} of what we send (limit {r.threshold:.0%}; "
+        "trade.max_ht_value_premium)"
+    ),
+    RULE_THEIR_CATS: lambda r: (
+        f"the partner's expected cats per week change {r.value:+.3f} by their own build "
+        f"(must be above {r.threshold:+.2f}; trade.min_their_cats_delta)"
+    ),
+}
+
+
+HT_PREMIUM_CAP = 9.99  # +999%: keeps the number JSON-safe when we send no HT value at all
+
+
+def ht_value_premium(sent: float, received: float) -> float | None:
+    """Hashtag ROS value premium to us: (received - sent) / sent, with sent/received the HT ROS totals of the players
+    we give/get. Positive = the trade favors us. Capped at HT_PREMIUM_CAP (also when we send no value but receive some);
+    None when neither side has value."""
+    if sent > 0:
+        return min((received - sent) / sent, HT_PREMIUM_CAP)
+    return HT_PREMIUM_CAP if received > 0 else None
+
+
+def trade_realism(
+    them_value_delta: float,
+    them_cats_delta: float,
+    ht_premium: float | None = None,
+    *,
+    ht_note: str = "",
+    rules: Sequence[str] = ALL_RULES,
+    max_their_value_loss: float | None = None,
+    max_ht_premium: float | None = None,
+    min_their_cats_delta: float | None = None,
+) -> TradeRealism:
+    """Partner-realism screen shared by `find_trades` (ranking rule) and `create_proposal(kind="trade")` (all rules).
+
+    - their_ranking_value: the partner's judged ranking value delta (G above replacement) must not fall below
+      -`trade.max_their_value_loss`;
+    - ht_value_premium: the Hashtag ROS premium to us must not exceed `trade.max_ht_value_premium`. Skipped (with a
+      note) when there is no HT read (ESPN/demo mode, or players missing from HT);
+    - their_expected_cats: the partner's expected cats delta by their own build must exceed
+      `trade.min_their_cats_delta`."""
+    max_loss = float(C("trade.max_their_value_loss")) if max_their_value_loss is None else max_their_value_loss
+    max_prem = float(C("trade.max_ht_value_premium")) if max_ht_premium is None else max_ht_premium
+    min_cats = float(C("trade.min_their_cats_delta")) if min_their_cats_delta is None else min_their_cats_delta
+    out: list[RealismRule] = []
+    for rule in rules:
+        if rule == RULE_RANKING:
+            out.append(RealismRule(rule, them_value_delta, -max_loss, them_value_delta >= -max_loss))
+        elif rule == RULE_HT_PREMIUM:
+            if ht_premium is None:
+                out.append(RealismRule(rule, None, max_prem, True, ht_note or "no Hashtag value read: rule skipped"))
+            else:
+                out.append(RealismRule(rule, ht_premium, max_prem, ht_premium <= max_prem, ht_note))
+        elif rule == RULE_THEIR_CATS:
+            out.append(RealismRule(rule, them_cats_delta, min_cats, them_cats_delta > min_cats))
+        else:
+            raise ValueError(f"unknown realism rule '{rule}'")
+    return TradeRealism(tuple(out))
+
+
+def realism_of(ev: TradeEval, ht_premium: float | None = None, ht_note: str = "", **kw) -> TradeRealism:
+    """`trade_realism` for an evaluated trade: the partner's side as judged by their build."""
+    return trade_realism(ev.them.judged_value_delta, ev.them.expected_delta_build, ht_premium, ht_note=ht_note, **kw)
